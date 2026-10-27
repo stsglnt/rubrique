@@ -2,8 +2,9 @@
 
 use eframe::egui::text::{CCursor, CCursorRange};
 use eframe::egui::text_edit::TextEditState;
-use eframe::egui::{self, Context, Id, Key, Modifiers, Ui};
+use eframe::egui::{self, Context, Id, Key, Modifiers, TextBuffer, Ui};
 
+use super::highlighting::{HighlightStyle, highlighted};
 use super::line_ops::{Direction, Selection, duplicate_lines, insert_text, move_lines};
 use super::text_file::Document;
 use super::text_stats::{TextStats, text_stats};
@@ -22,22 +23,29 @@ fn editor_id() -> Id {
     Id::unique("rubrique-editor")
 }
 
-/// Draw the text editor. Returns status-bar stats for the cursor.
-pub fn show_editor(ui: &mut Ui, document: &mut Document) -> Option<TextStats> {
+/// Draw the text editor, coloring Markdown syntax when `markdown` is set.
+/// Returns status-bar stats for the cursor.
+pub fn show_editor(ui: &mut Ui, document: &mut Document, markdown: bool) -> Option<TextStats> {
     let available = ui.available_size();
+    let style = HighlightStyle::from_ui(ui);
+    let mut layouter = |ui: &Ui, buffer: &dyn TextBuffer, wrap_width: f32| {
+        let mut job = highlighted(ui.ctx(), buffer.as_str(), &style);
+        job.wrap.max_width = wrap_width;
+        ui.ctx().fonts_mut(|fonts| fonts.layout_job(job))
+    };
     let output = egui::ScrollArea::both()
         .id_salt("editor-scroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            egui::TextEdit::multiline(&mut document.text)
+            let editor = egui::TextEdit::multiline(&mut document.text)
                 .id(editor_id())
                 .code_editor()
                 // No border: the editor is the page itself.
                 .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(EDITOR_MARGIN.0, EDITOR_MARGIN.1)))
                 .lock_focus(true)
                 .desired_width(f32::INFINITY)
-                .min_size(available)
-                .show(ui)
+                .min_size(available);
+            if markdown { editor.layouter(&mut layouter).show(ui) } else { editor.show(ui) }
         })
         .inner;
     if output.response.changed() {

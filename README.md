@@ -12,7 +12,7 @@ One window, five themes. Light and Dark ship with rubrique; the other three are
 
 - File explorer that shows **all** files; a **Markdown only** checkbox hides the rest
 - Right-click any file or folder: copy absolute path, relative path, or name
-- Plain-text editor with a rendered Markdown preview (`Cmd/Ctrl+E`)
+- Plain-text editor with Markdown syntax colors, and a rendered preview (`Cmd/Ctrl+E`)
 - Atomic saves, unsaved-changes prompt, reload when the file changes on disk
 - Line shortcuts: move (`Alt+Up/Down`), duplicate (`Cmd/Ctrl+D`), insert date (`Cmd/Ctrl+Shift+D`)
 - Light and Dark themes built in, or follow the system; add your own as small text files

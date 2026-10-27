@@ -412,7 +412,8 @@ impl RubriqueApp {
                     show_preview(ui, blocks);
                 } else {
                     let was_dirty = document.is_dirty();
-                    if let Some(stats) = show_editor(ui, document) {
+                    let markdown = is_markdown_path(&document.path);
+                    if let Some(stats) = show_editor(ui, document, markdown) {
                         self.stats = Some(stats);
                     }
                     // Any edit invalidates the cached preview.
