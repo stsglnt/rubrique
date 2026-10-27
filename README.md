@@ -42,6 +42,22 @@ Linux also needs the usual X11/Wayland and OpenGL development libraries.
 Pick a theme from the drop-down at the top right: **System** (follows your OS),
 **Light**, **Dark**, or one of your own.
 
+<details>
+<summary>Screenshots: Light</summary>
+
+<img src="docs/screenshots/light-edit.png" alt="rubrique with the Light theme, editing" width="800">
+<img src="docs/screenshots/light-preview.png" alt="rubrique with the Light theme, preview" width="800">
+
+</details>
+
+<details>
+<summary>Screenshots: Dark</summary>
+
+<img src="docs/screenshots/dark-edit.png" alt="rubrique with the Dark theme, editing" width="800">
+<img src="docs/screenshots/dark-preview.png" alt="rubrique with the Dark theme, preview" width="800">
+
+</details>
+
 To make a theme, put a `.theme` file in `~/.config/rubrique/themes/`
 (macOS: `~/Library/Application Support/rubrique/themes/`) and restart rubrique.
 Start from [`themes/light.theme`](themes/light.theme) or
@@ -78,6 +94,13 @@ selection=#e3cfa8
 code_background=#efe6d4
 ```
 
+<details>
+<summary>Screenshot: Sepia</summary>
+
+<img src="docs/screenshots/sepia.png" alt="rubrique with the Sepia theme, preview" width="800">
+
+</details>
+
 **Midnight**: deep blue for night work.
 
 ```
@@ -96,6 +119,13 @@ selection=#23395f
 code_background=#151e31
 ```
 
+<details>
+<summary>Screenshot: Midnight</summary>
+
+<img src="docs/screenshots/midnight.png" alt="rubrique with the Midnight theme, preview" width="800">
+
+</details>
+
 **High contrast**: black and white with a yellow accent.
 
 ```
@@ -113,6 +143,13 @@ accent=#ffd84d
 selection=#1f4fbf
 code_background=#141414
 ```
+
+<details>
+<summary>Screenshot: High contrast</summary>
+
+<img src="docs/screenshots/high-contrast.png" alt="rubrique with the High contrast theme, preview" width="800">
+
+</details>
 
 ## Development
 
