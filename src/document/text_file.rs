@@ -1,0 +1,323 @@
+//! Load and save one text file without ever changing bytes the user did not edit.
+
+use std::collections::hash_map::DefaultHasher;
+use std::fs;
+use std::hash::{Hash, Hasher};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+const BYTES_PER_MEGABYTE: u64 = 1024 * 1024;
+
+/// Files above this size are not opened (spec: 20 MB).
+pub const MAX_FILE_BYTES: u64 = 20 * BYTES_PER_MEGABYTE;
+
+/// How many leading bytes are checked for NUL to spot binary files.
+const BINARY_SNIFF_BYTES: usize = 8 * 1024;
+
+/// Why a file cannot be shown in the editor.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Unsupported {
+    /// Over [`MAX_FILE_BYTES`]; holds the file size in bytes.
+    TooLarge(u64),
+    /// Has a NUL byte near the start.
+    Binary,
+    /// Text in another encoding (or not text at all).
+    NotUtf8,
+}
+
+impl Unsupported {
+    /// Human-readable reason for the editor panel.
+    pub fn describe(&self) -> String {
+        match self {
+            Unsupported::TooLarge(bytes) => format!(
+                "File is too large ({} MB, limit {} MB).",
+                bytes / BYTES_PER_MEGABYTE,
+                MAX_FILE_BYTES / BYTES_PER_MEGABYTE
+            ),
+            Unsupported::Binary => "Binary file.".to_string(),
+            Unsupported::NotUtf8 => "Not a UTF-8 text file.".to_string(),
+        }
+    }
+}
+
+/// Result of trying to open a file.
+#[derive(Debug)]
+pub enum Opened {
+    /// A displayable text file.
+    Text(Document),
+    /// A file the editor refuses to show, and why.
+    Unsupported(Unsupported),
+}
+
+/// What changed on disk since we last loaded or saved.
+#[derive(Debug, PartialEq, Eq)]
+pub enum DiskState {
+    Unchanged,
+    /// Another program changed the file (its modification time differs).
+    Modified,
+    /// The file is gone.
+    Deleted,
+}
+
+/// An open text file.
+#[derive(Debug)]
+pub struct Document {
+    /// Path the file was opened from (may be a symlink).
+    pub path: PathBuf,
+    /// The editable buffer. Saved byte-for-byte as is.
+    pub text: String,
+    /// Hash of the text last read from or written to disk. `None` after the
+    /// user chose to keep their version over a newer one on disk.
+    saved_hash: Option<u64>,
+    /// The buffer differs from what is on disk.
+    dirty: bool,
+    /// Modification time when we last read or wrote the file.
+    disk_modified: Option<SystemTime>,
+}
+
+impl Document {
+    /// Read a file, refusing ones that are too large, binary, or not UTF-8.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the file cannot be read (missing, permissions, ...).
+    pub fn open(path: &Path) -> io::Result<Opened> {
+        let metadata = fs::metadata(path)?;
+        if metadata.len() > MAX_FILE_BYTES {
+            return Ok(Opened::Unsupported(Unsupported::TooLarge(metadata.len())));
+        }
+        let bytes = fs::read(path)?;
+        let text = match text_from_bytes(bytes) {
+            Ok(text) => text,
+            Err(reason) => return Ok(Opened::Unsupported(reason)),
+        };
+        Ok(Opened::Text(Document {
+            path: path.to_path_buf(),
+            saved_hash: Some(hash_text(&text)),
+            text,
+            dirty: false,
+            disk_modified: metadata.modified().ok(),
+        }))
+    }
+
+    /// True when the buffer has unsaved changes.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Call after every edit. Dirty means "differs from what is on disk",
+    /// so undoing back to the saved text makes the document clean again.
+    pub fn on_text_changed(&mut self) {
+        self.dirty = Some(hash_text(&self.text)) != self.saved_hash;
+    }
+
+    /// Write the buffer atomically: temp file in the same folder, flush, rename.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the temp file cannot be written or renamed; the file on
+    /// disk is then left as it was.
+    pub fn save(&mut self) -> io::Result<()> {
+        // Write through symlinks: renaming over the link itself would replace
+        // the link with a plain file.
+        let target = fs::canonicalize(&self.path).unwrap_or_else(|_| self.path.clone());
+        write_atomically(&target, self.text.as_bytes())?;
+        self.saved_hash = Some(hash_text(&self.text));
+        self.dirty = false;
+        self.disk_modified = modified_time(&self.path);
+        Ok(())
+    }
+
+    /// Compare the file's modification time with the one we know.
+    pub fn disk_state(&self) -> DiskState {
+        match fs::metadata(&self.path) {
+            // Already known to be missing (user chose "Keep mine"): no news.
+            Err(_) if self.disk_modified.is_none() => DiskState::Unchanged,
+            Err(_) => DiskState::Deleted,
+            Ok(metadata) if metadata.modified().ok() != self.disk_modified => DiskState::Modified,
+            Ok(_) => DiskState::Unchanged,
+        }
+    }
+
+    /// Accept the current disk state without reloading ("Keep mine"):
+    /// the buffer stays dirty and we stop asking about this change.
+    pub fn acknowledge_disk_change(&mut self) {
+        self.disk_modified = modified_time(&self.path);
+        self.saved_hash = None;
+        self.dirty = true;
+    }
+}
+
+/// Validate file bytes as displayable text.
+fn text_from_bytes(bytes: Vec<u8>) -> Result<String, Unsupported> {
+    let sniff_length = bytes.len().min(BINARY_SNIFF_BYTES);
+    if bytes[..sniff_length].contains(&0) {
+        return Err(Unsupported::Binary);
+    }
+    String::from_utf8(bytes).map_err(|_| Unsupported::NotUtf8)
+}
+
+/// Fingerprint of the text, to tell whether an edit returned to the saved text.
+fn hash_text(text: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// The file's modification time, `None` when it is missing or unknown.
+fn modified_time(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|metadata| metadata.modified()).ok()
+}
+
+/// Replace `target` with `contents` so that a crash leaves either the old or
+/// the new file, never a truncated one. Keeps the original permissions.
+fn write_atomically(target: &Path, contents: &[u8]) -> io::Result<()> {
+    let folder = target.parent().unwrap_or(Path::new("."));
+    let file_name = target.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
+    let temp_path = folder.join(format!(".{file_name}.rubrique-{}.tmp", std::process::id()));
+
+    let result = (|| {
+        let mut file = fs::File::create(&temp_path)?;
+        file.write_all(contents)?;
+        file.sync_all()?;
+        if let Ok(metadata) = fs::metadata(target) {
+            fs::set_permissions(&temp_path, metadata.permissions())?;
+        }
+        fs::rename(&temp_path, target)
+    })();
+    if result.is_err() {
+        // Best-effort cleanup; the write error is what the caller needs.
+        let _ = fs::remove_file(&temp_path);
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::TempFolder;
+
+    fn open_text(path: &Path) -> Document {
+        match Document::open(path).unwrap() {
+            Opened::Text(document) => document,
+            Opened::Unsupported(reason) => panic!("unexpected {reason:?}"),
+        }
+    }
+
+    #[test]
+    fn unchanged_save_is_byte_identical() {
+        // Blank lines, trailing spaces, CRLF, no final newline: all must survive.
+        let original = "# Title\r\n\r\n\r\n\ntext  \n\t- item\n\n\n";
+        let temp = TempFolder::new();
+        let path = temp.write("note.md", original);
+
+        let mut document = open_text(&path);
+        assert!(!document.is_dirty());
+        document.save().unwrap();
+        assert_eq!(fs::read(&path).unwrap(), original.as_bytes());
+    }
+
+    #[test]
+    fn dirty_clears_when_text_returns_to_saved() {
+        let temp = TempFolder::new();
+        let path = temp.write("note.md", "hello");
+        let mut document = open_text(&path);
+
+        document.text.push('!');
+        document.on_text_changed();
+        assert!(document.is_dirty());
+
+        document.text.pop();
+        document.on_text_changed();
+        assert!(!document.is_dirty());
+    }
+
+    #[test]
+    fn save_writes_text_and_keeps_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = TempFolder::new();
+        let path = temp.write("run.sh", "echo a\n");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o750)).unwrap();
+
+        let mut document = open_text(&path);
+        document.text = "echo b\n".to_string();
+        document.on_text_changed();
+        document.save().unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "echo b\n");
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o750);
+        assert!(!document.is_dirty());
+        // No temp files left behind.
+        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn save_through_symlink_keeps_the_link() {
+        let temp = TempFolder::new();
+        let real = temp.write("real.md", "a");
+        let link = temp.path().join("link.md");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let mut document = open_text(&link);
+        document.text = "b".to_string();
+        document.save().unwrap();
+
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_to_string(&real).unwrap(), "b");
+    }
+
+    #[test]
+    fn rejects_binary_non_utf8_and_large_files() {
+        let temp = TempFolder::new();
+        let binary = temp.write("image.png", [0x89, b'P', b'N', b'G', 0, 1, 2]);
+        let latin1 = temp.write("old.txt", [b'c', b'a', b'f', 0xE9]);
+        let large = temp.write("big.log", "");
+        fs::File::options().write(true).open(&large).unwrap().set_len(MAX_FILE_BYTES + 1).unwrap();
+
+        for (path, expected) in [
+            (binary, Unsupported::Binary),
+            (latin1, Unsupported::NotUtf8),
+            (large, Unsupported::TooLarge(MAX_FILE_BYTES + 1)),
+        ] {
+            match Document::open(&path).unwrap() {
+                Opened::Unsupported(reason) => assert_eq!(reason, expected),
+                Opened::Text(_) => panic!("{} should not open", path.display()),
+            }
+        }
+    }
+
+    #[test]
+    fn empty_file_opens() {
+        let temp = TempFolder::new();
+        let path = temp.write("empty", "");
+        assert_eq!(open_text(&path).text, "");
+    }
+
+    #[test]
+    fn detects_disk_changes_and_deletion() {
+        let temp = TempFolder::new();
+        let path = temp.write("note.md", "one");
+        let mut document = open_text(&path);
+        assert_eq!(document.disk_state(), DiskState::Unchanged);
+
+        // Force a different mtime even on filesystems with coarse timestamps.
+        let file = fs::File::options().write(true).open(&path).unwrap();
+        file.set_modified(SystemTime::UNIX_EPOCH).unwrap();
+        assert_eq!(document.disk_state(), DiskState::Modified);
+
+        document.acknowledge_disk_change();
+        assert_eq!(document.disk_state(), DiskState::Unchanged);
+        assert!(document.is_dirty(), "keeping our version must leave it dirty");
+
+        fs::remove_file(&path).unwrap();
+        assert_eq!(document.disk_state(), DiskState::Deleted);
+        document.acknowledge_disk_change();
+        assert_eq!(document.disk_state(), DiskState::Unchanged, "deletion is reported once");
+
+        // Saving recreates the file.
+        document.save().unwrap();
+        assert!(path.exists());
+        assert!(!document.is_dirty());
+    }
+}

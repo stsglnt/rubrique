@@ -1,0 +1,4 @@
+# Tests may unwrap: a panic there is a clear test failure.
+allow-unwrap-in-tests = true
+# Proper names used in doc comments that are not code.
+doc-valid-idents = ["CommonMark", ".."]

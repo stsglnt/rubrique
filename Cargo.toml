@@ -1,0 +1,40 @@
+[package]
+name = "rubrique"
+version = "0.1.0"
+edition = "2024"
+description = "A fast, lightweight Markdown editor for Linux and macOS"
+publish = false
+# Minimum supported Rust (MSRV), matching the README.
+rust-version = "1.95"
+
+[dependencies]
+# The only dependency: GUI toolkit. Default features trimmed to the OpenGL
+# backend (lighter than wgpu), clipboard, link opening, and the Linux backends.
+eframe = { version = "0.37.0", default-features = false, features = [
+    "glow",
+    "clipboard",
+    "links",
+    "default_fonts",
+    "wayland",
+    "x11",
+] }
+
+# Lint levels from the Rust guide. `unsafe_code` is `deny` rather than
+# `forbid` because date.rs needs one FFI call (`localtime_r`); that single
+# use carries a narrow `#[expect(unsafe_code, reason = ...)]`.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+dbg_macro = "warn"
+allow_attributes_without_reason = "warn"
+undocumented_unsafe_blocks = "warn"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

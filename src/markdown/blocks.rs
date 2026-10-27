@@ -1,0 +1,572 @@
+//! Block-level Markdown: headings, paragraphs, code, quotes, lists, breaks.
+//!
+//! Works line by line. Containers (quotes, list items) strip their markers
+//! and parse their content recursively with the same function.
+
+use super::inlines::{Inline, parse_inlines};
+
+/// One block of the document.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Block {
+    /// `level` is 1 to 6.
+    Heading {
+        level: u8,
+        content: Vec<Inline>,
+    },
+    Paragraph(Vec<Inline>),
+    /// Fenced or indented code; `info` is the text after the opening fence.
+    Code {
+        info: String,
+        code: String,
+    },
+    Quote(Vec<Block>),
+    List(List),
+    ThematicBreak,
+}
+
+/// A bullet or ordered list.
+#[derive(Clone, Debug, PartialEq)]
+pub struct List {
+    /// Start number for ordered lists, `None` for bullet lists.
+    pub start: Option<u64>,
+    pub items: Vec<ListItem>,
+}
+
+/// One list item and the blocks inside it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ListItem {
+    /// `Some(checked)` for task items like `- [x] done`.
+    pub task: Option<bool>,
+    pub blocks: Vec<Block>,
+}
+
+/// Tab stops for leading indentation.
+const TAB_WIDTH: usize = 4;
+
+/// Indentation (in spaces) that makes a line indented code (CommonMark).
+/// Below it, block markers like `#`, `>` and `-` still count.
+const CODE_INDENT: usize = 4;
+
+/// Deepest ATX heading level, `######`.
+const MAX_HEADING_LEVEL: u8 = 6;
+
+/// CommonMark allows at most this many digits in an ordered list number.
+const MAX_LIST_NUMBER_DIGITS: usize = 9;
+
+/// Parse a whole document.
+pub fn parse_blocks(text: &str) -> Vec<Block> {
+    let lines: Vec<String> = text.lines().map(expand_leading_tabs).collect();
+    let line_refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    parse_lines(&line_refs)
+}
+
+/// Parse lines into blocks; used for the document and for container content.
+fn parse_lines(lines: &[&str]) -> Vec<Block> {
+    let mut blocks = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let (block, next) = parse_block(lines, index);
+        blocks.extend(block);
+        index = next;
+    }
+    blocks
+}
+
+/// Parse the block starting at `lines[index]`; returns it and the next index.
+fn parse_block(lines: &[&str], index: usize) -> (Option<Block>, usize) {
+    let line = lines[index];
+    if is_blank(line) {
+        return (None, index + 1);
+    }
+    if indentation(line) >= CODE_INDENT {
+        return parse_indented_code(lines, index);
+    }
+    let trimmed = line.trim_start();
+    if let Some(fence) = Fence::open(line) {
+        return parse_fenced_code(lines, index, fence);
+    }
+    if let Some(heading) = parse_atx_heading(trimmed) {
+        return (Some(heading), index + 1);
+    }
+    if is_thematic_break(trimmed) {
+        return (Some(Block::ThematicBreak), index + 1);
+    }
+    if trimmed.starts_with('>') {
+        return parse_quote(lines, index);
+    }
+    if let Some(marker) = ListMarker::parse(line) {
+        return parse_list(lines, index, marker);
+    }
+    parse_paragraph(lines, index)
+}
+
+/// True when `line` begins a block that ends a running paragraph.
+fn interrupts_paragraph(line: &str) -> bool {
+    if indentation(line) >= CODE_INDENT {
+        return false;
+    }
+    let trimmed = line.trim_start();
+    let list_interrupts = ListMarker::parse(line)
+        .is_some_and(|marker| marker.has_content && marker.number.is_none_or(|number| number == 1));
+    Fence::open(line).is_some()
+        || parse_atx_heading(trimmed).is_some()
+        || is_thematic_break(trimmed)
+        || trimmed.starts_with('>')
+        || list_interrupts
+}
+
+// ---------- headings, breaks, paragraphs ----------
+
+/// `## Title ##` -> level 2 heading "Title".
+fn parse_atx_heading(trimmed: &str) -> Option<Block> {
+    let hashes = trimmed.chars().take_while(|&c| c == '#').count();
+    let level = u8::try_from(hashes).ok().filter(|level| (1..=MAX_HEADING_LEVEL).contains(level))?;
+    // `#` is one byte, so `hashes` is also a byte index.
+    let rest = &trimmed[hashes..];
+    if !(rest.is_empty() || rest.starts_with(' ')) {
+        return None;
+    }
+    let mut content = rest.trim();
+    // Optional closing hashes, when separated by a space (or all hashes).
+    let without_hashes = content.trim_end_matches('#');
+    if without_hashes.is_empty() || without_hashes.ends_with(' ') {
+        content = without_hashes.trim_end();
+    }
+    Some(Block::Heading { level, content: parse_inlines(content) })
+}
+
+/// `---`, `***`, `___`, spaces allowed in between.
+fn is_thematic_break(trimmed: &str) -> bool {
+    let marks: Vec<char> = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+    marks.len() >= 3 && matches!(marks[0], '-' | '*' | '_') && marks.iter().all(|&c| c == marks[0])
+}
+
+/// A line of only `=` (level 1) or `-` (level 2) under paragraph text.
+fn setext_level(line: &str) -> Option<u8> {
+    if indentation(line) >= CODE_INDENT {
+        return None;
+    }
+    let trimmed = line.trim();
+    let all = |mark: char| !trimmed.is_empty() && trimmed.chars().all(|c| c == mark);
+    if all('=') {
+        Some(1)
+    } else if all('-') {
+        Some(2)
+    } else {
+        None
+    }
+}
+
+/// Paragraph text up to a blank or interrupting line; a setext underline
+/// turns it into a heading instead.
+fn parse_paragraph(lines: &[&str], start: usize) -> (Option<Block>, usize) {
+    let mut text_lines = vec![lines[start].trim_start()];
+    let mut index = start + 1;
+    while index < lines.len() {
+        let line = lines[index];
+        if let Some(level) = setext_level(line) {
+            let content = parse_inlines(text_lines.join("\n").trim_end());
+            return (Some(Block::Heading { level, content }), index + 1);
+        }
+        if is_blank(line) || interrupts_paragraph(line) {
+            break;
+        }
+        text_lines.push(line.trim_start());
+        index += 1;
+    }
+    // Trailing spaces on the last line are not a hard break.
+    let text = text_lines.join("\n");
+    (Some(Block::Paragraph(parse_inlines(text.trim_end()))), index)
+}
+
+// ---------- code ----------
+
+/// An opening code fence like ```` ```rust ```` or `~~~`.
+struct Fence {
+    /// Indentation of the opening fence, removed from the code lines too.
+    indent: usize,
+    /// `` ` `` or `~`.
+    mark: char,
+    /// Length of the opening run; the closing run must be at least as long.
+    length: usize,
+    /// Text after the fence, e.g. the language name.
+    info: String,
+}
+
+impl Fence {
+    /// Recognize an opening fence line.
+    fn open(line: &str) -> Option<Fence> {
+        let indent = indentation(line);
+        let trimmed = &line[indent..];
+        let mark = trimmed.chars().next().filter(|&c| c == '`' || c == '~')?;
+        let length = trimmed.chars().take_while(|&c| c == mark).count();
+        let info = trimmed[length..].trim();
+        if indent >= CODE_INDENT || length < 3 || (mark == '`' && info.contains('`')) {
+            return None;
+        }
+        Some(Fence { indent, mark, length, info: info.to_string() })
+    }
+
+    /// True when `line` is a closing fence for this opening fence.
+    fn is_closed_by(&self, line: &str) -> bool {
+        let trimmed = line.trim();
+        indentation(line) < CODE_INDENT && trimmed.len() >= self.length && trimmed.chars().all(|c| c == self.mark)
+    }
+}
+
+/// Code lines up to the closing fence (or the end of the document).
+fn parse_fenced_code(lines: &[&str], start: usize, fence: Fence) -> (Option<Block>, usize) {
+    let mut code_lines = Vec::new();
+    let mut index = start + 1;
+    // An unclosed fence runs to the end of the document.
+    while index < lines.len() && !fence.is_closed_by(lines[index]) {
+        code_lines.push(strip_indentation(lines[index], fence.indent));
+        index += 1;
+    }
+    let code = code_lines.join("\n");
+    (Some(Block::Code { info: fence.info, code }), (index + 1).min(lines.len()))
+}
+
+/// Consecutive indented (or blank) lines, without trailing blank lines.
+fn parse_indented_code(lines: &[&str], start: usize) -> (Option<Block>, usize) {
+    let mut code_lines = Vec::new();
+    let mut index = start;
+    while index < lines.len() && (is_blank(lines[index]) || indentation(lines[index]) >= CODE_INDENT) {
+        code_lines.push(strip_indentation(lines[index], CODE_INDENT));
+        index += 1;
+    }
+    while code_lines.last().is_some_and(|line| line.trim().is_empty()) {
+        code_lines.pop();
+    }
+    (Some(Block::Code { info: String::new(), code: code_lines.join("\n") }), index)
+}
+
+// ---------- block quotes ----------
+
+/// Lines starting with `>` (plus lazy continuation lines), parsed as blocks.
+fn parse_quote(lines: &[&str], start: usize) -> (Option<Block>, usize) {
+    let mut inner: Vec<&str> = Vec::new();
+    let mut index = start;
+    while index < lines.len() {
+        let line = lines[index];
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix('>').filter(|_| indentation(line) < CODE_INDENT) {
+            inner.push(rest.strip_prefix(' ').unwrap_or(rest));
+        } else if is_lazy_continuation(line, inner.last()) {
+            // "Lazy" line: paragraph text continuing without the `>`.
+            inner.push(trimmed);
+        } else {
+            break;
+        }
+        index += 1;
+    }
+    (Some(Block::Quote(parse_lines(&inner))), index)
+}
+
+/// A non-blank line continuing the paragraph on the previous (non-blank) line.
+fn is_lazy_continuation(line: &str, previous: Option<&&str>) -> bool {
+    let previous_has_text = previous.is_some_and(|previous| !is_blank(previous));
+    previous_has_text && !is_blank(line) && !interrupts_paragraph(line)
+}
+
+// ---------- lists ----------
+
+/// The `- ` or `3. ` that starts a list item.
+#[derive(Clone, Copy)]
+struct ListMarker {
+    /// `None` for bullets, the item number for ordered lists.
+    number: Option<u64>,
+    /// `-`, `*`, `+` for bullets; `.` or `)` for ordered lists.
+    mark: char,
+    /// Column where the item's content starts; continuation lines must be
+    /// indented at least this far.
+    content_column: usize,
+    /// Text follows the marker on the same line.
+    has_content: bool,
+}
+
+impl ListMarker {
+    /// Recognize a list marker at the start of `line`.
+    fn parse(line: &str) -> Option<ListMarker> {
+        let indent = indentation(line);
+        if indent >= CODE_INDENT {
+            return None;
+        }
+        let rest = &line[indent..];
+        let digits = rest.chars().take_while(char::is_ascii_digit).count();
+        let (number, mark) = if digits == 0 {
+            (None, rest.chars().next().filter(|c| matches!(c, '-' | '*' | '+'))?)
+        } else {
+            if digits > MAX_LIST_NUMBER_DIGITS {
+                return None;
+            }
+            let mark = rest[digits..].chars().next().filter(|&c| c == '.' || c == ')')?;
+            (Some(rest[..digits].parse::<u64>().ok()?), mark)
+        };
+        let marker_width = digits.max(1) + usize::from(digits > 0);
+        let after_marker = &rest[marker_width..];
+        if !(after_marker.is_empty() || after_marker.starts_with(' ')) {
+            return None;
+        }
+        let spaces = after_marker.chars().take_while(|&c| c == ' ').count();
+        let has_content = !after_marker.trim().is_empty();
+        // Empty item or 5+ spaces (indented code inside the item): content
+        // starts one space after the marker.
+        let gap = if !has_content || spaces > CODE_INDENT { 1 } else { spaces };
+        Some(ListMarker { number, mark, content_column: indent + marker_width + gap, has_content })
+    }
+
+    /// Items of one list share the bullet character or ordered delimiter.
+    fn continues(&self, other: &ListMarker) -> bool {
+        self.number.is_some() == other.number.is_some() && self.mark == other.mark
+    }
+}
+
+/// Consecutive items with matching markers.
+fn parse_list(lines: &[&str], start: usize, first_marker: ListMarker) -> (Option<Block>, usize) {
+    let mut items = Vec::new();
+    let mut marker = first_marker;
+    let mut index = start;
+    loop {
+        let (item, next) = parse_list_item(lines, index, marker);
+        items.push(item);
+        index = next;
+        let next_marker = lines
+            .get(index)
+            .filter(|line| !is_thematic_break(line.trim_start()))
+            .and_then(|line| ListMarker::parse(line))
+            .filter(|next| next.continues(&first_marker));
+        match next_marker {
+            Some(next) => marker = next,
+            None => break,
+        }
+    }
+    let list = List { start: first_marker.number, items };
+    (Some(Block::List(list)), index)
+}
+
+/// One item: its first line plus indented, blank, and lazy lines below it.
+fn parse_list_item(lines: &[&str], start: usize, marker: ListMarker) -> (ListItem, usize) {
+    let first_line = lines[start].get(marker.content_column..).unwrap_or("");
+    let mut item_lines = vec![first_line];
+    let mut index = start + 1;
+    while index < lines.len() {
+        let line = lines[index];
+        if is_blank(line) {
+            item_lines.push("");
+        } else if indentation(line) >= marker.content_column {
+            item_lines.push(&line[marker.content_column..]);
+        } else if ListMarker::parse(line).is_some_and(|next| next.continues(&marker)) {
+            // A sibling item always ends this one, even `2.` which could
+            // not interrupt a plain paragraph.
+            break;
+        } else if is_lazy_continuation(line, item_lines.last()) {
+            item_lines.push(line.trim_start());
+        } else {
+            break;
+        }
+        index += 1;
+    }
+    while item_lines.len() > 1 && item_lines.last().is_some_and(|line| is_blank(line)) {
+        item_lines.pop();
+    }
+    let (task, first_line) = split_task_box(item_lines[0]);
+    item_lines[0] = first_line;
+    (ListItem { task, blocks: parse_lines(&item_lines) }, index)
+}
+
+/// `[ ] text` -> (Some(false), "text"); `[x] text` -> (Some(true), "text").
+fn split_task_box(line: &str) -> (Option<bool>, &str) {
+    for (prefix, checked) in [("[ ]", false), ("[x]", true), ("[X]", true)] {
+        if let Some(rest) = line.strip_prefix(prefix)
+            && (rest.is_empty() || rest.starts_with(' '))
+        {
+            return (Some(checked), rest.trim_start());
+        }
+    }
+    (None, line)
+}
+
+// ---------- whitespace helpers ----------
+
+/// Empty or only whitespace.
+fn is_blank(line: &str) -> bool {
+    line.trim().is_empty()
+}
+
+/// Number of leading spaces (tabs are already expanded).
+fn indentation(line: &str) -> usize {
+    line.len() - line.trim_start_matches(' ').len()
+}
+
+/// Remove up to `count` leading spaces.
+fn strip_indentation(line: &str, count: usize) -> &str {
+    let remove = indentation(line).min(count);
+    &line[remove..]
+}
+
+/// Replace leading tabs with spaces up to the next tab stop.
+fn expand_leading_tabs(line: &str) -> String {
+    let mut expanded = String::new();
+    let mut rest = line;
+    while let Some(character) = rest.chars().next() {
+        match character {
+            ' ' => expanded.push(' '),
+            '\t' => {
+                let width = TAB_WIDTH - expanded.len() % TAB_WIDTH;
+                expanded.extend(std::iter::repeat_n(' ', width));
+            }
+            _ => break,
+        }
+        rest = &rest[1..];
+    }
+    expanded.push_str(rest);
+    expanded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn paragraph(text: &str) -> Block {
+        Block::Paragraph(parse_inlines(text))
+    }
+
+    fn heading(level: u8, text: &str) -> Block {
+        Block::Heading { level, content: parse_inlines(text) }
+    }
+
+    fn code(info: &str, code: &str) -> Block {
+        Block::Code { info: info.into(), code: code.into() }
+    }
+
+    fn item(blocks: Vec<Block>) -> ListItem {
+        ListItem { task: None, blocks }
+    }
+
+    #[test]
+    fn atx_headings() {
+        assert_eq!(
+            parse_blocks("# One\n###### Six ##\n####### seven\n#nospace"),
+            vec![heading(1, "One"), heading(6, "Six"), paragraph("####### seven\n#nospace")]
+        );
+    }
+
+    #[test]
+    fn setext_headings() {
+        assert_eq!(parse_blocks("Title\n=====\nSub\n---"), vec![heading(1, "Title"), heading(2, "Sub")]);
+    }
+
+    #[test]
+    fn paragraphs_split_on_blank_lines() {
+        assert_eq!(parse_blocks("a\nb\n\n\nc"), vec![paragraph("a\nb"), paragraph("c")]);
+    }
+
+    #[test]
+    fn thematic_breaks() {
+        assert_eq!(parse_blocks("***\n- - -\n___"), vec![Block::ThematicBreak; 3]);
+    }
+
+    #[test]
+    fn fenced_code_keeps_content_verbatim() {
+        assert_eq!(
+            parse_blocks("```rust\nfn a() {}\n\n  # not heading\n```\nafter"),
+            vec![code("rust", "fn a() {}\n\n  # not heading"), paragraph("after")]
+        );
+        assert_eq!(parse_blocks("~~~\nopen to end"), vec![code("", "open to end")]);
+    }
+
+    #[test]
+    fn indented_code() {
+        assert_eq!(
+            parse_blocks("    let x = 1;\n\n    let y = 2;\n\ntext"),
+            vec![code("", "let x = 1;\n\nlet y = 2;"), paragraph("text"),]
+        );
+    }
+
+    #[test]
+    fn indented_line_inside_paragraph_is_not_code() {
+        assert_eq!(parse_blocks("a\n    b"), vec![paragraph("a\nb")]);
+    }
+
+    #[test]
+    fn block_quote_with_nested_blocks_and_lazy_line() {
+        assert_eq!(
+            parse_blocks("> # Hi\n> text\nlazy\n>\n> > deep"),
+            vec![Block::Quote(vec![heading(1, "Hi"), paragraph("text\nlazy"), Block::Quote(vec![paragraph("deep")]),])]
+        );
+    }
+
+    #[test]
+    fn bullet_list_with_nesting() {
+        assert_eq!(
+            parse_blocks("- a\n- b\n  - c\n  - d\n- e"),
+            vec![Block::List(List {
+                start: None,
+                items: vec![
+                    item(vec![paragraph("a")]),
+                    item(vec![
+                        paragraph("b"),
+                        Block::List(List {
+                            start: None,
+                            items: vec![item(vec![paragraph("c")]), item(vec![paragraph("d")])],
+                        }),
+                    ]),
+                    item(vec![paragraph("e")]),
+                ],
+            })]
+        );
+    }
+
+    #[test]
+    fn ordered_list_keeps_start_number() {
+        let blocks = parse_blocks("3. three\n4. four");
+        let Block::List(list) = &blocks[0] else { panic!("{blocks:?}") };
+        assert_eq!(list.start, Some(3));
+        assert_eq!(list.items.len(), 2);
+    }
+
+    #[test]
+    fn different_bullet_starts_new_list() {
+        assert_eq!(parse_blocks("- a\n* b").len(), 2);
+    }
+
+    #[test]
+    fn task_items() {
+        let blocks = parse_blocks("- [ ] todo\n- [x] done\n- [link](u)");
+        let Block::List(list) = &blocks[0] else { panic!("{blocks:?}") };
+        let tasks: Vec<Option<bool>> = list.items.iter().map(|item| item.task).collect();
+        assert_eq!(tasks, [Some(false), Some(true), None]);
+        assert_eq!(list.items[0].blocks, vec![paragraph("todo")]);
+    }
+
+    #[test]
+    fn list_item_with_blank_line_and_code() {
+        let blocks = parse_blocks("1. step\n\n   ```\n   cmd\n   ```\n2. next");
+        let Block::List(list) = &blocks[0] else { panic!("{blocks:?}") };
+        assert_eq!(list.items[0].blocks, vec![paragraph("step"), code("", "cmd")]);
+        assert_eq!(list.items.len(), 2);
+    }
+
+    #[test]
+    fn number_without_marker_space_is_text() {
+        assert_eq!(parse_blocks("2024.release"), vec![paragraph("2024.release")]);
+        assert_eq!(parse_blocks("-not a list"), vec![paragraph("-not a list")]);
+    }
+
+    #[test]
+    fn ordered_list_not_starting_at_one_does_not_interrupt_paragraph() {
+        assert_eq!(parse_blocks("In 2024\n2. was good"), vec![paragraph("In 2024\n2. was good")]);
+    }
+
+    #[test]
+    fn tabs_and_crlf() {
+        assert_eq!(parse_blocks("\tcode\r\n\r\ntext\r\n"), vec![code("", "code"), paragraph("text")]);
+    }
+
+    #[test]
+    fn empty_document() {
+        assert_eq!(parse_blocks(""), vec![]);
+        assert_eq!(parse_blocks("\n\n  \n"), vec![]);
+    }
+}

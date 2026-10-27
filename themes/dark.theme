@@ -1,0 +1,29 @@
+# rubrique built-in theme: Dark
+# Copy this file to ~/.config/rubrique/themes/ (macOS: ~/Library/Application
+# Support/rubrique/themes/) under a new name to make your own theme.
+# Colors are #rrggbb. Keys you leave out come from the `base` theme.
+name=Dark
+base=dark
+
+# Editor and preview page, text fields, dialogs
+background=#1d1f23
+# Explorer, top bar and status bar
+sidebar=#17191c
+# Buttons and checkboxes
+surface=#2a2d33
+# Buttons and rows under the mouse
+hover=#353941
+# Panel edges, separators, outlines
+border=#2c2f35
+text=#d7dae0
+# Headings and hovered text
+text_strong=#f4f5f7
+# Hints, quotes, info strings
+text_weak=#8a9099
+# Links, text cursor, focus outline
+accent=#6ea8fe
+# Selected text and the open file in the explorer
+selection=#2c4a78
+code_background=#26292e
+warning=#e0b252
+error=#f07272
