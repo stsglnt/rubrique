@@ -488,7 +488,7 @@ impl RubriqueApp {
     }
 
     /// Path of the open file on the left; mode and editor stats on the right.
-    fn document_status(&self, ui: &mut Ui) {
+    fn document_status(&mut self, ui: &mut Ui) {
         let Some(path) = self.open_file.path() else {
             return;
         };
@@ -497,13 +497,23 @@ impl RubriqueApp {
         if !matches!(self.open_file, OpenFile::Text { .. }) {
             return;
         }
+        let showing_preview = self.showing_preview();
+        let is_markdown = self.open_file.path().is_some_and(is_markdown_path);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if self.showing_preview() {
-                ui.label("Preview");
-                return;
+            let mode = if showing_preview { "Preview" } else { "Edit" };
+            // Markdown files switch mode with a click; other files only edit.
+            if is_markdown {
+                let toggle = ui.small_button(mode).on_hover_text("Switch edit / preview (Cmd+E)");
+                if toggle.clicked() {
+                    self.toggle_preview();
+                    if !self.showing_preview() {
+                        focus_editor(ui.ctx());
+                    }
+                }
+            } else {
+                ui.label(mode);
             }
-            ui.label("Edit");
-            if let Some(stats) = &self.stats {
+            if !showing_preview && let Some(stats) = &self.stats {
                 ui.label(format!("{}   ", stats.summary()));
             }
         });
