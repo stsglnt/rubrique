@@ -55,6 +55,65 @@ accent=#00aaff
 
 All keys are listed in [`specs/07-themes.md`](specs/07-themes.md).
 
+### Theme examples
+
+Copy one into a file such as `~/.config/rubrique/themes/sepia.theme`. Keys left
+out come from the `base` theme.
+
+**Sepia**: warm paper for long reading.
+
+```
+name=Sepia
+base=light
+background=#f6efe1
+sidebar=#ece3d0
+surface=#e3d8c1
+hover=#d9ccb2
+border=#d8cbb3
+text=#433422
+text_strong=#2a1f12
+text_weak=#6e5c45
+accent=#9a4f1c
+selection=#e3cfa8
+code_background=#efe6d4
+```
+
+**Midnight**: deep blue for night work.
+
+```
+name=Midnight
+base=dark
+background=#0f1626
+sidebar=#0b111d
+surface=#1b2438
+hover=#253049
+border=#1d2740
+text=#cdd6e6
+text_strong=#f2f5fa
+text_weak=#8391a8
+accent=#7fb4ff
+selection=#23395f
+code_background=#151e31
+```
+
+**High contrast**: black and white with a yellow accent.
+
+```
+name=High contrast
+base=dark
+background=#000000
+sidebar=#000000
+surface=#1a1a1a
+hover=#333333
+border=#ffffff
+text=#ffffff
+text_strong=#ffffff
+text_weak=#c8c8c8
+accent=#ffd84d
+selection=#1f4fbf
+code_background=#141414
+```
+
 ## Development
 
 ```sh
