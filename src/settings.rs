@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 
 use crate::theme::catalog::ThemeChoice;
 
+pub mod view;
+
 /// How a Markdown file is shown: as editable text or as the rendered preview.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MarkdownView {

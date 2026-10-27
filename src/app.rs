@@ -12,17 +12,18 @@ use crate::explorer::paths::{absolute_path_text, name_text};
 use crate::explorer::tree::{FsNode, is_markdown_path};
 use crate::explorer::view::{ExplorerAction, TreeContext, show_explorer};
 use crate::markdown::blocks::{Block, parse_blocks};
+use crate::settings::view::{SettingsAction, gear_button, show_settings};
 use crate::settings::{MarkdownView, Settings, themes_folder};
-use crate::theme::catalog::{ThemeChoice, Themes};
+use crate::theme::catalog::Themes;
 use crate::theme::style::{apply_theme, page_fill};
 
 /// How long a status message ("Copied ...") stays visible.
 const STATUS_MESSAGE_SECONDS: f64 = 4.0;
 const EXPLORER_DEFAULT_WIDTH: f32 = 260.0;
-/// Room kept to the right of the folder field for the "Open" button and the theme picker.
-const TOP_BAR_BUTTONS_ROOM: f32 = 220.0;
-/// Width of the theme picker in the top bar.
-const THEME_PICKER_WIDTH: f32 = 110.0;
+/// Room kept to the right of the folder field for the "Open" and settings buttons.
+const TOP_BAR_BUTTONS_ROOM: f32 = 120.0;
+/// Width of the settings panel.
+const SETTINGS_PANEL_WIDTH: f32 = 320.0;
 /// Space around the "cannot display this file" message.
 const UNSUPPORTED_MARGIN: f32 = 16.0;
 /// Inner margin (x, y) of the top bar and the status bar.
@@ -34,6 +35,7 @@ const DIRTY_MARKER: &str = "● ";
 
 const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
 const TOGGLE_PREVIEW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::E);
+const TOGGLE_SETTINGS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma);
 const COPY_OPEN_PATH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::C);
 
 /// What the right panel shows.
@@ -105,8 +107,10 @@ pub struct RubriqueApp {
     stats: Option<TextStats>,
     /// Last title sent to the window, to avoid resending it every frame.
     window_title: String,
-    /// Built-in and user themes, read once at start.
+    /// Built-in and user themes, read at start and on "Reload themes".
     themes: Themes,
+    /// The settings panel is shown on the right.
+    settings_open: bool,
 }
 
 impl RubriqueApp {
@@ -126,6 +130,7 @@ impl RubriqueApp {
             stats: None,
             window_title: String::new(),
             themes,
+            settings_open: false,
         };
         app.settings.last_folder = Some(app.tree.path.clone());
         if let Some(file) = file {
@@ -268,6 +273,15 @@ impl RubriqueApp {
             let text = absolute_path_text(path);
             self.copy_to_clipboard(ctx, text);
         }
+        if ctx.input_mut(|input| input.consume_shortcut(&TOGGLE_SETTINGS)) {
+            self.settings_open = !self.settings_open;
+        }
+        if self.settings_open
+            && self.pending.is_none()
+            && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
+        {
+            self.settings_open = false;
+        }
         if ctx.input_mut(|input| input.consume_shortcut(&SAVE)) {
             self.save();
         }
@@ -326,32 +340,32 @@ impl RubriqueApp {
             if ui.button("Open").clicked() || entered {
                 self.open_typed_folder();
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| self.theme_picker(ui));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if gear_button(ui, self.settings_open).clicked() {
+                    self.settings_open = !self.settings_open;
+                }
+            });
         });
     }
 
-    /// Drop-down with "System" and every theme; applies the pick at once.
-    fn theme_picker(&mut self, ui: &mut Ui) {
-        let mut choice = self.settings.theme.clone();
-        let selected = match &choice {
-            ThemeChoice::System => "System",
-            ThemeChoice::Named(id) => self.themes.find(id).map_or("System", |theme| theme.name.as_str()),
+    /// Right panel: settings. Theme picks apply at once.
+    fn settings_panel(&mut self, ui: &mut Ui) {
+        let folder = themes_folder();
+        let Some(action) = show_settings(ui, &self.themes, &self.settings.theme, folder.as_deref()) else {
+            return;
         };
-        egui::ComboBox::from_id_salt("theme-picker")
-            .selected_text(selected)
-            .width(THEME_PICKER_WIDTH)
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut choice, ThemeChoice::System, "System")
-                    .on_hover_text("Light or dark, following the system");
-                for theme in &self.themes.list {
-                    ui.selectable_value(&mut choice, ThemeChoice::Named(theme.id.clone()), &theme.name);
-                }
-            })
-            .response
-            .on_hover_text("Theme");
-        if choice != self.settings.theme {
-            apply_theme(ui.ctx(), &self.themes, &choice);
-            self.settings.theme = choice;
+        match action {
+            SettingsAction::PickTheme(choice) => {
+                apply_theme(ui.ctx(), &self.themes, &choice);
+                self.settings.theme = choice;
+            }
+            SettingsAction::ReloadThemes => {
+                self.themes = Themes::load(folder.as_deref());
+                apply_theme(ui.ctx(), &self.themes, &self.settings.theme);
+                let count = self.themes.list.len();
+                self.show_status(format!("Loaded {count} themes"));
+            }
+            SettingsAction::Close => self.settings_open = false,
         }
     }
 
@@ -602,6 +616,14 @@ impl eframe::App for RubriqueApp {
             .resizable(true)
             .default_size(EXPLORER_DEFAULT_WIDTH)
             .show(ui, |ui| self.explorer(ui));
+        if self.settings_open {
+            let panel_frame = egui::Frame::side_top_panel(&style).inner_margin(0);
+            egui::Panel::right("settings")
+                .resizable(false)
+                .exact_size(SETTINGS_PANEL_WIDTH)
+                .frame(panel_frame)
+                .show(ui, |ui| self.settings_panel(ui));
+        }
         egui::CentralPanel::default().frame(page_frame).show(ui, |ui| self.document_area(ui));
 
         self.unsaved_dialog(&ctx);

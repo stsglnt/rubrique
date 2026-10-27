@@ -37,6 +37,7 @@ Linux also needs the usual X11/Wayland and OpenGL development libraries.
 | --- | --- |
 | Cmd+S | Save |
 | Cmd+E | Toggle edit / preview |
+| Cmd+, | Open or close Settings |
 | Cmd+Shift+C | Copy path of the open file |
 | Alt+Up / Alt+Down | Move line(s) |
 | Cmd+D | Duplicate line(s) |
@@ -44,11 +45,12 @@ Linux also needs the usual X11/Wayland and OpenGL development libraries.
 
 ## Themes
 
-Pick a theme from the drop-down at the top right: **System** (follows your OS),
-**Light**, **Dark**, or one of your own.
+Open **Settings** with the gear at the top right (or `Cmd/Ctrl+,`) and click a
+theme card: **System** (follows your OS), **Light**, **Dark**, or one of your own.
 
 To add a theme, put a `.theme` file in `~/.config/rubrique/themes/`
-(macOS: `~/Library/Application Support/rubrique/themes/`) and restart rubrique.
+(macOS: `~/Library/Application Support/rubrique/themes/`) and press
+**Reload themes** in Settings.
 Set only the colors you want to change; the rest comes from `base`:
 
 ```
