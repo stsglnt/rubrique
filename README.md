@@ -5,8 +5,7 @@ It is source-first: rubrique never rewrites your file, it only saves what you ty
 
 <img src="docs/screenshots/themes.png" alt="One rubrique window shown in five themes: Light, Dark, Sepia, Midnight and High contrast" width="880">
 
-One window, five themes. Light and Dark ship with rubrique; the other three are
-[examples](#themes) you can copy.
+One window, five themes, all built in: Light, Dark, Sepia, Midnight and High contrast.
 
 ## Features (v0.1)
 
@@ -15,7 +14,7 @@ One window, five themes. Light and Dark ship with rubrique; the other three are
 - Plain-text editor with Markdown syntax colors, and a rendered preview (`Cmd/Ctrl+E`)
 - Atomic saves, unsaved-changes prompt, reload when the file changes on disk
 - Line shortcuts: move (`Alt+Up/Down`), duplicate (`Cmd/Ctrl+D`), insert date (`Cmd/Ctrl+Shift+D`)
-- Light and Dark themes built in, or follow the system; add your own as small text files
+- Five built-in themes (Light, Dark, Sepia, Midnight, High contrast), or follow the system; add your own as small text files
 - One dependency (`eframe`); the Markdown parser and everything else is our own code
 
 ## Build and run
@@ -46,7 +45,8 @@ Linux also needs the usual X11/Wayland and OpenGL development libraries.
 ## Themes
 
 Open **Settings** with the gear at the top right (or `Cmd/Ctrl+,`) and click a
-theme card: **System** (follows your OS), **Light**, **Dark**, or one of your own.
+theme card: **System** (follows your OS), **Light**, **Dark**, **Sepia**,
+**Midnight**, **High contrast**, or one of your own.
 
 To add a theme, put a `.theme` file in `~/.config/rubrique/themes/`
 (macOS: `~/Library/Application Support/rubrique/themes/`) and press
@@ -59,73 +59,7 @@ base=dark
 accent=#00aaff
 ```
 
-The three example themes from the screenshot, ready to copy:
-
-<details>
-<summary><b>Sepia</b>: warm paper for long reading</summary>
-
-```
-name=Sepia
-base=light
-background=#f6efe1
-sidebar=#ece3d0
-surface=#e3d8c1
-hover=#d9ccb2
-border=#d8cbb3
-text=#433422
-text_strong=#2a1f12
-text_weak=#6e5c45
-accent=#9a4f1c
-selection=#e3cfa8
-code_background=#efe6d4
-```
-
-</details>
-
-<details>
-<summary><b>Midnight</b>: deep blue for night work</summary>
-
-```
-name=Midnight
-base=dark
-background=#0f1626
-sidebar=#0b111d
-surface=#1b2438
-hover=#253049
-border=#1d2740
-text=#cdd6e6
-text_strong=#f2f5fa
-text_weak=#8391a8
-accent=#7fb4ff
-selection=#23395f
-code_background=#151e31
-```
-
-</details>
-
-<details>
-<summary><b>High contrast</b>: black and white with a yellow accent</summary>
-
-```
-name=High contrast
-base=dark
-background=#000000
-sidebar=#000000
-surface=#1a1a1a
-hover=#333333
-border=#ffffff
-text=#ffffff
-text_strong=#ffffff
-text_weak=#c8c8c8
-accent=#ffd84d
-selection=#1f4fbf
-code_background=#141414
-```
-
-</details>
-
-Start from [`themes/light.theme`](themes/light.theme) or
-[`themes/dark.theme`](themes/dark.theme) for a full, commented file.
+For a full file to start from, see the built-in themes in [`themes/`](themes/).
 All keys are listed in [`specs/07-themes.md`](specs/07-themes.md).
 
 ## Development

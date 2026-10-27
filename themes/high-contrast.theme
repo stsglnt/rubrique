@@ -1,0 +1,15 @@
+# rubrique built-in theme: High contrast (black and white with a yellow accent).
+# Colors are #rrggbb. Keys left out come from the `base` theme.
+name=High contrast
+base=dark
+background=#000000
+sidebar=#000000
+surface=#1a1a1a
+hover=#333333
+border=#ffffff
+text=#ffffff
+text_strong=#ffffff
+text_weak=#c8c8c8
+accent=#ffd84d
+selection=#1f4fbf
+code_background=#141414

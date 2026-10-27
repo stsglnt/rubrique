@@ -1,0 +1,15 @@
+# rubrique built-in theme: Sepia (warm paper for long reading).
+# Colors are #rrggbb. Keys left out come from the `base` theme.
+name=Sepia
+base=light
+background=#f6efe1
+sidebar=#ece3d0
+surface=#e3d8c1
+hover=#d9ccb2
+border=#d8cbb3
+text=#433422
+text_strong=#2a1f12
+text_weak=#6e5c45
+accent=#9a4f1c
+selection=#e3cfa8
+code_background=#efe6d4

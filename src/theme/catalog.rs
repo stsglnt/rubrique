@@ -7,6 +7,12 @@ use super::palette::{Base, Theme};
 
 /// File extension of theme files in the themes folder.
 const THEME_EXTENSION: &str = "theme";
+/// Themes shipped with rubrique after Light and Dark: id and file text.
+const EXTRA_BUILTINS: [(&str, &str); 3] = [
+    ("sepia", include_str!("../../themes/sepia.theme")),
+    ("midnight", include_str!("../../themes/midnight.theme")),
+    ("high-contrast", include_str!("../../themes/high-contrast.theme")),
+];
 /// What the settings file stores for "follow the system".
 const SYSTEM_ID: &str = "system";
 
@@ -38,7 +44,7 @@ impl ThemeChoice {
     }
 }
 
-/// All themes: Light and Dark first, then the user's themes by name.
+/// All themes: the built-in ones first, then the user's themes by name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Themes {
     pub list: Vec<Theme>,
@@ -46,7 +52,7 @@ pub struct Themes {
 
 impl Themes {
     /// The built-in themes plus every `*.theme` file in `folder`. A user file
-    /// named `light.theme` or `dark.theme` replaces the built-in one.
+    /// with a built-in theme's id (such as `dark.theme`) replaces that theme.
     pub fn load(folder: Option<&Path>) -> Self {
         let mut themes = Themes::builtin();
         let Some(entries) = folder.and_then(|folder| fs::read_dir(folder).ok()) else {
@@ -74,7 +80,9 @@ impl Themes {
 
     /// Only the themes shipped with rubrique.
     pub fn builtin() -> Self {
-        Themes { list: vec![Theme::builtin(Base::Light), Theme::builtin(Base::Dark)] }
+        let mut list = vec![Theme::builtin(Base::Light), Theme::builtin(Base::Dark)];
+        list.extend(EXTRA_BUILTINS.iter().map(|(id, text)| Theme::parse(id, text)));
+        Themes { list }
     }
 
     /// The theme with this id, if there is one.
@@ -105,10 +113,22 @@ mod tests {
     }
 
     #[test]
-    fn light_and_dark_are_always_installed() {
+    fn five_themes_are_always_installed() {
         let themes = Themes::load(None);
         let ids: Vec<&str> = themes.list.iter().map(|theme| theme.id.as_str()).collect();
-        assert_eq!(ids, ["light", "dark"]);
+        assert_eq!(ids, ["light", "dark", "sepia", "midnight", "high-contrast"]);
+        let names: Vec<&str> = themes.list.iter().map(|theme| theme.name.as_str()).collect();
+        assert_eq!(names, ["Light", "Dark", "Sepia", "Midnight", "High contrast"]);
+    }
+
+    #[test]
+    fn extra_builtins_keep_their_base_and_colors() {
+        let themes = Themes::builtin();
+        let base_of = |id| themes.find(id).map(|theme| theme.base);
+        assert_eq!(base_of("sepia"), Some(Base::Light));
+        assert_eq!(base_of("midnight"), Some(Base::Dark));
+        assert_eq!(base_of("high-contrast"), Some(Base::Dark));
+        assert_eq!(themes.find("sepia").map(|theme| theme.palette.background), Some(Rgb(0xf6, 0xef, 0xe1)));
     }
 
     #[test]
@@ -119,7 +139,7 @@ mod tests {
         temp.write("notes.md", "name=Not a theme\n");
         let themes = Themes::load(Some(temp.path()));
         let names: Vec<&str> = themes.list.iter().map(|theme| theme.name.as_str()).collect();
-        assert_eq!(names, ["Light", "Dark", "night owl", "Zen"]);
+        assert_eq!(names, ["Light", "Dark", "Sepia", "Midnight", "High contrast", "night owl", "Zen"]);
         assert_eq!(themes.find("Night").map(|theme| theme.base), Some(Base::Dark));
     }
 
@@ -128,7 +148,7 @@ mod tests {
         let temp = TempFolder::new();
         temp.write("dark.theme", "name=My Dark\nbase=dark\naccent=#ff0000\n");
         let themes = Themes::load(Some(temp.path()));
-        assert_eq!(themes.list.len(), 2);
+        assert_eq!(themes.list.len(), Themes::builtin().list.len());
         let dark = themes.for_base(Base::Dark);
         assert_eq!(dark.name, "My Dark");
         assert_eq!(dark.palette.accent, Rgb(255, 0, 0));

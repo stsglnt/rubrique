@@ -1,0 +1,15 @@
+# rubrique built-in theme: Midnight (deep blue for night work).
+# Colors are #rrggbb. Keys left out come from the `base` theme.
+name=Midnight
+base=dark
+background=#0f1626
+sidebar=#0b111d
+surface=#1b2438
+hover=#253049
+border=#1d2740
+text=#cdd6e6
+text_strong=#f2f5fa
+text_weak=#8391a8
+accent=#7fb4ff
+selection=#23395f
+code_background=#151e31
