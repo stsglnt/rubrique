@@ -3,6 +3,11 @@
 A fast, lightweight Markdown editor for Linux and macOS, written in Rust.
 It is source-first: rubrique never rewrites your file, it only saves what you typed.
 
+<img src="docs/screenshots/themes.png" alt="One rubrique window shown in five themes: Light, Dark, Sepia, Midnight and High contrast" width="880">
+
+One window, five themes. Light and Dark ship with rubrique; the other three are
+[examples](#themes) you can copy.
+
 ## Features (v0.1)
 
 - File explorer that shows **all** files; a **Markdown only** checkbox hides the rest
@@ -42,20 +47,9 @@ Linux also needs the usual X11/Wayland and OpenGL development libraries.
 Pick a theme from the drop-down at the top right: **System** (follows your OS),
 **Light**, **Dark**, or one of your own.
 
-**Light**
-
-<img src="docs/screenshots/light-edit.png" alt="rubrique with the Light theme, editing" width="800">
-<img src="docs/screenshots/light-preview.png" alt="rubrique with the Light theme, preview" width="800">
-
-**Dark**
-
-<img src="docs/screenshots/dark-edit.png" alt="rubrique with the Dark theme, editing" width="800">
-<img src="docs/screenshots/dark-preview.png" alt="rubrique with the Dark theme, preview" width="800">
-
-To make a theme, put a `.theme` file in `~/.config/rubrique/themes/`
+To add a theme, put a `.theme` file in `~/.config/rubrique/themes/`
 (macOS: `~/Library/Application Support/rubrique/themes/`) and restart rubrique.
-Start from [`themes/light.theme`](themes/light.theme) or
-[`themes/dark.theme`](themes/dark.theme), or set only what you want to change:
+Set only the colors you want to change; the rest comes from `base`:
 
 ```
 name=Ocean
@@ -63,19 +57,10 @@ base=dark
 accent=#00aaff
 ```
 
-All keys are listed in [`specs/07-themes.md`](specs/07-themes.md).
-
-### Theme examples
-
-Copy one into a file such as `~/.config/rubrique/themes/sepia.theme`. Keys left
-out come from the `base` theme.
-
-**Sepia**: warm paper for long reading.
-
-<img src="docs/screenshots/sepia.png" alt="rubrique with the Sepia theme, preview" width="800">
+The three example themes from the screenshot, ready to copy:
 
 <details>
-<summary>Sepia config</summary>
+<summary><b>Sepia</b>: warm paper for long reading</summary>
 
 ```
 name=Sepia
@@ -95,12 +80,8 @@ code_background=#efe6d4
 
 </details>
 
-**Midnight**: deep blue for night work.
-
-<img src="docs/screenshots/midnight.png" alt="rubrique with the Midnight theme, preview" width="800">
-
 <details>
-<summary>Midnight config</summary>
+<summary><b>Midnight</b>: deep blue for night work</summary>
 
 ```
 name=Midnight
@@ -120,12 +101,8 @@ code_background=#151e31
 
 </details>
 
-**High contrast**: black and white with a yellow accent.
-
-<img src="docs/screenshots/high-contrast.png" alt="rubrique with the High contrast theme, preview" width="800">
-
 <details>
-<summary>High contrast config</summary>
+<summary><b>High contrast</b>: black and white with a yellow accent</summary>
 
 ```
 name=High contrast
@@ -144,6 +121,10 @@ code_background=#141414
 ```
 
 </details>
+
+Start from [`themes/light.theme`](themes/light.theme) or
+[`themes/dark.theme`](themes/dark.theme) for a full, commented file.
+All keys are listed in [`specs/07-themes.md`](specs/07-themes.md).
 
 ## Development
 
