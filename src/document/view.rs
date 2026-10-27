@@ -11,11 +11,11 @@ use crate::markdown::blocks::Block;
 use crate::markdown::render::render_blocks;
 
 /// Widest the preview text gets, for comfortable reading.
-const PREVIEW_MAX_WIDTH: f32 = 860.0;
+const PREVIEW_MAX_WIDTH: f32 = 760.0;
 /// Space (x, y) between the page edge and the editor text.
 const EDITOR_MARGIN: (i8, i8) = (16, 12);
 /// Space (x, y) between the page edge and the preview text.
-const PREVIEW_MARGIN: (i8, i8) = (28, 20);
+const PREVIEW_MARGIN: (i8, i8) = (32, 24);
 
 /// The editor widget's id, shared by drawing, focus and the line shortcuts.
 fn editor_id() -> Id {
