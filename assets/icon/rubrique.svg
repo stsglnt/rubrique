@@ -5,7 +5,7 @@
        The "m" sits a little right of exact center, because the tip makes its
        right side lighter; this looks centered. -->
   <rect x="100" y="100" width="824" height="824" rx="185" fill="#f6efe1" stroke="#d8cbb3" stroke-width="14"/>
-  <g transform="translate(512 512) scale(1.28) translate(-468 -550)">
+  <g transform="translate(512 512) scale(1.28) translate(-474 -550)">
     <path d="M290 730 V480 Q290 370 385 370 Q480 370 480 480 V730 M480 480 Q480 370 575 370 Q670 370 670 480 V600"
           fill="none" stroke="#433422" stroke-width="92" stroke-linecap="round" stroke-linejoin="round"/>
     <polygon points="624,600 716,600 700,720 640,742" fill="#9a4f1c"/>
