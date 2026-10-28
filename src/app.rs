@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use eframe::egui::{self, Context, Key, KeyboardShortcut, Modifiers, RichText, Ui, ViewportCommand};
 
+use crate::document::merge::MergeSession;
+use crate::document::merge_view::{MergeAction, show_merge};
 use crate::document::text_file::{DiskState, Document, Opened, Unsupported};
 use crate::document::text_stats::TextStats;
 use crate::document::view::{focus_editor, handle_editor_shortcuts, show_editor, show_preview};
@@ -27,6 +29,8 @@ const EXPLORER_DEFAULT_WIDTH: f32 = 260.0;
 const SETTINGS_PANEL_WIDTH: f32 = 320.0;
 /// Space around the "cannot display this file" message.
 const UNSUPPORTED_MARGIN: f32 = 16.0;
+/// How often the open file is checked for changes made by other programs.
+const DISK_CHECK_SECONDS: f64 = 2.0;
 /// Width of the "Rename" dialog.
 const RENAME_DIALOG_WIDTH: f32 = 320.0;
 /// Inner margin (x, y) of the status bar.
@@ -118,6 +122,10 @@ pub struct RubriqueApp {
     settings_open: bool,
     /// The "Rename" dialog, while it is open.
     renaming: Option<Renaming>,
+    /// The merge screen for the open file, while it is open.
+    merging: Option<MergeSession>,
+    /// egui time of the last check for outside changes.
+    last_disk_check: f64,
 }
 
 /// State of the "Rename" dialog.
@@ -148,6 +156,8 @@ impl RubriqueApp {
             themes,
             settings_open: false,
             renaming: None,
+            merging: None,
+            last_disk_check: 0.0,
         };
         app.remember_roots();
         if let Some(file) = file {
@@ -179,6 +189,7 @@ impl RubriqueApp {
     /// Show `path` in the right panel, or a status message when it cannot be read.
     fn open_file_now(&mut self, path: PathBuf) {
         self.stats = None;
+        self.merging = None;
         match Document::open(&path) {
             Ok(Opened::Text(document)) => {
                 self.open_file = OpenFile::Text { document, preview: None, disk_notice: None };
@@ -287,13 +298,39 @@ impl RubriqueApp {
         };
         match document.disk_state() {
             DiskState::Unchanged => {}
-            // Nothing of ours to lose: just pick up the new version.
-            DiskState::Modified if !document.is_dirty() => {
-                let path = document.path.clone();
-                self.open_file_now(path);
+            DiskState::Deleted => *disk_notice = Some(DiskState::Deleted),
+            DiskState::Modified => {
+                let Ok(disk_text) = document.read_disk_text() else {
+                    *disk_notice = Some(DiskState::Modified);
+                    return;
+                };
+                // Only the time changed, or the disk already holds my text: nothing to tell.
+                if disk_text == document.base_text() || disk_text == document.text {
+                    document.accept_disk_text(disk_text);
+                    *disk_notice = None;
+                } else if document.is_dirty() {
+                    *disk_notice = Some(DiskState::Modified);
+                } else {
+                    // Nothing of ours to lose: pick up the new version and say so.
+                    let path = document.path.clone();
+                    self.open_file_now(path.clone());
+                    self.show_status(format!("Reloaded {}: it was changed by another program", name_text(&path)));
+                }
             }
-            state @ (DiskState::Modified | DiskState::Deleted) => *disk_notice = Some(state),
         }
+    }
+
+    /// Check for outside changes every few seconds while a file is open.
+    fn poll_disk(&mut self, ctx: &Context) {
+        if !matches!(self.open_file, OpenFile::Text { .. }) || self.merging.is_some() {
+            return;
+        }
+        let now = ctx.input(|input| input.time);
+        if now - self.last_disk_check >= DISK_CHECK_SECONDS {
+            self.last_disk_check = now;
+            self.check_disk();
+        }
+        ctx.request_repaint_after(Duration::from_secs_f64(DISK_CHECK_SECONDS));
     }
 
     // ---------- per-frame input ----------
@@ -604,6 +641,7 @@ impl RubriqueApp {
     fn document_area(&mut self, ui: &mut Ui) {
         let showing_preview = self.showing_preview();
         let mut notice_choice = None;
+        let mut merge_action = None;
         match &mut self.open_file {
             OpenFile::Nothing => {
                 ui.centered_and_justified(|ui| ui.label(RichText::new("Pick a file in the explorer").weak()));
@@ -615,10 +653,14 @@ impl RubriqueApp {
                 });
             }
             OpenFile::Text { document, preview, disk_notice } => {
-                if let Some(state) = disk_notice {
+                if let Some(session) = &mut self.merging {
+                    merge_action = show_merge(ui, session, &name_text(&document.path));
+                } else if let Some(state) = disk_notice {
                     notice_choice = disk_notice_bar(ui, state);
                 }
-                if showing_preview {
+                if self.merging.is_some() {
+                    // The merge screen fills the page.
+                } else if showing_preview {
                     let blocks = preview.get_or_insert_with(|| parse_blocks(&document.text));
                     show_preview(ui, blocks);
                 } else {
@@ -637,6 +679,9 @@ impl RubriqueApp {
         if let Some(choice) = notice_choice {
             self.apply_notice_choice(choice);
         }
+        if let Some(action) = merge_action {
+            self.finish_merge(action);
+        }
     }
 
     /// Act on a button of the "changed on disk" bar.
@@ -647,12 +692,50 @@ impl RubriqueApp {
                     self.open_file_now(path);
                 }
             }
+            NoticeChoice::Merge => self.start_merge(),
             NoticeChoice::KeepMine => {
                 if let OpenFile::Text { document, disk_notice, .. } = &mut self.open_file {
                     document.acknowledge_disk_change();
                     *disk_notice = None;
                 }
             }
+        }
+    }
+
+    /// Open the merge screen: the file on disk against my buffer, from the
+    /// text both started from.
+    fn start_merge(&mut self) {
+        let OpenFile::Text { document, .. } = &self.open_file else {
+            return;
+        };
+        match document.read_disk_text() {
+            Ok(disk_text) => self.merging = Some(MergeSession::new(document.base_text(), &document.text, disk_text)),
+            Err(error) => self.show_status(format!("Cannot read the file on disk: {error}")),
+        }
+    }
+
+    /// Apply or drop the merge result.
+    fn finish_merge(&mut self, action: MergeAction) {
+        let Some(session) = self.merging.take() else {
+            return;
+        };
+        if action == MergeAction::Cancel {
+            return;
+        }
+        let Some(result) = session.result() else {
+            self.merging = Some(session);
+            return;
+        };
+        if let OpenFile::Text { document, preview, disk_notice } = &mut self.open_file {
+            document.apply_merge(result, session.disk_text);
+            *preview = None;
+            *disk_notice = None;
+            let message = if document.is_dirty() {
+                "Merged. Save to write the result to disk."
+            } else {
+                "Merged: the result matches the file on disk."
+            };
+            self.show_status(message.to_string());
         }
     }
 
@@ -775,7 +858,11 @@ fn write_browser_copy(source: &Path, page: &str) -> std::io::Result<PathBuf> {
 /// Buttons on the "changed on disk" bar.
 #[derive(Clone, Copy, Debug)]
 enum NoticeChoice {
+    /// Open the merge screen.
+    Merge,
+    /// Load the version on disk, dropping my changes.
     Reload,
+    /// Keep my version; the next save overwrites the one on disk.
     KeepMine,
 }
 
@@ -785,7 +872,10 @@ fn disk_notice_bar(ui: &mut Ui, state: &DiskState) -> Option<NoticeChoice> {
     egui::Frame::new()
         .fill(tint)
         .inner_margin(egui::Margin::symmetric(12, 6))
-        .show(ui, |ui| ui.horizontal(|ui| disk_notice_row(ui, state)).inner)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| disk_notice_row(ui, state)).inner
+        })
         .inner
 }
 
@@ -794,13 +884,19 @@ fn disk_notice_row(ui: &mut Ui, state: &DiskState) -> Option<NoticeChoice> {
     let mut choice = None;
     if *state == DiskState::Deleted {
         ui.label("This file was deleted on disk. Saving will recreate it.");
-    } else {
-        ui.label("This file changed on disk.");
-        if ui.button("Reload").clicked() {
-            choice = Some(NoticeChoice::Reload);
+        if ui.button("Keep mine").clicked() {
+            choice = Some(NoticeChoice::KeepMine);
         }
+        return choice;
     }
-    if ui.button("Keep mine").clicked() {
+    ui.label("Changed on disk by another program.").on_hover_text("You can keep working and decide later.");
+    if ui.button("Compare and merge…").on_hover_text("See both versions side by side and combine them").clicked() {
+        choice = Some(NoticeChoice::Merge);
+    }
+    if ui.button("Reload theirs").on_hover_text("Load the version on disk and drop your unsaved changes").clicked() {
+        choice = Some(NoticeChoice::Reload);
+    }
+    if ui.button("Keep mine").on_hover_text("Keep your version; saving overwrites the one on disk").clicked() {
         choice = Some(NoticeChoice::KeepMine);
     }
     choice
@@ -837,6 +933,7 @@ impl eframe::App for RubriqueApp {
         let ctx = ui.ctx().clone();
         self.handle_window_events(&ctx);
         self.handle_shortcuts(&ctx);
+        self.poll_disk(&ctx);
 
         let style = ctx.global_style();
         let bar_frame =

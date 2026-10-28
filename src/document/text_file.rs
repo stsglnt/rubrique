@@ -74,6 +74,9 @@ pub struct Document {
     dirty: bool,
     /// Modification time when we last read or wrote the file.
     disk_modified: Option<SystemTime>,
+    /// The text as last read from or written to disk: the common starting
+    /// point when the file and the buffer both changed (for merging).
+    base_text: String,
 }
 
 impl Document {
@@ -95,6 +98,7 @@ impl Document {
         Ok(Opened::Text(Document {
             path: path.to_path_buf(),
             saved_hash: Some(hash_text(&text)),
+            base_text: text.clone(),
             text,
             dirty: false,
             disk_modified: metadata.modified().ok(),
@@ -126,7 +130,39 @@ impl Document {
         self.saved_hash = Some(hash_text(&self.text));
         self.dirty = false;
         self.disk_modified = modified_time(&self.path);
+        self.base_text.clone_from(&self.text);
         Ok(())
+    }
+
+    /// The text as last read from or written to disk.
+    pub fn base_text(&self) -> &str {
+        &self.base_text
+    }
+
+    /// Read the file as it is on disk now.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the file cannot be read or is no longer UTF-8 text.
+    pub fn read_disk_text(&self) -> io::Result<String> {
+        let bytes = fs::read(&self.path)?;
+        text_from_bytes(bytes).map_err(|reason| io::Error::new(io::ErrorKind::InvalidData, reason.describe()))
+    }
+
+    /// Note that the disk now holds `disk_text` without touching the buffer:
+    /// used when only the modification time changed, or after a merge. The
+    /// buffer is dirty exactly when it differs from `disk_text`.
+    pub fn accept_disk_text(&mut self, disk_text: String) {
+        self.disk_modified = modified_time(&self.path);
+        self.saved_hash = Some(hash_text(&disk_text));
+        self.base_text = disk_text;
+        self.on_text_changed();
+    }
+
+    /// Replace the buffer with a merge result based on `disk_text`.
+    pub fn apply_merge(&mut self, result: String, disk_text: String) {
+        self.text = result;
+        self.accept_disk_text(disk_text);
     }
 
     /// Compare the file's modification time with the one we know.
@@ -144,6 +180,10 @@ impl Document {
     /// the buffer stays dirty and we stop asking about this change.
     pub fn acknowledge_disk_change(&mut self) {
         self.disk_modified = modified_time(&self.path);
+        // Their version is the new starting point for any later merge.
+        if let Ok(disk_text) = self.read_disk_text() {
+            self.base_text = disk_text;
+        }
         self.saved_hash = None;
         self.dirty = true;
     }
@@ -318,6 +358,23 @@ mod tests {
         // Saving recreates the file.
         document.save().unwrap();
         assert!(path.exists());
+        assert!(!document.is_dirty());
+    }
+
+    #[test]
+    fn merge_bookkeeping_follows_the_disk() {
+        let temp = TempFolder::new();
+        let path = temp.write("a.md", "one\n");
+        let mut document = open_text(&path);
+        document.text = "one\nmine\n".to_string();
+        document.on_text_changed();
+        fs::write(&path, "theirs\none\n").unwrap();
+        let disk = document.read_disk_text().unwrap();
+        assert_eq!(document.base_text(), "one\n");
+        document.apply_merge("theirs\none\nmine\n".to_string(), disk);
+        assert!(document.is_dirty());
+        assert_eq!(document.base_text(), "theirs\none\n");
+        document.accept_disk_text("theirs\none\nmine\n".to_string());
         assert!(!document.is_dirty());
     }
 }

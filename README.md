@@ -14,7 +14,8 @@ One window, five themes, all built in: Light, Dark, Sepia, Midnight and High con
 - Right-click any file or folder: copy absolute path, relative path, or name; rename files
 - Plain-text editor with Markdown syntax colors, and a rendered preview (`Cmd/Ctrl+E`)
 - **Open in browser** (`Cmd/Ctrl+Shift+B`): Markdown as a full web page in your theme's colors, or HTML files as they are
-- Atomic saves, unsaved-changes prompt, reload when the file changes on disk
+- Atomic saves and an unsaved-changes prompt
+- Notices when another program changes the open file: reloads it if you have no edits, otherwise offers a side-by-side **merge** (on disk | result | mine), reload or keep mine, without interrupting your typing
 - Line shortcuts: move (`Alt+Up/Down`), duplicate (`Cmd/Ctrl+D`), insert date (`Cmd/Ctrl+Shift+D`)
 - Five built-in themes (Light, Dark, Sepia, Midnight, High contrast), or follow the system; add your own as small text files
 - Two dependencies (`eframe` for the window, `rfd` for the folder window); the Markdown parser and everything else is our own code

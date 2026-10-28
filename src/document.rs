@@ -2,6 +2,8 @@
 
 pub mod highlighting;
 pub mod line_ops;
+pub mod merge;
+pub mod merge_view;
 pub mod text_file;
 pub mod text_stats;
 pub mod view;

@@ -22,6 +22,14 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   the Markdown as a full web page in the current theme's colors, or an HTML
   file as it is, in the default browser. Unsaved changes are included.
 
+- Live check for changes by other programs (every 2 seconds). A file without
+  unsaved edits reloads with a status message. With unsaved edits a bar
+  offers **Compare and merge…**, **Reload theirs** or **Keep mine**, and you
+  can keep typing meanwhile.
+- Merge screen: the file on disk, the result and your version side by side
+  (**Swap sides** flips them). One-sided changes merge by themselves; for
+  conflicts pick left, right or both, or edit the result, then **Apply**.
+
 ### Fixed
 
 - The unsaved-changes dot showed as an empty box.
