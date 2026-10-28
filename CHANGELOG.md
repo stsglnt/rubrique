@@ -12,8 +12,13 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 - Settings → AI: pick the tool for requests (Claude, Codex, Grok or a local
   model) and for summaries, and edit each tool's command. rubrique shows which
-  tools are installed. The AI features that use these come next; see
-  `specs/08-ai.md`.
+  tools are installed.
+- **Ask** (`Cmd/Ctrl+K`, or the status bar button): ask an AI tool to change
+  the selection (or the whole file). Quick actions: Shorter, Fix grammar,
+  Table, Translate, Explain. The output streams into a panel with **Stop**;
+  **Review in merge** shows each change next to the original, and nothing
+  changes until you press **Apply**. The first run in a folder shows the
+  exact command and asks first.
 
 ## [0.3.0] - 2026-10-28
 

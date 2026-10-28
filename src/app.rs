@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use eframe::egui::{self, Context, Key, KeyboardShortcut, Modifiers, RichText, Ui, ViewportCommand};
 
+mod ask;
+
 use crate::ai::{self, AiTool};
 use crate::document::merge::MergeSession;
 use crate::document::merge_view::{MergeAction, show_merge};
@@ -19,6 +21,7 @@ use crate::explorer::paths::{absolute_path_text, name_text};
 use crate::explorer::tree::{FsNode, is_markdown_path};
 use crate::explorer::view::{ExplorerAction, TreeContext, show_explorer};
 use crate::format::{Language, format};
+use crate::icons::icon_text_button;
 use crate::icons::{Icon, icon_button};
 use crate::markdown::blocks::{SourceBlock, parse_blocks, parse_source_blocks};
 use crate::markdown::html::{file_url, html_page, is_html_path, with_base};
@@ -34,6 +37,8 @@ const STATUS_MESSAGE_SECONDS: f64 = 4.0;
 const EXPLORER_DEFAULT_WIDTH: f32 = 260.0;
 /// Width of the settings panel.
 const SETTINGS_PANEL_WIDTH: f32 = 320.0;
+/// Starting height of the AI output panel.
+const AI_OUTPUT_HEIGHT: f32 = 230.0;
 /// Space around the "cannot display this file" message.
 const UNSUPPORTED_MARGIN: f32 = 16.0;
 /// How often the open file is checked for changes made by other programs.
@@ -62,6 +67,7 @@ const FORMAT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(M
 const OPEN_IN_BROWSER: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::B);
 const NEW_SCRATCH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
 const TOGGLE_SETTINGS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma);
+const ASK: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::K);
 const COPY_OPEN_PATH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::C);
 
 /// What the right panel shows.
@@ -137,6 +143,8 @@ pub struct RubriqueApp {
     themes: Themes,
     /// The settings panel is shown on the right.
     settings_open: bool,
+    /// Ask bar, AI run and its output panel.
+    ask: ask::AskState,
     /// Which AI tools' programs were found, in [`AiTool::ALL`] order.
     /// Checked when Settings opens and when a command changes.
     ai_installed: [bool; 4],
@@ -194,6 +202,7 @@ impl RubriqueApp {
             window_title: String::new(),
             themes,
             settings_open: false,
+            ask: ask::AskState::default(),
             ai_installed: [false; 4],
             renaming: None,
             merging: None,
@@ -412,6 +421,10 @@ impl RubriqueApp {
         }
         if ctx.input_mut(|input| input.consume_shortcut(&TOGGLE_SETTINGS)) {
             self.toggle_settings();
+        }
+        if ctx.input_mut(|input| input.consume_shortcut(&ASK)) {
+            self.check_ai_tools();
+            self.open_ask(ctx);
         }
         if ctx.input_mut(|input| input.consume_shortcut(&ADD_NOTE)) {
             self.start_note(ctx);
@@ -755,6 +768,7 @@ impl RubriqueApp {
 
     /// Right panel: editor, preview, or why the file cannot be shown.
     fn document_area(&mut self, ui: &mut Ui) {
+        self.ask.page_rect = Some(ui.max_rect());
         let showing_preview = self.showing_preview();
         let mut notice_choice = None;
         let mut merge_action = None;
@@ -1095,6 +1109,18 @@ impl RubriqueApp {
             self.merging = Some(session);
             return;
         };
+        if session.review.is_some() {
+            if let OpenFile::Text { document, preview, .. } = &mut self.open_file {
+                let changed = document.text != result;
+                document.text = result;
+                document.on_text_changed();
+                *preview = None;
+                self.ask.job = None;
+                let message = if changed { "AI changes applied. Save to keep them." } else { "Kept the original" };
+                self.show_status(message.to_string());
+            }
+            return;
+        }
         if let OpenFile::Text { document, preview, disk_notice } = &mut self.open_file {
             document.apply_merge(result, session.disk_text);
             *preview = None;
@@ -1179,6 +1205,17 @@ impl RubriqueApp {
                     }
                 } else {
                     ui.label(mode);
+                }
+                let ask = icon_text_button(
+                    ui,
+                    Icon::Sparkle,
+                    "Ask",
+                    "Ask AI about the selection, or the whole file (Cmd+K)",
+                    self.ask.is_open(),
+                );
+                if ask.clicked() {
+                    self.check_ai_tools();
+                    self.open_ask(ui.ctx());
                 }
                 if !showing_preview && let Some(stats) = &self.stats {
                     ui.label(format!("{}   ", stats.summary()));
@@ -1375,8 +1412,16 @@ impl eframe::App for RubriqueApp {
                 .frame(egui::Frame::side_top_panel(&style).inner_margin(0))
                 .show(ui, |ui| self.notes_panel(ui));
         }
+        if self.ask.job.is_some() && self.merging.is_none() {
+            egui::Panel::bottom("ai-output")
+                .resizable(true)
+                .default_size(AI_OUTPUT_HEIGHT)
+                .frame(egui::Frame::side_top_panel(&style).inner_margin(0))
+                .show(ui, |ui| self.ai_output_panel(ui));
+        }
         egui::CentralPanel::default().frame(page_frame).show(ui, |ui| self.document_area(ui));
 
+        self.ask_dialogs(&ctx);
         self.unsaved_dialog(&ctx);
         self.note_dialog(&ctx);
         self.rename_dialog(&ctx);

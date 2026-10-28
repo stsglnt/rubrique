@@ -21,6 +21,10 @@ pub enum Icon {
     NotePlus,
     /// Re-read from disk.
     Refresh,
+    /// Ask AI.
+    Sparkle,
+    /// Stop a running AI tool.
+    Stop,
 }
 
 /// A flat button with `icon` and a hover tip. `active` keeps it highlighted
@@ -40,6 +44,38 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, label: &str, tip: &str, active: bool
     let painter = ui.painter();
     painter.rect_filled(rect, visuals.widgets.inactive.corner_radius, fill);
     paint(painter, icon, rect.center(), color, visuals.hyperlink_color);
+    response.on_hover_text(tip)
+}
+
+/// An icon on its own (not a button), in the text color.
+pub fn icon_label(ui: &mut Ui, icon: Icon) {
+    let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+    let visuals = ui.visuals();
+    paint(ui.painter(), icon, rect.center(), visuals.text_color(), visuals.hyperlink_color);
+}
+
+/// A small button with an icon before its text (like "Ask" in the status
+/// bar). `active` gives it the selection fill.
+pub fn icon_text_button(ui: &mut Ui, icon: Icon, text: &str, tip: &str, active: bool) -> Response {
+    const GAP: f32 = 6.0;
+    const ICON: f32 = 14.0;
+    let padding = ui.spacing().button_padding;
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let galley = ui.painter().layout_no_wrap(text.to_string(), font, Color32::PLACEHOLDER);
+    let height = ui.spacing().interact_size.y.min(galley.size().y + 2.0 * padding.y).max(ICON + 4.0);
+    let size = vec2(padding.x * 2.0 + ICON + GAP + galley.size().x, height);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(egui::Role::Button, true, text));
+    let visuals = ui.visuals();
+    let widget = ui.style().interact(&response);
+    let fill = if active { visuals.selection.bg_fill } else { widget.weak_bg_fill };
+    let color = if active { visuals.strong_text_color() } else { widget.fg_stroke.color };
+    let painter = ui.painter();
+    painter.rect_filled(rect, widget.corner_radius, fill);
+    let icon_center = pos2(rect.left() + padding.x + ICON / 2.0, rect.center().y);
+    paint(painter, icon, icon_center, color, visuals.hyperlink_color);
+    let text_pos = pos2(rect.left() + padding.x + ICON + GAP, rect.center().y - galley.size().y / 2.0);
+    painter.galley(text_pos, galley, color);
     response.on_hover_text(tip)
 }
 
@@ -90,7 +126,36 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, color: Color32, accent: Co
             let wings = [tip - ahead * 3.0 + outward * 2.6, tip, tip - ahead * 3.0 - outward * 2.6];
             stroke_path(painter, &wings, false, detail);
         }
+        Icon::Sparkle => {
+            // A four-point star with curved sides; a small plus is the accent.
+            let tips = [at(-1.5, -5.0), at(3.8, 1.0), at(-1.5, 6.8), at(-6.8, 1.0)];
+            let waist = [at(-0.9, 0.3), at(-0.9, 1.7), at(-2.1, 1.7), at(-2.1, 0.3)];
+            let mut outline = Vec::new();
+            for side in 0..4 {
+                outline.extend(quadratic(tips[side], waist[side], tips[(side + 1) % 4]));
+            }
+            stroke_path(painter, &outline, true, line);
+            plus(painter, at(4.6, -4.5), 1.9, detail);
+        }
+        Icon::Stop => {
+            // A circle; the square inside is the accent.
+            stroke_path(painter, &circle_points(center, 6.2), true, line);
+            let square = egui::Rect::from_center_size(center, vec2(3.8, 3.8));
+            painter.rect_filled(square, 1.0, accent);
+        }
     }
+}
+
+/// Points along a quadratic curve from `start` to `end` bent toward `control`.
+fn quadratic(start: Pos2, control: Pos2, end: Pos2) -> Vec<Pos2> {
+    (0..=8_u8)
+        .map(|step| {
+            let t = f32::from(step) / 8.0;
+            let a = start + (control - start) * t;
+            let b = control + (end - control) * t;
+            a + (b - a) * t
+        })
+        .collect()
 }
 
 /// Corner radius of outlines.

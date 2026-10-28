@@ -30,10 +30,12 @@ enum Version {
 }
 
 impl Version {
-    fn title(self) -> &'static str {
-        match self {
-            Version::Theirs => "On disk (changed elsewhere)",
-            Version::Mine => "Mine (in the editor)",
+    fn title(self, review: Option<&str>) -> String {
+        match (self, review) {
+            (Version::Theirs, Some(title)) => title.to_string(),
+            (Version::Mine, Some(_)) => "Original".to_string(),
+            (Version::Theirs, None) => "On disk (changed elsewhere)".to_string(),
+            (Version::Mine, None) => "Mine (in the editor)".to_string(),
         }
     }
 
@@ -61,11 +63,15 @@ pub fn show_merge(ui: &mut Ui, session: &mut MergeSession, file_name: &str) -> O
 
     egui::Frame::new().fill(ui.visuals().panel_fill).inner_margin(egui::Margin::symmetric(16, 10)).show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("Merge changes · {file_name}")).strong().size(16.0));
+            let heading = if session.review.is_some() { "AI suggestion" } else { "Merge changes" };
+            ui.label(RichText::new(format!("{heading} · {file_name}")).strong().size(16.0));
             let left_count = session.conflicts_left();
             let status = match left_count {
+                0 if session.review.is_some() => "Nothing changes until you press Apply".to_string(),
                 0 => "No conflicts left".to_string(),
+                1 if session.review.is_some() => "1 change to decide".to_string(),
                 1 => "1 conflict left".to_string(),
+                count if session.review.is_some() => format!("{count} changes to decide"),
                 count => format!("{count} conflicts left"),
             };
             ui.label(RichText::new(status).weak());
@@ -73,7 +79,7 @@ pub fn show_merge(ui: &mut Ui, session: &mut MergeSession, file_name: &str) -> O
                 let apply = ui
                     .add_enabled(left_count == 0, egui::Button::new("Apply"))
                     .on_hover_text("Put the result in the editor; save when you are ready")
-                    .on_disabled_hover_text("Decide every conflict first");
+                    .on_disabled_hover_text("Decide every change first");
                 if apply.clicked() {
                     action = Some(MergeAction::Apply);
                 }
@@ -81,7 +87,7 @@ pub fn show_merge(ui: &mut Ui, session: &mut MergeSession, file_name: &str) -> O
                     action = Some(MergeAction::Cancel);
                 }
                 ui.separator();
-                if ui.button("Swap sides").on_hover_text("Show mine on the left and theirs on the right").clicked() {
+                if ui.button("Swap sides").on_hover_text("Swap the left and right columns").clicked() {
                     session.swapped = !session.swapped;
                 }
                 if left_count > 0 {
@@ -98,9 +104,10 @@ pub fn show_merge(ui: &mut Ui, session: &mut MergeSession, file_name: &str) -> O
     ui.separator();
 
     ui.columns(3, |columns| {
-        columns[0].label(RichText::new(left.title()).strong());
+        let review = session.review.as_deref();
+        columns[0].label(RichText::new(left.title(review)).strong());
         columns[1].label(RichText::new("Result").strong());
-        columns[2].label(RichText::new(right.title()).strong());
+        columns[2].label(RichText::new(right.title(review)).strong());
     });
 
     egui::ScrollArea::vertical().id_salt("merge-scroll").auto_shrink([false, false]).show(ui, |ui| {
@@ -167,7 +174,12 @@ fn conflict_result(
             session.resolutions[index] = None;
         }
     } else {
-        ui.label(RichText::new("Conflict: both changed these lines. Pick a side, or").italics().weak());
+        let hint = if session.review.is_some() {
+            "Changed by the suggestion. Pick a side, or"
+        } else {
+            "Conflict: both changed these lines. Pick a side, or"
+        };
+        ui.label(RichText::new(hint).italics().weak());
         if ui.small_button("Both (left, then right)").clicked() {
             let both = [left.lines(chunk).concat(), right.lines(chunk).concat()].concat();
             session.resolutions[index] = Some(both);
@@ -195,7 +207,7 @@ fn folded_lines(ui: &mut Ui, lines: &[String], strong: bool) {
     }
     code_lines(ui, &lines[..FOLD_KEEP].concat(), strong);
     let hidden = lines.len() - 2 * FOLD_KEEP;
-    ui.label(RichText::new(format!("⋯ {hidden} unchanged lines")).weak().small());
+    ui.label(RichText::new(format!("… {hidden} unchanged lines")).weak().small());
     code_lines(ui, &lines[lines.len() - FOLD_KEEP..].concat(), strong);
 }
 
@@ -213,6 +225,7 @@ fn code_lines(ui: &mut Ui, text: &str, strong: bool) {
 fn tinted(ui: &mut Ui, fill: Color32, add_contents: impl FnOnce(&mut Ui)) {
     egui::Frame::new().fill(fill).corner_radius(4).inner_margin(6).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        add_contents(ui);
+        // Columns are justified layouts, which would also justify wrapped text.
+        ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), add_contents);
     });
 }

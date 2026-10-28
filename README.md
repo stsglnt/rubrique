@@ -15,6 +15,7 @@ One window, five themes, all built in: Light, Dark, Sepia, Midnight and High con
 - Plain-text editor with Markdown syntax colors, and a rendered preview (`Cmd/Ctrl+E`)
 - Edit in the preview: click a paragraph, list or heading to edit just that block as Markdown
 - Notes: select text in the preview and add a note; it is saved in the file as a hidden comment, highlighted in the preview and listed in a Notes panel
+- **Ask AI** (`Cmd/Ctrl+K`): Claude, Codex, Grok or a local model rewrites the selection; you review every change in the merge screen before it is applied. rubrique runs the tools you have installed and holds no API keys
 - **Format** (`Cmd/Ctrl+Shift+F`): pretty-print JSON, SQL (PostgreSQL style, like pgFormatter) or XML, for the whole file or the selection
 - **Open in browser** (`Cmd/Ctrl+Shift+B`): Markdown as a full web page in your theme's colors, or HTML files as they are
 - Atomic saves and an unsaved-changes prompt
@@ -58,6 +59,7 @@ Linux also needs the usual X11/Wayland and OpenGL development libraries.
 | Cmd+S | Save |
 | Cmd+E | Toggle edit / preview |
 | Cmd+, | Open or close Settings |
+| Cmd+K | Ask AI about the selection |
 | Cmd+N | New scratch file |
 | Cmd+Shift+B | Open in browser (Markdown and HTML) |
 | Cmd+Shift+F | Format JSON, SQL or XML |

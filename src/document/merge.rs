@@ -95,13 +95,30 @@ pub struct MergeSession {
     pub disk_text: String,
     /// Show my version on the left and theirs on the right.
     pub swapped: bool,
+    /// Set when reviewing an AI suggestion: the title of the suggestion's
+    /// column. "Theirs" is then the suggestion, and "mine" the original.
+    pub review: Option<String>,
 }
 
 impl MergeSession {
     pub fn new(base: &str, mine: &str, disk_text: String) -> Self {
         let chunks = merge(base, mine, &disk_text);
         let resolutions = vec![None; chunks.len()];
-        MergeSession { chunks, resolutions, disk_text, swapped: false }
+        MergeSession { chunks, resolutions, disk_text, swapped: false, review: None }
+    }
+
+    /// Review a suggested new version of `original`. Every change is an open
+    /// choice, so nothing is taken without being seen; the original shows
+    /// on the left.
+    pub fn review(original: &str, suggestion: &str, title: String) -> Self {
+        let mut chunks = merge(original, original, suggestion);
+        for chunk in &mut chunks {
+            if chunk.kind == ChunkKind::Theirs {
+                chunk.kind = ChunkKind::Conflict;
+            }
+        }
+        let resolutions = vec![None; chunks.len()];
+        MergeSession { chunks, resolutions, disk_text: String::new(), swapped: true, review: Some(title) }
     }
 
     /// Conflicts that still need a decision.
@@ -211,6 +228,19 @@ fn matching(a: &[String], b: &[String]) -> Vec<Option<usize>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_makes_every_change_a_choice() {
+        let mut session = MergeSession::review("a\nb\nc\n", "a\nB\nc\n", "Claude".to_string());
+        assert_eq!(session.conflicts_left(), 1);
+        assert!(session.swapped);
+        assert_eq!(session.result(), None);
+        session.take_all(true);
+        assert_eq!(session.result().as_deref(), Some("a\nB\nc\n"));
+        let mut keep = MergeSession::review("a\nb\n", "a\nB\n", "Claude".to_string());
+        keep.take_all(false);
+        assert_eq!(keep.result().as_deref(), Some("a\nb\n"));
+    }
 
     fn kinds(chunks: &[Chunk]) -> Vec<ChunkKind> {
         chunks.iter().map(|chunk| chunk.kind).collect()

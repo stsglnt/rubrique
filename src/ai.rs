@@ -5,7 +5,10 @@
 //! This module is pure apart from [`is_installed`], which looks at `PATH`.
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+pub mod run;
+pub mod view;
 
 /// Placeholder in a command template for the request text.
 pub const PROMPT: &str = "{prompt}";
@@ -78,6 +81,8 @@ pub struct AiSettings {
     pub summary_tool: AiTool,
     /// Command templates, one per tool in [`AiTool::ALL`] order.
     commands: [String; 4],
+    /// Folders where the user allowed AI runs ("Don't ask again").
+    pub allowed_folders: Vec<PathBuf>,
 }
 
 impl Default for AiSettings {
@@ -86,6 +91,7 @@ impl Default for AiSettings {
             default_tool: AiTool::Claude,
             summary_tool: AiTool::Local,
             commands: AiTool::ALL.map(|tool| tool.default_command().to_string()),
+            allowed_folders: Vec::new(),
         }
     }
 }
@@ -117,6 +123,11 @@ impl AiSettings {
         match key {
             "ai_tool" => self.default_tool = AiTool::from_id(value).unwrap_or(self.default_tool),
             "ai_summary_tool" => self.summary_tool = AiTool::from_id(value).unwrap_or(self.summary_tool),
+            "ai_allowed_folder" => {
+                if !value.is_empty() {
+                    self.allowed_folders.push(PathBuf::from(value));
+                }
+            }
             _ => {
                 let Some(tool) = key.strip_prefix("ai_command_").and_then(AiTool::from_id) else {
                     return false;
@@ -136,12 +147,142 @@ impl AiSettings {
         for tool in AiTool::ALL.into_iter().filter(|tool| self.is_custom(*tool)) {
             let _ = writeln!(lines, "ai_command_{}={}", tool.id(), self.command(tool).trim());
         }
+        for folder in &self.allowed_folders {
+            let _ = writeln!(lines, "ai_allowed_folder={}", folder.display());
+        }
         lines
     }
 }
 
 fn index(tool: AiTool) -> usize {
     AiTool::ALL.iter().position(|each| *each == tool).unwrap_or_default()
+}
+
+impl AiSettings {
+    /// AI runs in `folder` were allowed before.
+    pub fn is_allowed(&self, folder: &Path) -> bool {
+        self.allowed_folders.iter().any(|allowed| allowed == folder)
+    }
+
+    pub fn allow(&mut self, folder: &Path) {
+        if !self.is_allowed(folder) {
+            self.allowed_folders.push(folder.to_path_buf());
+        }
+    }
+}
+
+/// What the answer is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AskKind {
+    /// New text for the selection, reviewed in the merge screen.
+    Rewrite,
+    /// An answer to read (Explain); nothing in the file changes.
+    Answer,
+}
+
+/// The small buttons under the Ask field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuickAction {
+    Shorter,
+    FixGrammar,
+    Table,
+    Translate,
+    Explain,
+}
+
+impl QuickAction {
+    pub const ALL: [QuickAction; 5] = [
+        QuickAction::Shorter,
+        QuickAction::FixGrammar,
+        QuickAction::Table,
+        QuickAction::Translate,
+        QuickAction::Explain,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            QuickAction::Shorter => "Shorter",
+            QuickAction::FixGrammar => "Fix grammar",
+            QuickAction::Table => "Table",
+            QuickAction::Translate => "Translate…",
+            QuickAction::Explain => "Explain",
+        }
+    }
+
+    /// The request this button sends. Translate has none: it fills the
+    /// field with "Translate to " for the user to finish.
+    pub fn request(self) -> Option<&'static str> {
+        match self {
+            QuickAction::Shorter => Some("Make it shorter. Keep the meaning and the tone."),
+            QuickAction::FixGrammar => Some("Fix spelling and grammar. Change nothing else."),
+            QuickAction::Table => Some("Turn it into a Markdown table."),
+            QuickAction::Translate => None,
+            QuickAction::Explain => Some("Explain this in simple words."),
+        }
+    }
+
+    pub fn kind(self) -> AskKind {
+        if self == QuickAction::Explain { AskKind::Answer } else { AskKind::Rewrite }
+    }
+}
+
+/// The full prompt sent to the tool: the request, how to answer, and the text.
+pub fn build_prompt(request: &str, text: &str, kind: AskKind, whole_file: bool) -> String {
+    let what = if whole_file { "a Markdown file" } else { "part of a Markdown file" };
+    let how = match kind {
+        AskKind::Rewrite => {
+            "Apply the request to the text below and reply with only the new text: \
+             no explanations, no quotes, no code fences around it. \
+             Keep the Markdown formatting unless the request is about it."
+        }
+        AskKind::Answer => "Answer the request about the text below. Reply in Markdown, short and clear.",
+    };
+    format!("Request: {}\n\n{how}\n\nThe text is {what}:\n<text>\n{text}\n</text>\n", request.trim())
+}
+
+/// The tool's reply as new text: surrounding blank lines and a wrapping
+/// code fence removed, and the original's final line break kept.
+pub fn clean_reply(reply: &str, original: &str) -> String {
+    let mut text = reply.trim();
+    if let Some(inner) = text.strip_prefix("```") {
+        // Drop the fence line (with any language name) and the closing fence.
+        if let Some((_, body)) = inner.split_once('\n')
+            && let Some(body) = body.trim_end().strip_suffix("```")
+        {
+            text = body.trim();
+        }
+    }
+    let mut cleaned = text.to_string();
+    if original.ends_with('\n') {
+        cleaned.push('\n');
+    }
+    cleaned
+}
+
+/// The program and its arguments for `command` with `prompt` filled in.
+/// `{prompt}` inside a word is replaced too (`--prompt={prompt}`).
+pub fn command_args(command: &str, prompt: &str) -> Option<(String, Vec<String>)> {
+    let mut words = split_command(command).into_iter();
+    let program = words.next().filter(|program| !program.is_empty())?;
+    let args = words.map(|word| word.replace(PROMPT, prompt)).collect();
+    Some((program, args))
+}
+
+/// The command as shown to the user, with a long prompt cut short.
+pub fn display_command(command: &str, request: &str) -> String {
+    const SHOWN: usize = 48;
+    let short: String = request.chars().take(SHOWN).collect();
+    let quoted = if request.chars().count() > SHOWN { format!("\"{short}…\"") } else { format!("\"{short}\"") };
+    split_command(command)
+        .iter()
+        .map(|word| if word.contains(PROMPT) { word.replace(PROMPT, &quoted) } else { word.clone() })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Seconds as `m:ss`.
+pub fn format_elapsed(seconds: u64) -> String {
+    format!("{}:{:02}", seconds / 60, seconds % 60)
 }
 
 /// What is wrong with a command template, if anything.
@@ -282,6 +423,60 @@ mod tests {
         assert!(!settings.parse_line("ai_command_other", "x {prompt}"));
         assert!(!settings.parse_line("theme", "dark"));
         assert_eq!(settings, AiSettings::default());
+    }
+
+    #[test]
+    fn builds_prompts() {
+        let prompt = build_prompt(" shorter ", "Hello there.", AskKind::Rewrite, false);
+        assert!(prompt.starts_with("Request: shorter\n"));
+        assert!(prompt.contains("only the new text"));
+        assert!(prompt.contains("part of a Markdown file"));
+        assert!(prompt.ends_with("<text>\nHello there.\n</text>\n"));
+        let answer = build_prompt("why?", "x", AskKind::Answer, true);
+        assert!(answer.contains("Answer the request"));
+        assert!(answer.contains("The text is a Markdown file"));
+    }
+
+    #[test]
+    fn cleans_replies() {
+        assert_eq!(clean_reply("\n  New text.\n\n", "Old text."), "New text.");
+        assert_eq!(clean_reply("New text.", "Old text.\n"), "New text.\n");
+        assert_eq!(clean_reply("```markdown\n| a | b |\n```\n", "a b"), "| a | b |");
+        assert_eq!(clean_reply("```rust\nfn main() {}\nno close", "x"), "```rust\nfn main() {}\nno close");
+    }
+
+    #[test]
+    fn fills_in_the_prompt() {
+        let (program, args) = command_args("claude -p {prompt}", "say \"hi\"; rm -rf /").unwrap_or_default();
+        assert_eq!(program, "claude");
+        assert_eq!(args, ["-p", "say \"hi\"; rm -rf /"]);
+        let (_, args) = command_args("tool --prompt={prompt}", "x").unwrap_or_default();
+        assert_eq!(args, ["--prompt=x"]);
+        assert_eq!(command_args("  ", "x"), None);
+    }
+
+    #[test]
+    fn shows_commands_short() {
+        assert_eq!(display_command("claude -p {prompt}", "shorter"), "claude -p \"shorter\"");
+        let long = "a".repeat(60);
+        assert_eq!(display_command("codex exec {prompt}", &long), format!("codex exec \"{}…\"", "a".repeat(48)));
+        assert_eq!(format_elapsed(7), "0:07");
+        assert_eq!(format_elapsed(125), "2:05");
+    }
+
+    #[test]
+    fn remembers_allowed_folders() {
+        let mut settings = AiSettings::default();
+        settings.allow(Path::new("/home/a/notes"));
+        settings.allow(Path::new("/home/a/notes"));
+        assert!(settings.is_allowed(Path::new("/home/a/notes")));
+        assert!(!settings.is_allowed(Path::new("/home/a")));
+        let mut read = AiSettings::default();
+        for line in settings.to_lines().lines() {
+            let (key, value) = line.split_once('=').unwrap_or_default();
+            read.parse_line(key, value);
+        }
+        assert_eq!(read, settings);
     }
 
     #[test]

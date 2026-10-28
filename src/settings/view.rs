@@ -220,7 +220,7 @@ fn command_row(ui: &mut Ui, settings: &mut AiSettings, tool: AiTool, found: bool
 }
 
 /// A folder path in a small outlined box, home folder shown as `~`.
-fn path_box(ui: &mut Ui, folder: &Path) {
+pub fn path_box(ui: &mut Ui, folder: &Path) {
     let path = home_relative(folder);
     egui::Frame::new()
         .fill(ui.visuals().text_edit_bg_color())
@@ -344,7 +344,7 @@ fn paint_check(painter: &egui::Painter, center: egui::Pos2, color: Color32) {
 }
 
 /// `folder` with the home folder shown as `~`, to keep it short.
-fn home_relative(folder: &Path) -> String {
+pub fn home_relative(folder: &Path) -> String {
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     match home.as_deref().and_then(|home| folder.strip_prefix(home).ok()) {
         Some(rest) => Path::new("~").join(rest).display().to_string(),
