@@ -16,6 +16,7 @@ One window, five themes, all built in: Light, Dark, Sepia, Midnight and High con
 - Edit in the preview: click a paragraph, list or heading to edit just that block as Markdown
 - Notes: select text in the preview and add a note; it is saved in the file as a hidden comment, highlighted in the preview and listed in a Notes panel
 - **Ask AI** (`Cmd/Ctrl+K`): Claude, Codex, Grok or a local model rewrites the selection; you review every change in the merge screen before it is applied. rubrique runs the tools you have installed and holds no API keys
+- **Skills**: reusable AI instructions as `SKILL.md` folders (the same format as Claude Code skills), picked from the Ask bar; the skills folder is set in Settings
 - **Format** (`Cmd/Ctrl+Shift+F`): pretty-print JSON, SQL (PostgreSQL style, like pgFormatter) or XML, for the whole file or the selection
 - **Open in browser** (`Cmd/Ctrl+Shift+B`): Markdown as a full web page in your theme's colors, or HTML files as they are
 - Atomic saves and an unsaved-changes prompt

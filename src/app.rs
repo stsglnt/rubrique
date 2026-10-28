@@ -7,6 +7,7 @@ use eframe::egui::{self, Context, Key, KeyboardShortcut, Modifiers, RichText, Ui
 
 mod ask;
 
+use crate::ai::skills::{self, Skill};
 use crate::ai::{self, AiTool};
 use crate::document::merge::MergeSession;
 use crate::document::merge_view::{MergeAction, show_merge};
@@ -28,7 +29,7 @@ use crate::markdown::html::{file_url, html_page, is_html_path, with_base};
 use crate::markdown::notes::{self, Note, find_notes, insert_note, remove_note, rewrite_note};
 use crate::scratch::{create_scratch, rename_target};
 use crate::settings::view::{AiInfo, ScratchInfo, SettingsAction, show_settings};
-use crate::settings::{MarkdownView, Settings, default_scratch_folder, themes_folder};
+use crate::settings::{MarkdownView, Settings, default_scratch_folder, default_skills_folder, themes_folder};
 use crate::theme::catalog::Themes;
 use crate::theme::style::{apply_theme, page_fill};
 
@@ -145,6 +146,8 @@ pub struct RubriqueApp {
     settings_open: bool,
     /// Ask bar, AI run and its output panel.
     ask: ask::AskState,
+    /// Skills from the skills folders, read when Settings or Ask opens.
+    skills: Vec<Skill>,
     /// Which AI tools' programs were found, in [`AiTool::ALL`] order.
     /// Checked when Settings opens and when a command changes.
     ai_installed: [bool; 4],
@@ -203,6 +206,7 @@ impl RubriqueApp {
             themes,
             settings_open: false,
             ask: ask::AskState::default(),
+            skills: Vec::new(),
             ai_installed: [false; 4],
             renaming: None,
             merging: None,
@@ -424,6 +428,7 @@ impl RubriqueApp {
         }
         if ctx.input_mut(|input| input.consume_shortcut(&ASK)) {
             self.check_ai_tools();
+            self.load_skills();
             self.open_ask(ctx);
         }
         if ctx.input_mut(|input| input.consume_shortcut(&ADD_NOTE)) {
@@ -497,7 +502,13 @@ impl RubriqueApp {
         self.settings_open = !self.settings_open;
         if self.settings_open {
             self.check_ai_tools();
+            self.load_skills();
         }
+    }
+
+    /// Read the skills from the skills folders.
+    fn load_skills(&mut self) {
+        self.skills = skills::load_skills(&self.settings.ai.skill_folders(default_skills_folder()));
     }
 
     /// Look for each AI tool's program on `PATH`.
@@ -513,7 +524,13 @@ impl RubriqueApp {
             folder: scratch_folder.as_deref(),
             is_default: self.settings.scratch_folder.is_none() || scratch_folder == default_scratch_folder(),
         };
-        let ai = AiInfo { settings: &mut self.settings.ai, installed: self.ai_installed };
+        let skills_folder = self.settings.ai.skills_folder.clone().or_else(default_skills_folder);
+        let ai = AiInfo {
+            settings: &mut self.settings.ai,
+            installed: self.ai_installed,
+            skills: &self.skills,
+            skills_folder: skills_folder.as_deref(),
+        };
         let action = show_settings(ui, &self.themes, &self.settings.theme, folder.as_deref(), scratch, ai);
         let Some(action) = action else {
             return;
@@ -540,6 +557,33 @@ impl RubriqueApp {
             }
             SettingsAction::ResetScratchFolder => self.settings.scratch_folder = None,
             SettingsAction::AiCommandChanged => self.check_ai_tools(),
+            SettingsAction::ChooseSkillsFolder => {
+                let mut dialog = rfd::FileDialog::new().set_title("Folder for skills");
+                if let Some(current) = &skills_folder {
+                    dialog = dialog.set_directory(current);
+                }
+                if let Some(chosen) = dialog.pick_folder() {
+                    self.settings.ai.skills_folder = Some(chosen);
+                    self.load_skills();
+                }
+            }
+            SettingsAction::ResetSkillsFolder => {
+                self.settings.ai.skills_folder = None;
+                self.load_skills();
+            }
+            SettingsAction::ReloadSkills => {
+                self.load_skills();
+                let count = self.skills.len();
+                self.show_status(format!("Found {count} skills"));
+            }
+            SettingsAction::CreateExampleSkill => match skills_folder.as_deref().map(skills::create_example) {
+                Some(Ok(path)) => {
+                    self.load_skills();
+                    self.show_status(format!("Example skill: {}", path.display()));
+                }
+                Some(Err(error)) => self.show_status(format!("Cannot create the example skill: {error}")),
+                None => {}
+            },
             SettingsAction::Close => self.settings_open = false,
         }
     }
@@ -1215,6 +1259,7 @@ impl RubriqueApp {
                 );
                 if ask.clicked() {
                     self.check_ai_tools();
+                    self.load_skills();
                     self.open_ask(ui.ctx());
                 }
                 if !showing_preview && let Some(stats) = &self.stats {

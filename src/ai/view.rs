@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use eframe::egui::{self, Align, Context, Key, Layout, Pos2, RichText, Ui};
 
+use super::skills::Skill;
 use super::{AiTool, AskKind, QuickAction, format_elapsed};
 use crate::icons::{Icon, icon_label, icon_text_button};
 use crate::settings::view::path_box;
@@ -38,12 +39,18 @@ impl AskBar {
 /// What the user did in the Ask bar.
 #[derive(Debug, PartialEq, Eq)]
 pub enum AskEvent {
-    Run { request: String, kind: AskKind },
+    Run { request: String, kind: AskKind, skill: Option<Box<Skill>> },
     Close,
 }
 
 /// Draw the Ask bar with its top-left corner at `at`.
-pub fn show_ask_bar(ctx: &Context, at: Pos2, bar: &mut AskBar, installed: [bool; 4]) -> Option<AskEvent> {
+pub fn show_ask_bar(
+    ctx: &Context,
+    at: Pos2,
+    bar: &mut AskBar,
+    installed: [bool; 4],
+    skills: &[Skill],
+) -> Option<AskEvent> {
     let mut event = None;
     egui::Area::new(egui::Id::unique("ask-bar")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
         let visuals = ui.visuals().clone();
@@ -66,7 +73,8 @@ pub fn show_ask_bar(ctx: &Context, at: Pos2, bar: &mut AskBar, installed: [bool;
                     }
                     let entered = field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
                     if entered && !bar.request.trim().is_empty() {
-                        event = Some(AskEvent::Run { request: bar.request.trim().to_string(), kind: AskKind::Rewrite });
+                        let request = bar.request.trim().to_string();
+                        event = Some(AskEvent::Run { request, kind: AskKind::Rewrite, skill: None });
                     }
                     tool_picker(ui, &mut bar.tool, installed);
                 });
@@ -75,12 +83,19 @@ pub fn show_ask_bar(ctx: &Context, at: Pos2, bar: &mut AskBar, installed: [bool;
                     for action in QuickAction::ALL {
                         if ui.small_button(action.label()).clicked() {
                             if let Some(request) = action.request() {
-                                event = Some(AskEvent::Run { request: request.to_string(), kind: action.kind() });
+                                event = Some(AskEvent::Run {
+                                    request: request.to_string(),
+                                    kind: action.kind(),
+                                    skill: None,
+                                });
                             } else {
                                 "Translate to ".clone_into(&mut bar.request);
                                 bar.focus = true;
                             }
                         }
+                    }
+                    if let Some(skill_event) = skills_menu(ui, &bar.request, skills) {
+                        event = Some(skill_event);
                     }
                 });
                 ui.separator();
@@ -96,6 +111,26 @@ pub fn show_ask_bar(ctx: &Context, at: Pos2, bar: &mut AskBar, installed: [bool;
     if ctx.input(|input| input.key_pressed(Key::Escape)) {
         event = Some(AskEvent::Close);
     }
+    event
+}
+
+/// The Skills… menu: run a skill on the text, with the typed request (if
+/// any) as extra detail.
+fn skills_menu(ui: &mut Ui, typed: &str, skills: &[Skill]) -> Option<AskEvent> {
+    let mut event = None;
+    ui.menu_button(RichText::new("Skills…").weak(), |ui| {
+        if skills.is_empty() {
+            ui.label(RichText::new("No skills yet. Add them in Settings → AI.").weak());
+        }
+        for skill in skills {
+            if ui.button(&skill.name).on_hover_text(&skill.description).clicked() {
+                let typed = typed.trim();
+                let request = if typed.is_empty() { skill.description.clone() } else { typed.to_string() };
+                event = Some(AskEvent::Run { request, kind: skill.kind, skill: Some(Box::new(skill.clone())) });
+                ui.close();
+            }
+        }
+    });
     event
 }
 

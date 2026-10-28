@@ -9,6 +9,7 @@ use eframe::egui::{self, Context, Ui, pos2};
 
 use super::{RubriqueApp, OpenFile, char_to_byte};
 use crate::ai::run::{AiRun, RunEnd};
+use crate::ai::skills::Skill;
 use crate::ai::view::{
     AskBar, AskEvent, Consent, ConsentChoice, OutputAction, OutputInfo, OutputState, show_ask_bar, show_consent,
     show_output,
@@ -43,6 +44,7 @@ pub(super) struct PendingRun {
     request: String,
     kind: AskKind,
     tool: AiTool,
+    skill: Option<Box<Skill>>,
 }
 
 /// A run and what it was for, while its output panel is open.
@@ -122,10 +124,10 @@ impl RubriqueApp {
         if let Some((bar, target)) = &mut self.ask.bar {
             let page = self.ask.page_rect.unwrap_or_else(|| ctx.content_rect());
             let left = page.left() + ((page.width() - ASK_OUTER_WIDTH) / 2.0).max(8.0);
-            let event = show_ask_bar(ctx, pos2(left, page.top() + ASK_TOP), bar, self.ai_installed);
+            let event = show_ask_bar(ctx, pos2(left, page.top() + ASK_TOP), bar, self.ai_installed, &self.skills);
             match event {
-                Some(AskEvent::Run { request, kind }) => {
-                    let pending = PendingRun { target: target.clone(), request, kind, tool: bar.tool };
+                Some(AskEvent::Run { request, kind, skill }) => {
+                    let pending = PendingRun { target: target.clone(), request, kind, tool: bar.tool, skill };
                     self.ask.bar = None;
                     self.begin_run(ctx, pending);
                 }
@@ -165,7 +167,10 @@ impl RubriqueApp {
             return;
         }
         let target = &pending.target;
-        let prompt = ai::build_prompt(&pending.request, &target.text, pending.kind, target.whole_file);
+        let mut prompt = ai::build_prompt(&pending.request, &target.text, pending.kind, target.whole_file);
+        if let Some(skill) = &pending.skill {
+            prompt = prompt.with_skill(skill);
+        }
         if prompt.is_too_long() {
             self.show_status("The text is too long to send; select a smaller part".to_string());
             return;
@@ -202,9 +207,13 @@ impl RubriqueApp {
         let can_review = matches!(state, OutputState::Done { .. })
             && job.pending.kind == AskKind::Rewrite
             && !output.trim().is_empty();
+        let request = match &job.pending.skill {
+            Some(skill) => format!("{} · {}", skill.name, job.pending.request),
+            None => job.pending.request.clone(),
+        };
         let info = OutputInfo {
             tool: job.pending.tool,
-            request: &job.pending.request,
+            request: &request,
             command: &job.command,
             output: &output,
             errors: &job.run.error_text(),

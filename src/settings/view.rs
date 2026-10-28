@@ -7,6 +7,7 @@ use eframe::egui::{
     pos2, vec2,
 };
 
+use crate::ai::skills::Skill;
 use crate::ai::{AiSettings, AiTool, check_command};
 use crate::theme::catalog::{ThemeChoice, Themes};
 use crate::theme::palette::{Base, Palette, Rgb, Theme};
@@ -22,6 +23,14 @@ pub enum SettingsAction {
     ResetScratchFolder,
     /// An AI command changed, so which tools are installed may have too.
     AiCommandChanged,
+    /// Pick another skills folder.
+    ChooseSkillsFolder,
+    /// Go back to the default skills folder.
+    ResetSkillsFolder,
+    /// Read the skills folders again.
+    ReloadSkills,
+    /// Write the example skill into the skills folder.
+    CreateExampleSkill,
     Close,
 }
 
@@ -30,6 +39,10 @@ pub enum SettingsAction {
 pub struct AiInfo<'a> {
     pub settings: &'a mut AiSettings,
     pub installed: [bool; 4],
+    /// Skills found in the skills folders.
+    pub skills: &'a [Skill],
+    /// rubrique's skills folder (the chosen one or the default).
+    pub skills_folder: Option<&'a Path>,
 }
 
 /// Where scratch files go, for the Scratches section.
@@ -125,8 +138,8 @@ pub fn show_settings(
             });
 
             ui.add_space(10.0);
-            if ai_section(ui, ai) {
-                action = Some(SettingsAction::AiCommandChanged);
+            if let Some(ai_action) = ai_section(ui, ai) {
+                action = Some(ai_action);
             }
         });
     });
@@ -136,10 +149,9 @@ pub fn show_settings(
 /// Size of the dot that shows whether a tool was found.
 const STATUS_DOT: f32 = 7.0;
 
-/// The AI section: which tool to use, and each tool's command. Returns true
-/// when a command changed.
-fn ai_section(ui: &mut Ui, ai: AiInfo) -> bool {
-    let AiInfo { settings, installed } = ai;
+/// The AI section: which tool to use, each tool's command, and skills.
+fn ai_section(ui: &mut Ui, ai: AiInfo) -> Option<SettingsAction> {
+    let AiInfo { settings, installed, skills, skills_folder } = ai;
     let found = |tool: AiTool| installed[AiTool::ALL.iter().position(|each| *each == tool).unwrap_or_default()];
     ui.label(RichText::new("AI").size(SECTION_SIZE).weak());
 
@@ -161,12 +173,73 @@ fn ai_section(ui: &mut Ui, ai: AiInfo) -> bool {
         )
         .weak(),
     );
-    let mut changed = false;
+    let mut action = None;
     for tool in AiTool::ALL {
         ui.add_space(4.0);
-        changed |= command_row(ui, settings, tool, found(tool));
+        if command_row(ui, settings, tool, found(tool)) {
+            action = Some(SettingsAction::AiCommandChanged);
+        }
     }
-    changed
+
+    ui.add_space(6.0);
+    ui.separator();
+    skills_section(ui, settings, skills, skills_folder).or(action)
+}
+
+/// Longest list of skill names shown before "and N more".
+const SKILLS_LISTED: usize = 6;
+
+/// Skills: the folder, Claude's skills, and what was found.
+fn skills_section(
+    ui: &mut Ui,
+    settings: &mut AiSettings,
+    skills: &[Skill],
+    folder: Option<&Path>,
+) -> Option<SettingsAction> {
+    let mut action = None;
+    ui.label(RichText::new("Skills").strong());
+    ui.label(
+        RichText::new(
+            "Reusable instructions for Ask, one folder per skill with a SKILL.md file \
+             (the same format as Claude Code).",
+        )
+        .weak(),
+    );
+    if let Some(folder) = folder {
+        path_box(ui, folder);
+    }
+    ui.horizontal(|ui| {
+        if ui.button("Change…").clicked() {
+            action = Some(SettingsAction::ChooseSkillsFolder);
+        }
+        if ui.add_enabled(settings.skills_folder.is_some(), egui::Button::new("Use default")).clicked() {
+            action = Some(SettingsAction::ResetSkillsFolder);
+        }
+    });
+    if ui.checkbox(&mut settings.use_claude_skills, "Also use Claude's skills (~/.claude/skills)").changed() {
+        action = Some(SettingsAction::ReloadSkills);
+    }
+    let found = match skills.len() {
+        0 => "No skills found yet.".to_string(),
+        count => {
+            let mut names: Vec<&str> = skills.iter().take(SKILLS_LISTED).map(|skill| skill.name.as_str()).collect();
+            let more = count.saturating_sub(SKILLS_LISTED);
+            let more = if more > 0 { format!(" and {more} more") } else { String::new() };
+            let noun = if count == 1 { "skill" } else { "skills" };
+            names.sort_unstable();
+            format!("{count} {noun}: {}{more}", names.join(", "))
+        }
+    };
+    ui.label(RichText::new(found).weak());
+    ui.horizontal(|ui| {
+        if ui.button("Reload").clicked() {
+            action = Some(SettingsAction::ReloadSkills);
+        }
+        if ui.button("Create example skill").on_hover_text("Adds an \"action-items\" skill to the folder").clicked() {
+            action = Some(SettingsAction::CreateExampleSkill);
+        }
+    });
+    action
 }
 
 /// A drop-down of the AI tools; tools that were not found say so.

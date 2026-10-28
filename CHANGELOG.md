@@ -20,6 +20,11 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   **Review in merge** shows each change next to the original, and nothing
   changes until you press **Apply**. The first run in a folder shows the
   exact command and asks first.
+- Skills: reusable instructions for Ask, one folder per skill with a
+  `SKILL.md` file, the same format as Claude Code skills. Pick one from
+  **Skills…** in the Ask bar. Settings → AI → Skills sets the folder
+  (default `skills` in the config folder), can include Claude's own
+  `~/.claude/skills`, and can create an example skill.
 
 ### Changed
 

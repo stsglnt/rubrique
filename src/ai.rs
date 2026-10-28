@@ -8,6 +8,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 pub mod run;
+pub mod skills;
 pub mod view;
 
 /// Placeholder in a command template for the request text.
@@ -94,6 +95,10 @@ pub struct AiSettings {
     commands: [String; 4],
     /// Folders where the user allowed AI runs ("Don't ask again").
     pub allowed_folders: Vec<PathBuf>,
+    /// Folder with rubrique's skills; `None` means the default one.
+    pub skills_folder: Option<PathBuf>,
+    /// Also offer Claude Code's skills from `~/.claude/skills`.
+    pub use_claude_skills: bool,
 }
 
 impl Default for AiSettings {
@@ -103,6 +108,8 @@ impl Default for AiSettings {
             summary_tool: AiTool::Local,
             commands: AiTool::ALL.map(|tool| tool.default_command().to_string()),
             allowed_folders: Vec::new(),
+            skills_folder: None,
+            use_claude_skills: true,
         }
     }
 }
@@ -134,6 +141,8 @@ impl AiSettings {
         match key {
             "ai_tool" => self.default_tool = AiTool::from_id(value).unwrap_or(self.default_tool),
             "ai_summary_tool" => self.summary_tool = AiTool::from_id(value).unwrap_or(self.summary_tool),
+            "skills_folder" => self.skills_folder = (!value.is_empty()).then(|| PathBuf::from(value)),
+            "ai_use_claude_skills" => self.use_claude_skills = value != "false",
             "ai_allowed_folder" => {
                 if !value.is_empty() {
                     self.allowed_folders.push(PathBuf::from(value));
@@ -158,6 +167,12 @@ impl AiSettings {
         for tool in AiTool::ALL.into_iter().filter(|tool| self.is_custom(*tool)) {
             let _ = writeln!(lines, "ai_command_{}={}", tool.id(), self.command(tool).trim());
         }
+        if let Some(folder) = &self.skills_folder {
+            let _ = writeln!(lines, "skills_folder={}", folder.display());
+        }
+        if !self.use_claude_skills {
+            lines.push_str("ai_use_claude_skills=false\n");
+        }
         for folder in &self.allowed_folders {
             let _ = writeln!(lines, "ai_allowed_folder={}", folder.display());
         }
@@ -173,6 +188,15 @@ impl AiSettings {
     /// AI runs in `folder` were allowed before.
     pub fn is_allowed(&self, folder: &Path) -> bool {
         self.allowed_folders.iter().any(|allowed| allowed == folder)
+    }
+
+    /// Folders to read skills from, rubrique's own first.
+    pub fn skill_folders(&self, default_folder: Option<PathBuf>) -> Vec<PathBuf> {
+        let mut folders: Vec<PathBuf> = self.skills_folder.clone().or(default_folder).into_iter().collect();
+        if self.use_claude_skills {
+            folders.extend(skills::claude_skills_folder());
+        }
+        folders
     }
 
     pub fn allow(&mut self, folder: &Path) {
@@ -247,6 +271,12 @@ pub struct Prompt {
 }
 
 impl Prompt {
+    /// Add a skill's instructions to rubrique's own.
+    pub fn with_skill(mut self, skill: &skills::Skill) -> Prompt {
+        let _ = write!(self.system, "\n\nFollow the \"{}\" skill:\n{}", skill.name, skill.instructions);
+        self
+    }
+
     /// Too long to pass as a command-line argument.
     pub fn is_too_long(&self) -> bool {
         self.system.len() + self.user.len() > MAX_PROMPT_BYTES
@@ -474,6 +504,10 @@ mod tests {
         assert!(answer.user.contains("The text is a Markdown file"));
         assert!(!answer.is_too_long());
         assert!(build_prompt("x", &"a".repeat(MAX_PROMPT_BYTES), AskKind::Rewrite, true).is_too_long());
+        let skill = skills::parse_skill("---\nname: tidy\n---\nUse lists.", "tidy", PathBuf::new());
+        let with =
+            build_prompt("x", "y", AskKind::Rewrite, false).with_skill(&skill.unwrap_or_else(|| panic!("skill")));
+        assert!(with.system.ends_with("Follow the \"tidy\" skill:\nUse lists."));
     }
 
     #[test]
@@ -512,7 +546,9 @@ mod tests {
 
     #[test]
     fn remembers_allowed_folders() {
-        let mut settings = AiSettings::default();
+        let mut settings =
+            AiSettings { skills_folder: Some(PathBuf::from("/s")), use_claude_skills: false, ..AiSettings::default() };
+        assert_eq!(settings.skill_folders(Some(PathBuf::from("/default"))), [PathBuf::from("/s")]);
         settings.allow(Path::new("/home/a/notes"));
         settings.allow(Path::new("/home/a/notes"));
         assert!(settings.is_allowed(Path::new("/home/a/notes")));

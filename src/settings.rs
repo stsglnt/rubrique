@@ -158,6 +158,11 @@ pub fn default_scratch_folder() -> Option<PathBuf> {
     config_folder().map(|folder| folder.join("scratches"))
 }
 
+/// Default folder for skills (`skills` in the config folder).
+pub fn default_skills_folder() -> Option<PathBuf> {
+    config_folder().map(|folder| folder.join("skills"))
+}
+
 /// Folder for the user's own `*.theme` files (`themes` in the config folder).
 pub fn themes_folder() -> Option<PathBuf> {
     config_folder().map(|folder| folder.join("themes"))
