@@ -9,13 +9,13 @@ One window, five themes, all built in: Light, Dark, Sepia, Midnight and High con
 
 ## Features (v0.1)
 
-- File explorer with several root folders at once, showing **all** files; a **Markdown only** checkbox hides the rest
+- File explorer with several folders at once (**+ Add folder…** opens the system folder window), showing **all** files; a **Markdown only** checkbox hides the rest
 - Right-click any file or folder: copy absolute path, relative path, or name
 - Plain-text editor with Markdown syntax colors, and a rendered preview (`Cmd/Ctrl+E`)
 - Atomic saves, unsaved-changes prompt, reload when the file changes on disk
 - Line shortcuts: move (`Alt+Up/Down`), duplicate (`Cmd/Ctrl+D`), insert date (`Cmd/Ctrl+Shift+D`)
 - Five built-in themes (Light, Dark, Sepia, Midnight, High contrast), or follow the system; add your own as small text files
-- One dependency (`eframe`); the Markdown parser and everything else is our own code
+- Two dependencies (`eframe` for the window, `rfd` for the folder window); the Markdown parser and everything else is our own code
 
 ## Build and run
 
@@ -45,7 +45,7 @@ Linux also needs the usual X11/Wayland and OpenGL development libraries.
 
 ## Themes
 
-Open **Settings** with the gear at the top right (or `Cmd/Ctrl+,`) and click a
+Open **Settings** with the gear at the bottom left (or `Cmd/Ctrl+,`) and click a
 theme card: **System** (follows your OS), **Light**, **Dark**, **Sepia**,
 **Midnight**, **High contrast**, or one of your own.
 

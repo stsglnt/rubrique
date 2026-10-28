@@ -18,7 +18,7 @@ pub enum SettingsAction {
     Close,
 }
 
-/// Size of the gear button in the top bar.
+/// Size of the gear button at the bottom of the explorer.
 const GEAR_BUTTON_SIZE: Vec2 = vec2(30.0, 24.0);
 const GEAR_RING_RADIUS: f32 = 5.0;
 const GEAR_HOLE_RADIUS: f32 = 2.0;
@@ -53,7 +53,7 @@ enum BarKind {
     Weak,
 }
 
-/// Gear button for the top bar; highlighted while the panel is open.
+/// Gear button that opens Settings; highlighted while the panel is open.
 pub fn gear_button(ui: &mut Ui, open: bool) -> Response {
     let (rect, response) = ui.allocate_exact_size(GEAR_BUTTON_SIZE, Sense::click());
     response.widget_info(|| WidgetInfo::selected(egui::Role::Button, true, open, "Settings"));

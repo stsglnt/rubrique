@@ -8,7 +8,7 @@ publish = false
 rust-version = "1.95"
 
 [dependencies]
-# The only dependency: GUI toolkit. Default features trimmed to the OpenGL
+# GUI toolkit. Default features trimmed to the OpenGL
 # backend (lighter than wgpu), clipboard, link opening, and the Linux backends.
 eframe = { version = "0.37.0", default-features = false, features = [
     "glow",
@@ -18,6 +18,9 @@ eframe = { version = "0.37.0", default-features = false, features = [
     "wayland",
     "x11",
 ] }
+# Native "choose a folder" window for adding explorer folders. On Linux it
+# uses the desktop's XDG portal, so no GTK libraries are needed.
+rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
 
 # Lint levels from the Rust guide. `unsafe_code` is `deny` rather than
 # `forbid` because date.rs needs one FFI call (`localtime_r`); that single

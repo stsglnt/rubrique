@@ -7,7 +7,7 @@ base=light
 
 # Editor and preview page, text fields, dialogs
 background=#fdfcfa
-# Explorer, top bar and status bar
+# Explorer, status bar and Settings panel
 sidebar=#f3f2ee
 # Buttons and checkboxes
 surface=#e8e6e0

@@ -18,6 +18,8 @@ pub enum ExplorerAction {
     Refresh,
     /// Take this root folder out of the explorer.
     RemoveRoot(PathBuf),
+    /// Ask the system for a folder to add as a root.
+    AddFolder,
 }
 
 /// Read-only facts the tree needs while drawing.
@@ -35,7 +37,7 @@ pub struct TreeContext<'a> {
     pub open_file_dirty: bool,
 }
 
-/// Draw the explorer panel: filter checkbox, refresh button and one tree per root folder.
+/// Draw the explorer panel: "Add folder…", refresh, the Markdown filter and one tree per root folder.
 pub fn show_explorer(
     ui: &mut Ui,
     roots: &mut [FsNode],
@@ -44,13 +46,16 @@ pub fn show_explorer(
 ) -> Option<ExplorerAction> {
     let mut action = None;
     ui.horizontal(|ui| {
-        ui.checkbox(markdown_only, "Markdown only").on_hover_text("Hide files that are not Markdown");
+        if ui.button("+ Add folder…").on_hover_text("Choose a folder to show in the explorer").clicked() {
+            action = Some(ExplorerAction::AddFolder);
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.small_button("Refresh").clicked() {
+            if ui.small_button("Refresh").on_hover_text("Re-read all folders from disk").clicked() {
                 action = Some(ExplorerAction::Refresh);
             }
         });
     });
+    ui.checkbox(markdown_only, "Markdown only").on_hover_text("Hide files that are not Markdown");
     ui.separator();
 
     // The checkbox above may have just changed the filter.

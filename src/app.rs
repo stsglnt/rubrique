@@ -20,13 +20,11 @@ use crate::theme::style::{apply_theme, page_fill};
 /// How long a status message ("Copied ...") stays visible.
 const STATUS_MESSAGE_SECONDS: f64 = 4.0;
 const EXPLORER_DEFAULT_WIDTH: f32 = 260.0;
-/// Room kept to the right of the folder field for the "Open", "Add" and settings buttons.
-const TOP_BAR_BUTTONS_ROOM: f32 = 165.0;
 /// Width of the settings panel.
 const SETTINGS_PANEL_WIDTH: f32 = 320.0;
 /// Space around the "cannot display this file" message.
 const UNSUPPORTED_MARGIN: f32 = 16.0;
-/// Inner margin (x, y) of the top bar and the status bar.
+/// Inner margin (x, y) of the status bar.
 const BAR_MARGIN: (i8, i8) = (10, 6);
 /// Opacity of the warning color behind the "changed on disk" bar.
 const NOTICE_TINT: f32 = 0.15;
@@ -76,8 +74,6 @@ impl OpenFile {
 #[derive(Debug)]
 enum GuardedAction {
     OpenFile(PathBuf),
-    /// Replace all explorer roots with this folder.
-    OpenFolder(PathBuf),
     /// Take a root out of the explorer (closes the open file if it is inside).
     RemoveRoot(PathBuf),
     Quit,
@@ -98,8 +94,6 @@ pub struct RubriqueApp {
     /// Explorer root folders, in the order they were added. Never empty.
     roots: Vec<FsNode>,
     open_file: OpenFile,
-    /// Text in the top bar's folder field.
-    folder_input: String,
     /// Action waiting for the user to answer the unsaved-changes dialog.
     pending: Option<GuardedAction>,
     /// Set once the user agreed to quit, so the next close is not blocked.
@@ -125,7 +119,6 @@ impl RubriqueApp {
         apply_theme(ctx, &themes, &settings.theme);
         let mut app = RubriqueApp {
             settings,
-            folder_input: roots.first().map(|root| absolute_path_text(root)).unwrap_or_default(),
             roots: roots.into_iter().map(FsNode::new_root).collect(),
             open_file: OpenFile::Nothing,
             pending: None,
@@ -158,7 +151,6 @@ impl RubriqueApp {
     fn perform(&mut self, action: GuardedAction) {
         match action {
             GuardedAction::OpenFile(path) => self.open_file_now(path),
-            GuardedAction::OpenFolder(path) => self.open_folder_now(path),
             GuardedAction::RemoveRoot(path) => self.remove_root_now(&path),
             GuardedAction::Quit => self.quit_confirmed = true,
         }
@@ -177,14 +169,6 @@ impl RubriqueApp {
             }
             Err(error) => self.show_status(format!("Cannot open {}: {error}", path.display())),
         }
-    }
-
-    /// Make `path` the only explorer root and close the open file.
-    fn open_folder_now(&mut self, path: PathBuf) {
-        self.folder_input = absolute_path_text(&path);
-        self.roots = vec![FsNode::new_root(path)];
-        self.close_file();
-        self.remember_roots();
     }
 
     /// Add `path` as one more explorer root, unless it is already one.
@@ -377,32 +361,6 @@ impl RubriqueApp {
 
     // ---------- panels ----------
 
-    /// Folder field, "Open" / "Add" buttons and the settings gear.
-    fn top_bar(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            ui.label("Folder");
-            let field_width = ui.available_width() - TOP_BAR_BUTTONS_ROOM;
-            let field = ui.add(egui::TextEdit::singleline(&mut self.folder_input).desired_width(field_width));
-            let entered = field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
-            let open = ui.button("Open").on_hover_text("Show only this folder in the explorer");
-            if (open.clicked() || entered)
-                && let Some(path) = self.typed_folder()
-            {
-                self.request(GuardedAction::OpenFolder(path));
-            }
-            if ui.button("Add").on_hover_text("Add this folder to the explorer").clicked()
-                && let Some(path) = self.typed_folder()
-            {
-                self.add_folder(path);
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if gear_button(ui, self.settings_open).clicked() {
-                    self.settings_open = !self.settings_open;
-                }
-            });
-        });
-    }
-
     /// Right panel: settings. Theme picks apply at once.
     fn settings_panel(&mut self, ui: &mut Ui) {
         let folder = themes_folder();
@@ -424,15 +382,16 @@ impl RubriqueApp {
         }
     }
 
-    /// The folder typed in the top bar as an absolute path, or a status
-    /// message when it is not a folder.
-    fn typed_folder(&mut self) -> Option<PathBuf> {
-        let path = PathBuf::from(self.folder_input.trim());
-        if !path.is_dir() {
-            self.show_status(format!("Not a folder: {}", path.display()));
-            return None;
+    /// Let the user pick a folder in the system dialog and add it as a root.
+    fn choose_folder_to_add(&mut self) {
+        let start = self.roots.first().and_then(|root| root.path.parent().map(Path::to_path_buf));
+        let mut dialog = rfd::FileDialog::new().set_title("Add folder to rubrique");
+        if let Some(start) = start {
+            dialog = dialog.set_directory(start);
         }
-        Some(std::path::absolute(&path).unwrap_or(path))
+        if let Some(path) = dialog.pick_folder() {
+            self.add_folder(path);
+        }
     }
 
     /// Left panel: one file tree per root folder.
@@ -456,6 +415,7 @@ impl RubriqueApp {
             Some(ExplorerAction::Copy(text)) => self.copy_to_clipboard(ui.ctx(), text),
             Some(ExplorerAction::Refresh) => self.roots.iter_mut().for_each(FsNode::refresh),
             Some(ExplorerAction::RemoveRoot(path)) => self.request_remove_root(path),
+            Some(ExplorerAction::AddFolder) => self.choose_folder_to_add(),
             None => {}
         }
     }
@@ -677,12 +637,20 @@ impl eframe::App for RubriqueApp {
         // The page fills the whole central area; editor and preview add their own margins.
         let page_frame = egui::Frame::central_panel(&style).fill(page_fill(&style.visuals)).inner_margin(0);
 
-        egui::Panel::top("top-bar").frame(bar_frame).show(ui, |ui| self.top_bar(ui));
         egui::Panel::bottom("status-bar").frame(bar_frame).show(ui, |ui| self.status_bar(ui));
-        egui::Panel::left("explorer")
-            .resizable(true)
-            .default_size(EXPLORER_DEFAULT_WIDTH)
-            .show(ui, |ui| self.explorer(ui));
+        egui::Panel::left("explorer").resizable(true).default_size(EXPLORER_DEFAULT_WIDTH).show(ui, |ui| {
+            // Settings sit at the bottom of the explorer, out of the way.
+            egui::Panel::bottom("explorer-footer").show_separator_line(false).show(ui, |ui| {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if gear_button(ui, self.settings_open).clicked() {
+                        self.settings_open = !self.settings_open;
+                    }
+                });
+                ui.add_space(2.0);
+            });
+            self.explorer(ui);
+        });
         if self.settings_open {
             let panel_frame = egui::Frame::side_top_panel(&style).inner_margin(0);
             egui::Panel::right("settings")
