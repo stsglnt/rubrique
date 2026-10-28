@@ -38,8 +38,11 @@ Ask Claude and Codex at once and pick the best parts in the merge screen; hover 
 Download the latest version from [Releases](https://github.com/witseko/rubrique/releases):
 
 - **macOS** (Apple Silicon and Intel): open the `.dmg` and drag rubrique to
-  Applications. The app is not notarized yet, so the first time right-click
-  rubrique and choose **Open**.
+  Applications. From 0.5.0 the app is signed and notarized by Apple, so it
+  opens with no warning. For 0.4.0 and older, macOS blocks it: run
+  `xattr -dr com.apple.quarantine /Applications/rubrique.app` once in Terminal,
+  or open it, then click **Open Anyway** in System Settings → Privacy &
+  Security.
 - **Debian / Ubuntu**: `sudo apt install ./rubrique_X.Y.Z-1_amd64.deb`
 - **Other Linux**: unpack the `.tar.gz` and run `./install.sh` (installs to
   `~/.local`; `sudo ./install.sh /usr/local` for all users).
