@@ -44,6 +44,12 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   hover, and listed in a **Notes** panel with Edit and Delete.
 - The preview hides HTML comments; the editor dims them.
 
+### Changed
+
+- Explorer and settings icons redrawn in the app icon's style: heavy rounded
+  lines, the same size, with one detail in the theme's accent color.
+- The "m" in the app icon is larger.
+
 ### Fixed
 
 - The unsaved-changes dot showed as an empty box.
