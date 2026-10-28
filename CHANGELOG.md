@@ -8,6 +8,12 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Changed
+
+- New explorer icons in the style of Apple's symbols: **Add folder** is a
+  folder with a solid plus badge, **New scratch** is a square with a pencil
+  whose tip uses the accent color.
+
 ## [0.4.0] - 2026-10-28
 
 AI-first, still small: rubrique runs the AI command-line tools you already
