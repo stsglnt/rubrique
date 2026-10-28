@@ -1,0 +1,32 @@
+# Checks dependencies for known security problems (RustSec advisories),
+# licenses and sources with cargo-deny. Runs on dependency changes, on pull
+# requests, and every Monday, because new advisories appear for old crates.
+name: Security
+
+on:
+  push:
+    branches: [main]
+    paths: [Cargo.toml, Cargo.lock, deny.toml, .github/workflows/security.yml]
+  pull_request:
+    paths: [Cargo.toml, Cargo.lock, deny.toml, .github/workflows/security.yml]
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-deny:
+    name: cargo-deny (${{ matrix.checks }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Advisories on their own, so a new advisory does not hide a license problem.
+        checks: [advisories, "bans licenses sources"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check ${{ matrix.checks }}

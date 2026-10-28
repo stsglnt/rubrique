@@ -1,0 +1,16 @@
+# Weekly pull requests for outdated Rust crates and GitHub Actions.
+# Security fixes come as soon as an advisory is published.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # One pull request for all small updates instead of one per crate.
+      minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

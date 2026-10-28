@@ -93,7 +93,11 @@ All keys are listed in [`specs/07-themes.md`](specs/07-themes.md).
 cargo test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
+cargo deny check   # known security problems, licenses, sources
 ```
+
+The Security workflow runs `cargo deny` on dependency changes and every
+Monday; Dependabot opens weekly pull requests for outdated crates and actions.
 
 Specs live in [`specs/`](specs/): start with `00-overview.md`.
 

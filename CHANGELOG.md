@@ -43,6 +43,9 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   hidden comment after the text, highlighted in the preview with the note on
   hover, and listed in a **Notes** panel with Edit and Delete.
 - The preview hides HTML comments; the editor dims them.
+- Dependency security checks: cargo-deny in CI (known security problems,
+  licenses, crate sources), weekly and on every dependency change, and
+  Dependabot updates for crates and GitHub Actions.
 
 ### Changed
 
