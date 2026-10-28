@@ -4,6 +4,7 @@ mod app;
 mod date;
 mod document;
 mod explorer;
+mod format;
 mod icons;
 mod markdown;
 mod scratch;

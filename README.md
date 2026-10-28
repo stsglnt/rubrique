@@ -13,6 +13,7 @@ One window, five themes, all built in: Light, Dark, Sepia, Midnight and High con
 - Scratch files (`Cmd/Ctrl+N`): an empty note with a random name, for pasting things for later
 - Right-click any file or folder: copy absolute path, relative path, or name; rename files
 - Plain-text editor with Markdown syntax colors, and a rendered preview (`Cmd/Ctrl+E`)
+- **Format** (`Cmd/Ctrl+Shift+F`): pretty-print JSON, SQL (PostgreSQL style, like pgFormatter) or XML, for the whole file or the selection
 - **Open in browser** (`Cmd/Ctrl+Shift+B`): Markdown as a full web page in your theme's colors, or HTML files as they are
 - Atomic saves and an unsaved-changes prompt
 - Notices when another program changes the open file: reloads it if you have no edits, otherwise offers a side-by-side **merge** (on disk | result | mine), reload or keep mine, without interrupting your typing
@@ -57,6 +58,7 @@ Linux also needs the usual X11/Wayland and OpenGL development libraries.
 | Cmd+, | Open or close Settings |
 | Cmd+N | New scratch file |
 | Cmd+Shift+B | Open in browser (Markdown and HTML) |
+| Cmd+Shift+F | Format JSON, SQL or XML |
 | Cmd+Shift+C | Copy path of the open file |
 | Alt+Up / Alt+Down | Move line(s) |
 | Cmd+D | Duplicate line(s) |

@@ -9,10 +9,13 @@ use crate::document::merge::MergeSession;
 use crate::document::merge_view::{MergeAction, show_merge};
 use crate::document::text_file::{DiskState, Document, Opened, Unsupported};
 use crate::document::text_stats::TextStats;
-use crate::document::view::{focus_editor, handle_editor_shortcuts, show_editor, show_preview};
+use crate::document::view::{
+    editor_selection, focus_editor, handle_editor_shortcuts, set_editor_cursor, show_editor, show_preview,
+};
 use crate::explorer::paths::{absolute_path_text, name_text};
 use crate::explorer::tree::{FsNode, is_markdown_path};
 use crate::explorer::view::{ExplorerAction, TreeContext, show_explorer};
+use crate::format::{Language, format};
 use crate::icons::{Icon, icon_button};
 use crate::markdown::blocks::{Block, parse_blocks};
 use crate::markdown::html::{file_url, html_page, is_html_path, with_base};
@@ -42,6 +45,7 @@ const DIRTY_MARKER: &str = "• ";
 
 const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
 const TOGGLE_PREVIEW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::E);
+const FORMAT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::F);
 const OPEN_IN_BROWSER: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::B);
 const NEW_SCRATCH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
 const TOGGLE_SETTINGS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma);
@@ -364,6 +368,9 @@ impl RubriqueApp {
         if ctx.input_mut(|input| input.consume_shortcut(&TOGGLE_SETTINGS)) {
             self.settings_open = !self.settings_open;
         }
+        if ctx.input_mut(|input| input.consume_shortcut(&FORMAT)) {
+            self.format_text(ctx);
+        }
         if ctx.input_mut(|input| input.consume_shortcut(&OPEN_IN_BROWSER)) {
             self.open_in_browser(ctx);
         }
@@ -487,6 +494,51 @@ impl RubriqueApp {
             }
             Err(error) => self.show_status(format!("Cannot write the browser copy: {error}")),
         }
+    }
+
+    /// Pretty-print the selection (its language guessed from the text unless
+    /// the file says), or the whole JSON / SQL / XML file.
+    fn format_text(&mut self, ctx: &Context) {
+        let selection = if self.showing_preview() { None } else { editor_selection(ctx) };
+        let OpenFile::Text { document, preview, .. } = &mut self.open_file else {
+            return;
+        };
+        let file_language = Language::from_path(&document.path);
+        let (start, end) = match selection {
+            Some((first, last)) => (char_to_byte(&document.text, first), char_to_byte(&document.text, last)),
+            None if file_language.is_some() => (0, document.text.len()),
+            None => {
+                self.show_status(
+                    "Select JSON, SQL or XML text to format, or open a .json, .sql or .xml file".to_string(),
+                );
+                return;
+            }
+        };
+        let original = &document.text[start..end];
+        let language = file_language.unwrap_or_else(|| Language::guess(original));
+        let mut formatted = match format(language, original) {
+            Ok(formatted) => formatted,
+            Err(error) => {
+                let place = if selection.is_some() { " (in the selection)" } else { "" };
+                let message = format!("Cannot format as {}{place}: {error}", language.name());
+                self.show_status(message);
+                return;
+            }
+        };
+        // A selection keeps its own ending: no new line is added after it.
+        if selection.is_some() && !original.ends_with('\n') {
+            formatted.truncate(formatted.trim_end_matches('\n').len());
+        }
+        if formatted == original {
+            self.show_status(format!("Already formatted as {}", language.name()));
+            return;
+        }
+        document.text.replace_range(start..end, &formatted);
+        document.on_text_changed();
+        *preview = None;
+        let cursor = document.text[..start].chars().count();
+        set_editor_cursor(ctx, cursor);
+        self.show_status(format!("Formatted as {}", language.name()));
     }
 
     /// Colors of the theme on screen now (for System, the light or dark one in use).
@@ -780,6 +832,16 @@ impl RubriqueApp {
         let is_html = self.open_file.path().is_some_and(is_html_path);
         // Right side first, so a long path is shortened instead of overlapping it.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let formattable = self.open_file.path().and_then(Language::from_path);
+            if is_text
+                && let Some(language) = formattable
+                && ui
+                    .small_button("Format")
+                    .on_hover_text(format!("Pretty-print this {} (Cmd+Shift+F)", language.name()))
+                    .clicked()
+            {
+                self.format_text(ui.ctx());
+            }
             if is_text && (is_markdown || is_html) {
                 let browser =
                     ui.small_button("Open in browser").on_hover_text("Show it in your web browser (Cmd+Shift+B)");
@@ -839,6 +901,11 @@ impl RubriqueApp {
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
     }
+}
+
+/// Byte index of character `index` in `text` (the end when past it).
+fn char_to_byte(text: &str, index: usize) -> usize {
+    text.char_indices().nth(index).map_or(text.len(), |(offset, _)| offset)
 }
 
 /// Write `page` to a temporary file for the browser, one per source file, and

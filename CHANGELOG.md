@@ -30,6 +30,11 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   (**Swap sides** flips them). One-sided changes merge by themselves; for
   conflicts pick left, right or both, or edit the result, then **Apply**.
 
+- **Format** (`Cmd/Ctrl+Shift+F`, or the status bar button in `.json`,
+  `.sql` and `.xml` files): pretty-prints JSON, XML, and SQL in
+  PostgreSQL / pgFormatter style. Works on the selection too, guessing its
+  language, so code blocks in notes can be formatted. Undo with `Cmd/Ctrl+Z`.
+
 ### Fixed
 
 - The unsaved-changes dot showed as an empty box.

@@ -66,6 +66,21 @@ pub fn show_preview(ui: &mut Ui, blocks: &[Block]) {
     });
 }
 
+/// The editor's selection as sorted character indices, if any text is selected.
+pub fn editor_selection(ctx: &Context) -> Option<(usize, usize)> {
+    let state = TextEditState::load(ctx, editor_id())?;
+    let range = state.cursor.char_range()?.as_sorted_char_range();
+    (range.start.0 < range.end.0).then_some((range.start.0, range.end.0))
+}
+
+/// Put the editor's cursor at character `index` (no selection).
+pub fn set_editor_cursor(ctx: &Context, index: usize) {
+    if let Some(mut state) = TextEditState::load(ctx, editor_id()) {
+        state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(index))));
+        state.store(ctx, editor_id());
+    }
+}
+
 /// Give keyboard focus to the editor (e.g. after opening a file).
 pub fn focus_editor(ctx: &Context) {
     ctx.memory_mut(|memory| memory.request_focus(editor_id()));
