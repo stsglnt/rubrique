@@ -34,6 +34,9 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Changed
 
+- New explorer icons in the style of Apple's symbols: **Add folder** is a
+  folder with a solid plus badge, **New scratch** is a square with a pencil
+  whose tip uses the accent color.
 - Closing the window with unsaved changes in several tabs asks about each file in turn.
 - New dependencies `egui_extras` and `image`, only to decode images.
 

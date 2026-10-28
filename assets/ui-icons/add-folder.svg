@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-7 -7 14 14" width="14" height="14">
+  <!-- Add folder. Reference drawing of Icon::FolderPlus in src/icons.rs (same coordinates).
+       Line: currentColor. Accent: the badge disc. The gap and the plus are cut out with a mask. -->
+  <mask id="cut">
+    <rect x="-8" y="-8" width="16" height="16" fill="#fff"/>
+    <circle cx="4" cy="3.5" r="5.5" fill="#000"/>
+  </mask>
+  <path mask="url(#cut)" d="M-4.5 -5.5 H-3.13 Q-2 -5.5 -1.2 -4.7 Q-0.4 -3.9 0.73 -3.9 H4.5 Q6.5 -3.9 6.5 -1.9 V3.5 Q6.5 5.5 4.5 5.5 H-4.5 Q-6.5 5.5 -6.5 3.5 V-3.5 Q-6.5 -5.5 -4.5 -5.5 Z"
+        fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <mask id="plus">
+    <rect x="-8" y="-8" width="16" height="16" fill="#fff"/>
+    <path d="M2.25 3.5 H5.75 M4 1.75 V5.25" stroke="#000" stroke-width="1.5" stroke-linecap="round"/>
+  </mask>
+  <circle mask="url(#plus)" cx="4" cy="3.5" r="4.25" fill="#2f6fd6"/>
+</svg>
