@@ -43,7 +43,7 @@ impl HighlightStyle {
             Kind::Emphasis => TextFormat { italics: true, ..plain },
             Kind::Strikethrough => TextFormat { color: self.weak, strikethrough: Stroke::new(1.0, self.weak), ..plain },
             Kind::Code => TextFormat { background: self.code_background, ..plain },
-            Kind::Quote => TextFormat { color: self.weak, italics: true, ..plain },
+            Kind::Quote | Kind::Comment => TextFormat { color: self.weak, italics: true, ..plain },
         }
     }
 }

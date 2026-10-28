@@ -35,6 +35,15 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   PostgreSQL / pgFormatter style. Works on the selection too, guessing its
   language, so code blocks in notes can be formatted. Undo with `Cmd/Ctrl+Z`.
 
+- Edit in the preview: click a block (paragraph, heading, list, quote, code)
+  to edit just that block's Markdown in place; Esc or a click outside shows it
+  rendered again.
+- Notes: drag to select text in the preview, then **+ Add note** (or
+  `Cmd/Ctrl+Shift+M`, also in Edit mode). The note is stored in the file as a
+  hidden comment after the text, highlighted in the preview with the note on
+  hover, and listed in a **Notes** panel with Edit and Delete.
+- The preview hides HTML comments; the editor dims them.
+
 ### Fixed
 
 - The unsaved-changes dot showed as an empty box.

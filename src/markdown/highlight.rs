@@ -21,6 +21,8 @@ pub enum Kind {
     Url,
     /// Text inside a block quote.
     Quote,
+    /// `<!-- ... -->` comments, including notes.
+    Comment,
 }
 
 /// A labeled byte range of the text.
@@ -162,6 +164,7 @@ fn highlight_inlines(out: &mut Spans, start: usize, line: &str, from: usize, bas
             b'`' => Some(code_span(out, start, line, i, base)),
             b'*' | b'_' => emphasis(out, start, line, i, base),
             b'~' if bytes.get(i + 1) == Some(&b'~') => delimited(out, start, line, i, "~~", Kind::Strikethrough, base),
+            b'<' if line[i..].starts_with("<!--") => comment(out, start, line, i, base),
             b'[' => link(out, start, line, i, base),
             b'<' => autolink(out, start, line, i, base),
             _ => None,
@@ -231,6 +234,14 @@ fn delimited(
     out.to(start + close, kind);
     out.to(start + close + marker.len(), Kind::Marker);
     Some(close + marker.len())
+}
+
+/// `<!-- ... -->` on one line.
+fn comment(out: &mut Spans, start: usize, line: &str, i: usize, base: Kind) -> Option<usize> {
+    let end = i + line[i..].find("-->")? + "-->".len();
+    out.to(start + i, base);
+    out.to(start + end, Kind::Comment);
+    Some(end)
 }
 
 /// `[text](url)`.
@@ -463,5 +474,11 @@ mod tests {
         let marks = marked(text);
         assert!(marks.contains(&("світ", Kind::Emphasis)));
         assert!(marks.contains(&("код", Kind::Code)));
+    }
+
+    #[test]
+    fn comments_and_notes_are_dimmed() {
+        assert_eq!(marked("a b<!-- note on \"b\": hi --> c"), [("<!-- note on \"b\": hi -->", Kind::Comment)]);
+        assert_eq!(marked("<!-- open"), []);
     }
 }

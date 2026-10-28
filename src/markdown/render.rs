@@ -49,13 +49,10 @@ const CODE_MARGIN: (i8, i8) = (14, 12);
 const CODE_LABEL_SIZE: f32 = 11.0;
 /// Offset of the language label from the code block's top-right corner.
 const CODE_LABEL_OFFSET: (f32, f32) = (10.0, 6.0);
+/// Opacity of the warning color behind text that has a note.
+const NOTE_TINT: f32 = 0.35;
 /// Total space a thematic break takes, its line in the middle.
 const RULE_SPACING: f32 = 20.0;
-
-/// Render a whole document.
-pub fn render_blocks(ui: &mut Ui, blocks: &[Block]) {
-    render_blocks_at(ui, blocks, 0, BLOCK_GAP);
-}
 
 /// Render blocks inside `depth` lists (bullets change shape with depth),
 /// `gap` apart. List items use a smaller gap so nested lists stay tight.
@@ -66,6 +63,16 @@ fn render_blocks_at(ui: &mut Ui, blocks: &[Block], depth: usize, gap: f32) {
         }
         render_block(ui, block, depth);
     }
+}
+
+/// Draw one top-level block (for the clickable preview).
+pub fn render_top_block(ui: &mut Ui, block: &Block) {
+    render_block(ui, block, 0);
+}
+
+/// Space above a top-level block that follows another one.
+pub fn top_gap(block: &Block) -> f32 {
+    gap_before(block, BLOCK_GAP)
 }
 
 /// Space above a block: headings get more, so they sit close to their own text.
@@ -85,6 +92,8 @@ fn heading_index(level: u8) -> usize {
 fn render_block(ui: &mut Ui, block: &Block, depth: usize) {
     match block {
         Block::Heading { level, content } => render_heading(ui, *level, content),
+        // A paragraph that is only hidden comments takes no room.
+        Block::Paragraph(content) if content.iter().all(|inline| matches!(inline, Inline::Note { .. })) => {}
         Block::Paragraph(content) => render_inlines(ui, content, &TextStyle::default()),
         Block::Code { info, code } => render_code(ui, info, code),
         Block::Quote(blocks) => render_quote(ui, blocks, depth),
@@ -232,6 +241,8 @@ struct TextStyle {
     code: bool,
     /// Target URL when the text is part of a link.
     link: Option<String>,
+    /// What a note says about this text (highlighted, shown on hover).
+    note: Option<String>,
 }
 
 impl Default for TextStyle {
@@ -244,6 +255,7 @@ impl Default for TextStyle {
             strikethrough: false,
             code: false,
             link: None,
+            note: None,
         }
     }
 }
@@ -290,16 +302,57 @@ fn render_span(ui: &mut Ui, text: String, style: &TextStyle) {
     if style.code {
         rich = rich.code();
     }
+    if style.note.is_some() {
+        rich = rich.background_color(ui.visuals().warn_fg_color.gamma_multiply(NOTE_TINT));
+    }
+    let note_tip = |response: egui::Response| match &style.note {
+        Some(note) => response.on_hover_text(format!("Note: {note}")),
+        None => response,
+    };
     match &style.link {
         Some(url) if is_openable_url(url) => {
-            ui.hyperlink_to(rich, url).on_hover_text(url);
+            note_tip(ui.hyperlink_to(rich, url).on_hover_text(url));
         }
         // Local or unknown targets are shown, not opened (see specs/03).
         Some(url) => {
-            ui.label(rich.underline()).on_hover_text(format!("{url} (not opened: only web and mail links open)"));
+            note_tip(
+                ui.label(rich.underline()).on_hover_text(format!("{url} (not opened: only web and mail links open)")),
+            );
         }
         None => {
-            ui.label(rich);
+            note_tip(ui.label(rich));
+        }
+    }
+}
+
+/// Highlight the end of the spans so far that matches `quote` (the text a
+/// note is about) and attach the note to it, splitting a span if needed.
+fn mark_note(spans: &mut Vec<Span>, quote: &str, note: &str) {
+    let shown: String = spans
+        .iter()
+        .filter_map(|span| if let Span::Text(text, _) = span { Some(text.as_str()) } else { None })
+        .collect();
+    let normalize = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if quote.is_empty() || !normalize(&shown).ends_with(&normalize(quote)) {
+        return;
+    }
+    let mut remaining = quote.trim_end().chars().count();
+    let mut index = spans.len();
+    while remaining > 0 && index > 0 {
+        index -= 1;
+        let Span::Text(text, style) = &mut spans[index] else {
+            continue;
+        };
+        let length = text.chars().count();
+        if length <= remaining {
+            style.note = Some(note.to_string());
+            remaining -= length;
+        } else {
+            let split_at = text.char_indices().nth(length - remaining).map_or(text.len(), |(offset, _)| offset);
+            let tail = text.split_off(split_at);
+            let marked = TextStyle { note: Some(note.to_string()), ..style.clone() };
+            spans.insert(index + 1, Span::Text(tail, marked));
+            remaining = 0;
         }
     }
 }
@@ -319,6 +372,7 @@ fn collect_spans(inlines: &[Inline], style: &TextStyle, spans: &mut Vec<Span>) {
                 collect_spans(content, &TextStyle { link: Some(url.clone()), ..style.clone() }, spans);
             }
             Inline::LineBreak => spans.push(Span::LineBreak),
+            Inline::Note { quote, text } => mark_note(spans, quote, text),
         }
     }
 }

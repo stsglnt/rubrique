@@ -159,6 +159,8 @@ fn write_inlines(out: &mut String, inlines: &[Inline]) {
                 }
             }
             Inline::LineBreak => out.push_str("<br>\n"),
+            // Notes stay private to rubrique, like the comments they come from.
+            Inline::Note { .. } => {}
         }
     }
 }

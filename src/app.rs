@@ -7,18 +7,21 @@ use eframe::egui::{self, Context, Key, KeyboardShortcut, Modifiers, RichText, Ui
 
 use crate::document::merge::MergeSession;
 use crate::document::merge_view::{MergeAction, show_merge};
+use crate::document::preview_selection;
 use crate::document::text_file::{DiskState, Document, Opened, Unsupported};
 use crate::document::text_stats::TextStats;
 use crate::document::view::{
-    editor_selection, focus_editor, handle_editor_shortcuts, set_editor_cursor, show_editor, show_preview,
+    BlockEdit, PreviewEvent, editor_selection, focus_editor, handle_editor_shortcuts, set_editor_cursor, show_editor,
+    show_preview,
 };
 use crate::explorer::paths::{absolute_path_text, name_text};
 use crate::explorer::tree::{FsNode, is_markdown_path};
 use crate::explorer::view::{ExplorerAction, TreeContext, show_explorer};
 use crate::format::{Language, format};
 use crate::icons::{Icon, icon_button};
-use crate::markdown::blocks::{Block, parse_blocks};
+use crate::markdown::blocks::{SourceBlock, parse_blocks, parse_source_blocks};
 use crate::markdown::html::{file_url, html_page, is_html_path, with_base};
+use crate::markdown::notes::{self, Note, find_notes, insert_note, remove_note, rewrite_note};
 use crate::scratch::{create_scratch, rename_target};
 use crate::settings::view::{ScratchInfo, SettingsAction, show_settings};
 use crate::settings::{MarkdownView, Settings, default_scratch_folder, themes_folder};
@@ -34,6 +37,14 @@ const SETTINGS_PANEL_WIDTH: f32 = 320.0;
 const UNSUPPORTED_MARGIN: f32 = 16.0;
 /// How often the open file is checked for changes made by other programs.
 const DISK_CHECK_SECONDS: f64 = 2.0;
+/// Width of the note dialog.
+const NOTE_DIALOG_WIDTH: f32 = 360.0;
+/// Quoted text longer than this is shortened in the note dialog and panel.
+const NOTE_QUOTE_CHARS: usize = 80;
+/// Default width of the notes panel.
+const NOTES_PANEL_WIDTH: f32 = 280.0;
+/// Opacity of the warning color behind a note card.
+const NOTE_CARD_TINT: f32 = 0.18;
 /// Width of the "Rename" dialog.
 const RENAME_DIALOG_WIDTH: f32 = 320.0;
 /// Inner margin (x, y) of the status bar.
@@ -45,6 +56,7 @@ const DIRTY_MARKER: &str = "• ";
 
 const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
 const TOGGLE_PREVIEW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::E);
+const ADD_NOTE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::M);
 const FORMAT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::F);
 const OPEN_IN_BROWSER: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::B);
 const NEW_SCRATCH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
@@ -58,7 +70,7 @@ enum OpenFile {
     Text {
         document: Document,
         /// Parsed preview, rebuilt lazily after the text changes.
-        preview: Option<Vec<Block>>,
+        preview: Option<Vec<SourceBlock>>,
         /// Shown when the file changed or vanished on disk.
         disk_notice: Option<DiskState>,
     },
@@ -130,6 +142,25 @@ pub struct RubriqueApp {
     merging: Option<MergeSession>,
     /// egui time of the last check for outside changes.
     last_disk_check: f64,
+    /// The preview block being edited as Markdown.
+    block_edit: Option<BlockEdit>,
+    /// The note being written or edited.
+    note_draft: Option<NoteDraft>,
+}
+
+/// A note in the making (new, or an existing one being edited).
+#[derive(Debug)]
+struct NoteDraft {
+    /// The text the note is about, as shown.
+    quote: String,
+    /// Where that text is in the source, when known (selection in Edit mode).
+    range: Option<std::ops::Range<usize>>,
+    /// What the note says.
+    text: String,
+    /// The note being changed, for Edit.
+    existing: Option<Note>,
+    /// Why saving failed, shown in the dialog.
+    error: Option<String>,
 }
 
 /// State of the "Rename" dialog.
@@ -162,7 +193,10 @@ impl RubriqueApp {
             renaming: None,
             merging: None,
             last_disk_check: 0.0,
+            block_edit: None,
+            note_draft: None,
         };
+        preview_selection::install(ctx);
         app.remember_roots();
         if let Some(file) = file {
             app.open_file_now(file);
@@ -174,6 +208,7 @@ impl RubriqueApp {
 
     /// Run an action now, or ask about unsaved changes first.
     fn request(&mut self, action: GuardedAction) {
+        self.finish_block_edit();
         if self.open_file.is_dirty() {
             self.pending = Some(action);
         } else {
@@ -194,6 +229,8 @@ impl RubriqueApp {
     fn open_file_now(&mut self, path: PathBuf) {
         self.stats = None;
         self.merging = None;
+        self.block_edit = None;
+        self.note_draft = None;
         match Document::open(&path) {
             Ok(Opened::Text(document)) => {
                 self.open_file = OpenFile::Text { document, preview: None, disk_notice: None };
@@ -252,6 +289,7 @@ impl RubriqueApp {
 
     /// Save the open document; returns false when saving failed.
     fn save(&mut self) -> bool {
+        self.finish_block_edit();
         let OpenFile::Text { document, disk_notice, .. } = &mut self.open_file else {
             return true;
         };
@@ -284,6 +322,7 @@ impl RubriqueApp {
 
     /// Switch a Markdown file between editor and preview (no-op for other files).
     fn toggle_preview(&mut self) {
+        self.finish_block_edit();
         let is_markdown = self.open_file.path().is_some_and(is_markdown_path);
         if is_markdown {
             self.settings.markdown_view = self.settings.markdown_view.toggled();
@@ -348,6 +387,7 @@ impl RubriqueApp {
         }
 
         if ctx.input(|input| input.viewport().close_requested()) {
+            self.finish_block_edit();
             if self.quit_confirmed || !self.open_file.is_dirty() {
                 self.save_settings(ctx);
             } else {
@@ -367,6 +407,9 @@ impl RubriqueApp {
         }
         if ctx.input_mut(|input| input.consume_shortcut(&TOGGLE_SETTINGS)) {
             self.settings_open = !self.settings_open;
+        }
+        if ctx.input_mut(|input| input.consume_shortcut(&ADD_NOTE)) {
+            self.start_note(ctx);
         }
         if ctx.input_mut(|input| input.consume_shortcut(&FORMAT)) {
             self.format_text(ctx);
@@ -473,6 +516,7 @@ impl RubriqueApp {
     /// HTML file in the system browser, from a temporary copy so unsaved
     /// changes show too.
     fn open_in_browser(&mut self, ctx: &Context) {
+        self.finish_block_edit();
         let OpenFile::Text { document, .. } = &self.open_file else {
             return;
         };
@@ -499,6 +543,7 @@ impl RubriqueApp {
     /// Pretty-print the selection (its language guessed from the text unless
     /// the file says), or the whole JSON / SQL / XML file.
     fn format_text(&mut self, ctx: &Context) {
+        self.finish_block_edit();
         let selection = if self.showing_preview() { None } else { editor_selection(ctx) };
         let OpenFile::Text { document, preview, .. } = &mut self.open_file else {
             return;
@@ -694,6 +739,7 @@ impl RubriqueApp {
         let showing_preview = self.showing_preview();
         let mut notice_choice = None;
         let mut merge_action = None;
+        let mut preview_event = None;
         match &mut self.open_file {
             OpenFile::Nothing => {
                 ui.centered_and_justified(|ui| ui.label(RichText::new("Pick a file in the explorer").weak()));
@@ -713,8 +759,8 @@ impl RubriqueApp {
                 if self.merging.is_some() {
                     // The merge screen fills the page.
                 } else if showing_preview {
-                    let blocks = preview.get_or_insert_with(|| parse_blocks(&document.text));
-                    show_preview(ui, blocks);
+                    let blocks = preview.get_or_insert_with(|| parse_source_blocks(&document.text));
+                    preview_event = show_preview(ui, blocks, self.block_edit.as_mut());
                 } else {
                     let was_dirty = document.is_dirty();
                     let markdown = is_markdown_path(&document.path);
@@ -734,6 +780,257 @@ impl RubriqueApp {
         if let Some(action) = merge_action {
             self.finish_merge(action);
         }
+        match preview_event {
+            Some(PreviewEvent::StartEdit(index)) => self.start_block_edit(index),
+            Some(PreviewEvent::FinishEdit) => self.finish_block_edit(),
+            None => {}
+        }
+        if showing_preview && self.block_edit.is_none() && self.note_draft.is_none() {
+            self.add_note_button(ui.ctx());
+        }
+    }
+
+    // ---------- editing in the preview ----------
+
+    /// Edit top-level block `index` of the preview as Markdown, after
+    /// applying any block being edited (whose length change shifts the rest).
+    fn start_block_edit(&mut self, index: usize) {
+        let target = match &self.open_file {
+            OpenFile::Text { preview: Some(blocks), .. } => blocks.get(index).map(|block| block.range.clone()),
+            _ => None,
+        };
+        let Some(mut range) = target else {
+            return;
+        };
+        if let Some((edited_at, delta)) = self.finish_block_edit_with_shift()
+            && range.start > edited_at
+        {
+            range = shift(range.start, delta)..shift(range.end, delta);
+        }
+        let OpenFile::Text { document, .. } = &self.open_file else {
+            return;
+        };
+        let Some(text) = document.text.get(range.clone()) else {
+            return;
+        };
+        self.block_edit = Some(BlockEdit { index, range, text: text.to_string(), focused: false });
+    }
+
+    /// Put the edited block's Markdown into the document.
+    fn finish_block_edit(&mut self) {
+        self.finish_block_edit_with_shift();
+    }
+
+    /// Like [`Self::finish_block_edit`]; returns where the text changed and
+    /// by how many bytes, so ranges after it can be moved.
+    fn finish_block_edit_with_shift(&mut self) -> Option<(usize, isize)> {
+        let edit = self.block_edit.take()?;
+        let OpenFile::Text { document, preview, .. } = &mut self.open_file else {
+            return None;
+        };
+        if document.text.get(edit.range.clone()) == Some(edit.text.as_str()) {
+            return None;
+        }
+        let old_length = isize::try_from(edit.range.len()).unwrap_or(0);
+        let new_length = isize::try_from(edit.text.len()).unwrap_or(0);
+        document.text.replace_range(edit.range.clone(), &edit.text);
+        document.on_text_changed();
+        *preview = None;
+        Some((edit.range.start, new_length - old_length))
+    }
+
+    // ---------- notes ----------
+
+    /// Floating "+ Add note" next to text selected in the preview.
+    fn add_note_button(&mut self, ctx: &Context) {
+        let Some(selection) = preview_selection::current(ctx) else {
+            return;
+        };
+        let area = egui::Area::new(egui::Id::unique("add-note-button"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(selection.pointer + egui::vec2(10.0, 14.0));
+        let clicked = area
+            .show(ctx, |ui| {
+                ui.button("+ Add note").on_hover_text("Add a note about the selected text (Cmd+Shift+M)").clicked()
+            })
+            .inner;
+        if clicked {
+            self.start_note(ctx);
+        }
+    }
+
+    /// Open the note dialog for the selection (preview text, or editor text in Edit mode).
+    fn start_note(&mut self, ctx: &Context) {
+        self.finish_block_edit();
+        let OpenFile::Text { document, .. } = &self.open_file else {
+            return;
+        };
+        let draft = if self.showing_preview() {
+            preview_selection::current(ctx).map(|selection| NoteDraft {
+                quote: normalize_space(&selection.text),
+                range: None,
+                text: String::new(),
+                existing: None,
+                error: None,
+            })
+        } else {
+            editor_selection(ctx).map(|(first, last)| {
+                let range = char_to_byte(&document.text, first)..char_to_byte(&document.text, last);
+                let shown: String = document.text[range.clone()].chars().filter(|c| !"*_~`".contains(*c)).collect();
+                NoteDraft {
+                    quote: normalize_space(&shown),
+                    range: Some(range),
+                    text: String::new(),
+                    existing: None,
+                    error: None,
+                }
+            })
+        };
+        match draft {
+            Some(draft) => self.note_draft = Some(draft),
+            None => self.show_status("Select some text first, then add a note".to_string()),
+        }
+    }
+
+    /// Save the note in the draft into the document. Returns an error to show.
+    fn save_note(&mut self, draft: &NoteDraft) -> Result<(), String> {
+        let OpenFile::Text { document, preview, .. } = &mut self.open_file else {
+            return Ok(());
+        };
+        if draft.text.trim().is_empty() {
+            return Err("Write something first".to_string());
+        }
+        if let Some(existing) = &draft.existing {
+            rewrite_note(&mut document.text, existing, &draft.text);
+        } else {
+            let range = draft
+                .range
+                .clone()
+                .or_else(|| notes::locate(&document.text, &draft.quote))
+                .ok_or("Cannot find this text in the file. Select text inside one paragraph.")?;
+            insert_note(&mut document.text, &range, &draft.quote, &draft.text);
+        }
+        document.on_text_changed();
+        *preview = None;
+        Ok(())
+    }
+
+    /// The dialog for writing a note.
+    fn note_dialog(&mut self, ctx: &Context) {
+        let Some(draft) = &mut self.note_draft else {
+            return;
+        };
+        let modal = egui::Modal::new(egui::Id::unique("note-dialog")).show(ctx, |ui| {
+            ui.set_width(NOTE_DIALOG_WIDTH);
+            ui.heading(if draft.existing.is_some() { "Edit note" } else { "Add note" });
+            ui.label(
+                RichText::new(format!("On \u{201c}{}\u{201d}", shorten(&draft.quote, NOTE_QUOTE_CHARS)))
+                    .weak()
+                    .italics(),
+            );
+            ui.add_space(4.0);
+            let field = ui.add(
+                egui::TextEdit::multiline(&mut draft.text)
+                    .desired_rows(3)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Your note"),
+            );
+            if !field.has_focus() && draft.text.is_empty() && draft.error.is_none() {
+                field.request_focus();
+            }
+            if let Some(error) = &draft.error {
+                ui.colored_label(ui.visuals().error_fg_color, error);
+            }
+            let save_keys = ui.input_mut(|input| input.consume_key(Modifiers::COMMAND, Key::Enter));
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let save = ui.button("Save note").on_hover_text("Cmd+Enter").clicked() || save_keys;
+                let cancel = ui.button("Cancel").clicked();
+                (save, cancel)
+            })
+            .inner
+        });
+        let (save, cancel) = modal.inner;
+        if cancel || modal.should_close() {
+            self.note_draft = None;
+            return;
+        }
+        if save && let Some(draft) = self.note_draft.take() {
+            match self.save_note(&draft) {
+                Ok(()) => {
+                    preview_selection::clear(ctx);
+                    self.show_status(
+                        "Note saved in the file as a hidden comment (save the file to keep it)".to_string(),
+                    );
+                }
+                Err(error) => self.note_draft = Some(NoteDraft { error: Some(error), ..draft }),
+            }
+        }
+    }
+
+    /// Right panel in the preview: every note in the file, with Edit and Delete.
+    fn notes_panel(&mut self, ui: &mut Ui) {
+        let OpenFile::Text { document, .. } = &self.open_file else {
+            return;
+        };
+        let notes = find_notes(&document.text);
+        let mut edit = None;
+        let mut delete = None;
+        egui::Frame::new().inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Notes").strong().size(16.0));
+                ui.label(RichText::new(format!("{} in this file", notes.len())).weak());
+            });
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                for (index, note) in notes.iter().enumerate() {
+                    let tint = ui.visuals().warn_fg_color.gamma_multiply(NOTE_CARD_TINT);
+                    egui::Frame::new().fill(tint).corner_radius(8).inner_margin(10).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(
+                            RichText::new(format!("\u{201c}{}\u{201d}", shorten(&note.quote, NOTE_QUOTE_CHARS)))
+                                .weak()
+                                .small(),
+                        );
+                        ui.label(&note.text);
+                        ui.horizontal(|ui| {
+                            if ui.small_button("Edit").clicked() {
+                                edit = Some(index);
+                            }
+                            if ui.small_button("Delete").clicked() {
+                                delete = Some(index);
+                            }
+                        });
+                    });
+                    ui.add_space(8.0);
+                }
+                ui.label(RichText::new("Select text in the preview, then Add note (Cmd+Shift+M).").weak().small());
+            });
+        });
+        if let Some(index) = edit {
+            let note = notes[index].clone();
+            self.note_draft = Some(NoteDraft {
+                quote: note.quote.clone(),
+                range: None,
+                text: note.text.clone(),
+                existing: Some(note),
+                error: None,
+            });
+        }
+        if let Some(index) = delete
+            && let OpenFile::Text { document, preview, .. } = &mut self.open_file
+        {
+            remove_note(&mut document.text, &notes[index]);
+            document.on_text_changed();
+            *preview = None;
+            self.show_status("Note deleted (save the file to keep the change)".to_string());
+        }
+    }
+
+    /// True when the preview is shown and the file has notes.
+    fn shows_notes_panel(&self) -> bool {
+        self.showing_preview()
+            && matches!(&self.open_file, OpenFile::Text { document, .. } if document.text.contains("<!-- note on \""))
     }
 
     /// Act on a button of the "changed on disk" bar.
@@ -757,6 +1054,7 @@ impl RubriqueApp {
     /// Open the merge screen: the file on disk against my buffer, from the
     /// text both started from.
     fn start_merge(&mut self) {
+        self.finish_block_edit();
         let OpenFile::Text { document, .. } = &self.open_file else {
             return;
         };
@@ -903,6 +1201,26 @@ impl RubriqueApp {
     }
 }
 
+/// `value` moved by `delta` bytes.
+fn shift(value: usize, delta: isize) -> usize {
+    value.saturating_add_signed(delta)
+}
+
+/// Runs of whitespace as single spaces.
+fn normalize_space(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// At most `limit` characters, with "…" when cut.
+fn shorten(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.to_string();
+    }
+    let mut short: String = text.chars().take(limit).collect();
+    short.push('…');
+    short
+}
+
 /// Byte index of character `index` in `text` (the end when past it).
 fn char_to_byte(text: &str, index: usize) -> usize {
     text.char_indices().nth(index).map_or(text.len(), |(offset, _)| offset)
@@ -1031,9 +1349,17 @@ impl eframe::App for RubriqueApp {
                 .frame(panel_frame)
                 .show(ui, |ui| self.settings_panel(ui));
         }
+        if self.shows_notes_panel() {
+            egui::Panel::right("notes")
+                .resizable(true)
+                .default_size(NOTES_PANEL_WIDTH)
+                .frame(egui::Frame::side_top_panel(&style).inner_margin(0))
+                .show(ui, |ui| self.notes_panel(ui));
+        }
         egui::CentralPanel::default().frame(page_frame).show(ui, |ui| self.document_area(ui));
 
         self.unsaved_dialog(&ctx);
+        self.note_dialog(&ctx);
         self.rename_dialog(&ctx);
         self.update_title(&ctx);
     }

@@ -19,6 +19,12 @@ pub enum Inline {
     },
     /// Hard line break (two trailing spaces or a trailing backslash).
     LineBreak,
+    /// A note comment (`<!-- note on "quote": text -->`) about the text
+    /// just before it. Other HTML comments are dropped.
+    Note {
+        quote: String,
+        text: String,
+    },
 }
 
 /// Parse the text of a paragraph or heading. Lines are joined with `\n`.
@@ -36,7 +42,7 @@ fn parse_chars(chars: &[char]) -> Vec<Inline> {
             '\\' => parse_escape(chars, index, &mut output),
             '\n' => Some(parse_newline(index, &mut output)),
             '`' => Some(parse_code_span(chars, index, &mut output)),
-            '<' => parse_autolink(chars, index, &mut output),
+            '<' => parse_comment(chars, index, &mut output).or_else(|| parse_autolink(chars, index, &mut output)),
             '[' => parse_link(chars, index, &mut output),
             '*' | '_' | '~' => Some(parse_delimiter_run(chars, index, &mut output)),
             _ => None,
@@ -123,6 +129,22 @@ fn parse_code_span(chars: &[char], index: usize, output: &mut Output) -> usize {
     }
     output.push(Inline::Code(code));
     close + run
+}
+
+/// `<!-- ... -->`: hidden, except notes, which become [`Inline::Note`].
+fn parse_comment(chars: &[char], index: usize, output: &mut Output) -> Option<usize> {
+    let opener = ['<', '!', '-', '-'];
+    if !chars[index..].starts_with(&opener) {
+        return None;
+    }
+    let content_start = index + opener.len();
+    let close = (content_start..chars.len().saturating_sub(2))
+        .find(|&at| chars[at] == '-' && chars[at + 1] == '-' && chars[at + 2] == '>')?;
+    let inner: String = chars[content_start..close].iter().collect();
+    if let Some((quote, text)) = super::notes::parse_note(&inner) {
+        output.push(Inline::Note { quote, text });
+    }
+    Some(close + 3)
 }
 
 /// Schemes the preview may hand to the system browser. Anything else

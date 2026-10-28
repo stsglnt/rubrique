@@ -8,8 +8,8 @@ use super::highlighting::{HighlightStyle, highlighted};
 use super::line_ops::{Direction, Selection, duplicate_lines, insert_text, move_lines};
 use super::text_file::Document;
 use super::text_stats::{TextStats, text_stats};
-use crate::markdown::blocks::Block;
-use crate::markdown::render::render_blocks;
+use crate::markdown::blocks::SourceBlock;
+use crate::markdown::render::{render_top_block, top_gap};
 
 /// Widest the preview text gets, for comfortable reading.
 const PREVIEW_MAX_WIDTH: f32 = 760.0;
@@ -56,14 +56,131 @@ pub fn show_editor(ui: &mut Ui, document: &mut Document, markdown: bool) -> Opti
     Some(text_stats(&document.text, range.primary.index.0, sorted.start.0..sorted.end.0))
 }
 
-/// Draw the rendered Markdown.
-pub fn show_preview(ui: &mut Ui, blocks: &[Block]) {
+/// A top-level block being edited as Markdown inside the preview.
+#[derive(Debug)]
+pub struct BlockEdit {
+    /// Which top-level block.
+    pub index: usize,
+    /// Its source range in the document when editing started.
+    pub range: std::ops::Range<usize>,
+    /// The Markdown being typed.
+    pub text: String,
+    /// Focus is given to the box once, when editing starts.
+    pub focused: bool,
+}
+
+/// What the user did in the preview.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreviewEvent {
+    /// Clicked a block: edit it.
+    StartEdit(usize),
+    /// Done with the block being edited (Esc, Cmd+Enter, Done, or a click elsewhere).
+    FinishEdit,
+}
+
+/// Opacity of the accent behind a block under the mouse.
+const HOVER_TINT: f32 = 0.06;
+/// Width of the outline around the block being edited.
+const EDIT_OUTLINE: f32 = 1.5;
+/// Space between a block and its hover / edit background.
+const BLOCK_PAD: i8 = 6;
+
+/// Draw the rendered Markdown, one clickable block at a time; the block in
+/// `editing` shows as a Markdown text box instead.
+pub fn show_preview(ui: &mut Ui, blocks: &[SourceBlock], mut editing: Option<&mut BlockEdit>) -> Option<PreviewEvent> {
+    let mut event = None;
     egui::ScrollArea::vertical().id_salt("preview-scroll").auto_shrink([false, false]).show(ui, |ui| {
         egui::Frame::new().inner_margin(egui::Margin::symmetric(PREVIEW_MARGIN.0, PREVIEW_MARGIN.1)).show(ui, |ui| {
             ui.set_max_width(PREVIEW_MAX_WIDTH.min(ui.available_width()));
-            render_blocks(ui, blocks);
+            for (index, source) in blocks.iter().enumerate() {
+                if index > 0 {
+                    ui.add_space(top_gap(&source.block) - f32::from(BLOCK_PAD) * 2.0);
+                }
+                let found = match editing.as_deref_mut() {
+                    Some(edit) if edit.index == index => edit_box(ui, edit),
+                    _ => clickable_block(ui, index, source),
+                };
+                event = event.or(found);
+            }
         });
     });
+    event
+}
+
+/// A rendered block: tinted under the mouse, a click (not a text selection
+/// or a link) asks to edit it.
+fn clickable_block(ui: &mut Ui, index: usize, source: &SourceBlock) -> Option<PreviewEvent> {
+    let background = ui.painter().add(egui::Shape::Noop);
+    let response = egui::Frame::new().inner_margin(BLOCK_PAD).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        render_top_block(ui, &source.block);
+    });
+    let rect = response.response.rect;
+    let hovered = ui.rect_contains_pointer(rect);
+    if hovered {
+        let fill = ui.visuals().hyperlink_color.gamma_multiply(HOVER_TINT);
+        ui.painter().set(background, egui::Shape::rect_filled(rect, 6, fill));
+    }
+    // A click (pointer released without dragging) that did not open a link;
+    // drags select text for notes instead.
+    let clicked = hovered && ui.input(|input| input.pointer.any_click());
+    let opened_link = ui
+        .ctx()
+        .output(|output| output.commands.iter().any(|command| matches!(command, egui::OutputCommand::OpenUrl(_))));
+    if clicked && !opened_link {
+        ui.ctx().plugin::<egui::text_selection::LabelSelectionState>().lock().clear_selection();
+        return Some(PreviewEvent::StartEdit(index));
+    }
+    None
+}
+
+/// The block being edited: its Markdown in an outlined box.
+fn edit_box(ui: &mut Ui, edit: &mut BlockEdit) -> Option<PreviewEvent> {
+    let visuals = ui.visuals().clone();
+    let mut event = None;
+    let frame = egui::Frame::new()
+        .fill(visuals.text_edit_bg_color())
+        .stroke(egui::Stroke::new(EDIT_OUTLINE, visuals.hyperlink_color))
+        .corner_radius(8)
+        .inner_margin(BLOCK_PAD + 2);
+    let response = frame.show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.label(egui::RichText::new("Editing this block (Markdown)").small().weak());
+        let rows = edit.text.lines().count().max(1);
+        let output = egui::TextEdit::multiline(&mut edit.text)
+            .id(block_editor_id())
+            .code_editor()
+            .frame(egui::Frame::NONE)
+            .desired_width(f32::INFINITY)
+            .desired_rows(rows)
+            .show(ui);
+        if !edit.focused {
+            output.response.request_focus();
+            edit.focused = true;
+        }
+        // egui's text box drops focus on Esc by itself, so look for that too.
+        let escaped = output.response.lost_focus() && ui.input(|input| input.key_pressed(Key::Escape));
+        let finish_keys = escaped
+            || (output.response.has_focus() && ui.input_mut(|input| input.consume_key(Modifiers::COMMAND, Key::Enter)));
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Esc, Cmd+Enter or a click outside to finish").small().weak());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("Done").clicked() || finish_keys {
+                    event = Some(PreviewEvent::FinishEdit);
+                }
+            });
+        });
+    });
+    let clicked_outside =
+        ui.input(|input| input.pointer.any_click()) && !ui.rect_contains_pointer(response.response.rect);
+    if clicked_outside {
+        event = Some(PreviewEvent::FinishEdit);
+    }
+    event
+}
+
+fn block_editor_id() -> Id {
+    Id::unique("rubrique-block-editor")
 }
 
 /// The editor's selection as sorted character indices, if any text is selected.

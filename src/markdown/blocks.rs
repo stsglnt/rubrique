@@ -60,6 +60,47 @@ pub fn parse_blocks(text: &str) -> Vec<Block> {
     parse_lines(&line_refs)
 }
 
+/// A top-level block and where its source text is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SourceBlock {
+    pub block: Block,
+    /// Byte range from the start of its first line to the end of its last
+    /// line (line break not included).
+    pub range: std::ops::Range<usize>,
+}
+
+/// Parse a whole document, remembering each top-level block's source text,
+/// so the preview can edit one block in place.
+pub fn parse_source_blocks(text: &str) -> Vec<SourceBlock> {
+    let lines: Vec<String> = text.lines().map(expand_leading_tabs).collect();
+    let line_refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    // Start and end (without the line break) of every source line.
+    let mut bounds = Vec::with_capacity(lines.len());
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let content = line.trim_end_matches(['\n', '\r']).len();
+        bounds.push((offset, offset + content));
+        offset += line.len();
+    }
+    let mut blocks = Vec::new();
+    let mut index = 0;
+    while index < line_refs.len() {
+        let (block, next) = parse_block(&line_refs, index);
+        if let Some(block) = block {
+            // Blank lines a block swallowed at its end are not part of its text.
+            let mut last = next.max(index + 1) - 1;
+            while last > index && is_blank(line_refs[last]) {
+                last -= 1;
+            }
+            let start = bounds.get(index).map_or(text.len(), |bound| bound.0);
+            let end = bounds.get(last).map_or(text.len(), |bound| bound.1);
+            blocks.push(SourceBlock { block, range: start..end });
+        }
+        index = next;
+    }
+    blocks
+}
+
 /// Parse lines into blocks; used for the document and for container content.
 fn parse_lines(lines: &[&str]) -> Vec<Block> {
     let mut blocks = Vec::new();
@@ -568,5 +609,14 @@ mod tests {
     fn empty_document() {
         assert_eq!(parse_blocks(""), vec![]);
         assert_eq!(parse_blocks("\n\n  \n"), vec![]);
+    }
+
+    #[test]
+    fn source_blocks_know_their_text() {
+        let text = "# Title\r\n\nFirst line\nsecond line\n\n- a\n- b\n\n```\ncode\n```\n";
+        let blocks = parse_source_blocks(text);
+        let sources: Vec<&str> = blocks.iter().map(|block| &text[block.range.clone()]).collect();
+        assert_eq!(sources, ["# Title", "First line\nsecond line", "- a\n- b", "```\ncode\n```"]);
+        assert_eq!(blocks.iter().map(|block| block.block.clone()).collect::<Vec<_>>(), parse_blocks(text));
     }
 }
