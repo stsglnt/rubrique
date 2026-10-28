@@ -30,10 +30,10 @@ enum Version {
 }
 
 impl Version {
-    fn title(self, review: Option<&str>) -> String {
+    fn title(self, review: Option<&str>, mine_title: Option<&str>) -> String {
         match (self, review) {
             (Version::Theirs, Some(title)) => title.to_string(),
-            (Version::Mine, Some(_)) => "Original".to_string(),
+            (Version::Mine, Some(_)) => mine_title.unwrap_or("Original").to_string(),
             (Version::Theirs, None) => "On disk (changed elsewhere)".to_string(),
             (Version::Mine, None) => "Mine (in the editor)".to_string(),
         }
@@ -63,7 +63,11 @@ pub fn show_merge(ui: &mut Ui, session: &mut MergeSession, file_name: &str) -> O
 
     egui::Frame::new().fill(ui.visuals().panel_fill).inner_margin(egui::Margin::symmetric(16, 10)).show(ui, |ui| {
         ui.horizontal(|ui| {
-            let heading = if session.review.is_some() { "AI suggestion" } else { "Merge changes" };
+            let heading = match (&session.review, &session.mine_title) {
+                (Some(_), Some(_)) => "Compare tools",
+                (Some(_), None) => "AI suggestion",
+                _ => "Merge changes",
+            };
             ui.label(RichText::new(format!("{heading} · {file_name}")).strong().size(16.0));
             let left_count = session.conflicts_left();
             let status = match left_count {
@@ -105,7 +109,8 @@ pub fn show_merge(ui: &mut Ui, session: &mut MergeSession, file_name: &str) -> O
 
     ui.columns(3, |columns| {
         let review = session.review.as_deref();
-        let titles = [left.title(review), "Result".to_string(), right.title(review)];
+        let mine_title = session.mine_title.as_deref();
+        let titles = [left.title(review, mine_title), "Result".to_string(), right.title(review, mine_title)];
         for (column, title) in columns.iter_mut().zip(titles) {
             // Columns are justified layouts, which would also justify wrapped text.
             column.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| ui.label(RichText::new(title).strong()));
@@ -176,7 +181,9 @@ fn conflict_result(
             session.resolutions[index] = None;
         }
     } else {
-        let hint = if session.review.is_some() {
+        let hint = if session.mine_title.is_some() {
+            "The tools differ here. Pick a side, or"
+        } else if session.review.is_some() {
             "Changed by the suggestion. Pick a side, or"
         } else {
             "Conflict: both changed these lines. Pick a side, or"

@@ -21,6 +21,10 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   **Review in merge** shows each change next to the original, and nothing
   changes until you press **Apply**. The first run in a folder shows the
   exact command and asks first.
+- Compare tools: pick **Compare with** in the Ask bar to run a second tool
+  at the same time. The output panel shows both answers side by side, and
+  **Compare in merge** puts them left and right of the result, with the
+  time each took; every block where they differ is a choice.
 - Resolve notes with AI: **Resolve** on a note card, or **Resolve all** in
   the Notes panel, sends the file and the note to the default tool. While it
   runs the card shows the time and **Stop**; the answer opens in the merge

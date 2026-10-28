@@ -11,8 +11,8 @@ use super::{RubriqueApp, OpenFile, char_to_byte};
 use crate::ai::run::{AiRun, RunEnd};
 use crate::ai::skills::Skill;
 use crate::ai::view::{
-    AskBar, AskEvent, Consent, ConsentChoice, OutputAction, OutputInfo, OutputState, show_ask_bar, show_consent,
-    show_output,
+    AskBar, AskEvent, Consent, ConsentChoice, OutputAction, OutputInfo, OutputState, RunView, show_ask_bar,
+    show_consent, show_output,
 };
 use crate::ai::{self, AiTool, AskKind};
 use crate::document::merge::MergeSession;
@@ -47,6 +47,8 @@ pub(super) struct PendingRun {
     skill: Option<Box<Skill>>,
     /// Set when resolving notes: which ones.
     resolving: Option<Resolving>,
+    /// A second tool to run at the same time, to compare.
+    compare: Option<AiTool>,
 }
 
 /// Which notes a run resolves.
@@ -57,13 +59,42 @@ pub(super) enum Resolving {
     One(String),
 }
 
-/// A run and what it was for, while its output panel is open.
+/// One tool's run.
 #[derive(Debug)]
-pub(super) struct AiJob {
+struct ToolRun {
+    tool: AiTool,
     run: AiRun,
-    pending: PendingRun,
     /// The command as shown in the panel.
     command: String,
+}
+
+/// The runs (one, or two when comparing) and what they are for, while the
+/// output panel is open.
+#[derive(Debug)]
+pub(super) struct AiJob {
+    runs: Vec<ToolRun>,
+    pending: PendingRun,
+}
+
+impl AiJob {
+    fn is_running(&self) -> bool {
+        self.runs.iter().any(|run| run.run.is_running())
+    }
+
+    fn elapsed_seconds(&self) -> u64 {
+        self.runs.iter().map(|run| run.run.elapsed_seconds()).max().unwrap_or_default()
+    }
+
+    /// Runs that finished well with some output.
+    fn answered(&self) -> Vec<&ToolRun> {
+        self.runs
+            .iter()
+            .filter(|run| {
+                matches!(run.run.end(), Some(RunEnd::Exited { success: true, .. }))
+                    && !run.run.output_text().trim().is_empty()
+            })
+            .collect()
+    }
 }
 
 /// The Ask bar, the text it is about, and a run waiting for permission.
@@ -89,7 +120,7 @@ impl RubriqueApp {
         if self.merging.is_some() {
             return;
         }
-        if self.ask.job.as_ref().is_some_and(|job| job.run.is_running()) {
+        if self.ask.job.as_ref().is_some_and(AiJob::is_running) {
             self.show_status("Wait for the AI tool to finish, or press Stop".to_string());
             return;
         }
@@ -143,8 +174,15 @@ impl RubriqueApp {
             );
             match event {
                 Some(AskEvent::Run { request, kind, skill }) => {
-                    let pending =
-                        PendingRun { target: target.clone(), request, kind, tool: bar.tool, skill, resolving: None };
+                    let pending = PendingRun {
+                        target: target.clone(),
+                        request,
+                        kind,
+                        tool: bar.tool,
+                        skill,
+                        resolving: None,
+                        compare: bar.compare.filter(|compare| *compare != bar.tool),
+                    };
                     self.ask.bar = None;
                     self.begin_run(ctx, pending);
                 }
@@ -172,17 +210,13 @@ impl RubriqueApp {
             self.start_run(ctx, pending);
         } else {
             let command = self.settings.ai.command(pending.tool).to_string();
-            let consent = Consent { tool: pending.tool, folder, command, remember: true };
+            let also = pending.compare.map(|tool| (tool, self.settings.ai.command(tool).to_string()));
+            let consent = Consent { tool: pending.tool, also, folder, command, remember: true };
             self.ask.consent = Some((consent, pending));
         }
     }
 
     fn start_run(&mut self, ctx: &Context, pending: PendingRun) {
-        let command = self.settings.ai.command(pending.tool).to_string();
-        if let Some(problem) = ai::check_command(&command) {
-            self.show_status(format!("{} command: {} (Settings → AI)", pending.tool.name(), problem.message()));
-            return;
-        }
         let target = &pending.target;
         let mut prompt = ai::build_prompt(&pending.request, &target.text, pending.kind, target.whole_file);
         if let Some(skill) = &pending.skill {
@@ -192,51 +226,64 @@ impl RubriqueApp {
             self.show_status("The text is too long to send; select a smaller part".to_string());
             return;
         }
-        let Some((program, args)) = ai::command_args(&command, &prompt) else {
-            return;
-        };
-        let repaint = ctx.clone();
-        match AiRun::start(&program, &args, &run_folder(&target.path), move || repaint.request_repaint()) {
-            Ok(run) => {
-                let shown = ai::display_command(&command, &pending.request);
-                self.ask.job = Some(AiJob { run, pending, command: shown });
+        let mut runs = Vec::new();
+        for tool in std::iter::once(pending.tool).chain(pending.compare) {
+            let command = self.settings.ai.command(tool).to_string();
+            if let Some(problem) = ai::check_command(&command) {
+                self.show_status(format!("{} command: {} (Settings → AI)", tool.name(), problem.message()));
+                continue;
             }
-            Err(error) => self.show_status(format!("Cannot start {program}: {error}. Check Settings → AI.")),
+            let Some((program, args)) = ai::command_args(&command, &prompt) else {
+                continue;
+            };
+            let repaint = ctx.clone();
+            match AiRun::start(&program, &args, &run_folder(&target.path), move || repaint.request_repaint()) {
+                Ok(run) => runs.push(ToolRun { tool, run, command: ai::display_command(&command, &pending.request) }),
+                Err(error) => self.show_status(format!("Cannot start {program}: {error}. Check Settings → AI.")),
+            }
+        }
+        if !runs.is_empty() {
+            self.ask.job = Some(AiJob { runs, pending });
         }
     }
 
-    /// The output panel of the current run.
+    /// The output panel of the current run(s).
     pub(super) fn ai_output_panel(&mut self, ui: &mut Ui) {
         let Some(job) = &mut self.ask.job else {
             return;
         };
-        let seconds = job.run.elapsed_seconds();
-        let state = match job.run.poll() {
-            None => {
-                ui.ctx().request_repaint_after(Duration::from_secs(1));
-                OutputState::Running { seconds }
-            }
-            Some(RunEnd::Stopped) => OutputState::Stopped { seconds },
-            Some(RunEnd::Exited { success: true, .. }) => OutputState::Done { seconds },
-            Some(RunEnd::Exited { code, .. }) => OutputState::Failed { seconds, code: *code },
-        };
-        let output = job.run.output_text();
-        let can_review = matches!(state, OutputState::Done { .. })
-            && job.pending.kind == AskKind::Rewrite
-            && !output.trim().is_empty();
+        let mut views = Vec::new();
+        for tool_run in &mut job.runs {
+            let seconds = tool_run.run.elapsed_seconds();
+            let state = match tool_run.run.poll() {
+                None => OutputState::Running { seconds },
+                Some(RunEnd::Stopped) => OutputState::Stopped { seconds },
+                Some(RunEnd::Exited { success: true, .. }) => OutputState::Done { seconds },
+                Some(RunEnd::Exited { code, .. }) => OutputState::Failed { seconds, code: *code },
+            };
+            views.push(RunView {
+                tool: tool_run.tool,
+                command: tool_run.command.clone(),
+                output: tool_run.run.output_text(),
+                errors: tool_run.run.error_text(),
+                state,
+            });
+        }
+        if job.is_running() {
+            ui.ctx().request_repaint_after(Duration::from_secs(1));
+        }
+        let reviewable =
+            if job.is_running() || job.pending.kind != AskKind::Rewrite { 0 } else { job.answered().len() };
+        let copy_text = job.answered().first().map(|run| run.run.output_text().trim().to_string());
         let request = job.pending.label();
-        let info = OutputInfo {
-            tool: job.pending.tool,
-            request: &request,
-            command: &job.command,
-            output: &output,
-            errors: &job.run.error_text(),
-            state,
-            can_review,
-        };
+        let info = OutputInfo { request: &request, runs: views, reviewable };
         match show_output(ui, &info) {
-            Some(OutputAction::Stop) => job.run.stop(),
-            Some(OutputAction::Copy) => self.copy_to_clipboard(ui.ctx(), output.trim().to_string()),
+            Some(OutputAction::Stop) => job.runs.iter_mut().for_each(|run| run.run.stop()),
+            Some(OutputAction::Copy) => {
+                if let Some(text) = copy_text {
+                    self.copy_to_clipboard(ui.ctx(), text);
+                }
+            }
             Some(OutputAction::Close) => self.ask.job = None,
             Some(OutputAction::Review) => self.review_answer(),
             None => {}
@@ -262,15 +309,35 @@ impl RubriqueApp {
             self.show_status("The text changed while the tool ran; ask again".to_string());
             return;
         }
-        let answer = ai::clean_reply(&job.run.output_text(), &target.text);
-        let mut suggestion = document.text.clone();
-        suggestion.replace_range(target.range.clone(), &answer);
-        if suggestion == document.text {
-            self.show_status("The tool suggested no changes".to_string());
-            return;
+        let suggestion = |run: &ToolRun| {
+            let answer = ai::clean_reply(&run.run.output_text(), &target.text);
+            let mut text = document.text.clone();
+            text.replace_range(target.range.clone(), &answer);
+            text
+        };
+        let title = |run: &ToolRun| format!("{} · {}", run.tool.name(), ai::format_elapsed(run.run.elapsed_seconds()));
+        let session = match job.answered().as_slice() {
+            [left, right] => {
+                let (left_text, right_text) = (suggestion(left), suggestion(right));
+                if left_text == document.text && right_text == document.text {
+                    None
+                } else {
+                    Some(MergeSession::compare(&document.text, &left_text, &right_text, title(left), title(right)))
+                }
+            }
+            [only] => {
+                let text = suggestion(only);
+                (text != document.text).then(|| {
+                    let title = format!("{} · {}", only.tool.name(), job.pending.label());
+                    MergeSession::review(&document.text, &text, title)
+                })
+            }
+            _ => return,
+        };
+        match session {
+            Some(session) => self.merging = Some(session),
+            None => self.show_status("The tool suggested no changes".to_string()),
         }
-        let title = format!("{} · {}", job.pending.tool.name(), job.pending.label());
-        self.merging = Some(MergeSession::review(&document.text, &suggestion, title));
     }
 }
 
@@ -289,7 +356,7 @@ impl PendingRun {
 impl RubriqueApp {
     /// Ask the default tool to resolve one note (or all), on the whole file.
     pub(super) fn resolve_notes(&mut self, ctx: &Context, which: Resolving) {
-        if self.ask.job.as_ref().is_some_and(|job| job.run.is_running()) {
+        if self.ask.job.as_ref().is_some_and(AiJob::is_running) {
             self.show_status("Wait for the AI tool to finish, or press Stop".to_string());
             return;
         }
@@ -308,7 +375,15 @@ impl RubriqueApp {
         let text = document.text.clone();
         let target = AskTarget { path: document.path.clone(), range: 0..text.len(), text, whole_file: true };
         let tool = self.settings.ai.default_tool;
-        let pending = PendingRun { target, request, kind: AskKind::Rewrite, tool, skill: None, resolving: Some(which) };
+        let pending = PendingRun {
+            target,
+            request,
+            kind: AskKind::Rewrite,
+            tool,
+            skill: None,
+            resolving: Some(which),
+            compare: None,
+        };
         self.check_ai_tools();
         self.begin_run(ctx, pending);
     }
@@ -316,20 +391,20 @@ impl RubriqueApp {
     /// The tool and seconds so far when a run is resolving `which` (a
     /// "resolve all" run counts for every note).
     pub(super) fn resolving_state(&self, which: &Resolving) -> Option<(AiTool, u64)> {
-        let job = self.ask.job.as_ref().filter(|job| job.run.is_running())?;
+        let job = self.ask.job.as_ref().filter(|job| job.is_running())?;
         let resolving = job.pending.resolving.as_ref()?;
-        (resolving == which || *resolving == Resolving::All).then(|| (job.pending.tool, job.run.elapsed_seconds()))
+        (resolving == which || *resolving == Resolving::All).then(|| (job.pending.tool, job.elapsed_seconds()))
     }
 
     /// An AI run is going on.
     pub(super) fn ai_busy(&self) -> bool {
-        self.ask.job.as_ref().is_some_and(|job| job.run.is_running())
+        self.ask.job.as_ref().is_some_and(AiJob::is_running)
     }
 
     /// Stop the running tool.
     pub(super) fn stop_ai(&mut self) {
         if let Some(job) = &mut self.ask.job {
-            job.run.stop();
+            job.runs.iter_mut().for_each(|run| run.run.stop());
         }
     }
 }

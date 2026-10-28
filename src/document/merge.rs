@@ -98,13 +98,15 @@ pub struct MergeSession {
     /// Set when reviewing an AI suggestion: the title of the suggestion's
     /// column. "Theirs" is then the suggestion, and "mine" the original.
     pub review: Option<String>,
+    /// Set when comparing two tools: the title of "mine", the second answer.
+    pub mine_title: Option<String>,
 }
 
 impl MergeSession {
     pub fn new(base: &str, mine: &str, disk_text: String) -> Self {
         let chunks = merge(base, mine, &disk_text);
         let resolutions = vec![None; chunks.len()];
-        MergeSession { chunks, resolutions, disk_text, swapped: false, review: None }
+        MergeSession { chunks, resolutions, disk_text, swapped: false, review: None, mine_title: None }
     }
 
     /// Review a suggested new version of `original`. Every change is an open
@@ -118,7 +120,36 @@ impl MergeSession {
             }
         }
         let resolutions = vec![None; chunks.len()];
-        MergeSession { chunks, resolutions, disk_text: String::new(), swapped: true, review: Some(title) }
+        MergeSession {
+            chunks,
+            resolutions,
+            disk_text: String::new(),
+            swapped: true,
+            review: Some(title),
+            mine_title: None,
+        }
+    }
+
+    /// Compare two suggested versions of `original`, `left` and `right`.
+    /// Every block where either differs from the original is a choice,
+    /// unless both made the same change.
+    pub fn compare(original: &str, left: &str, right: &str, left_title: String, right_title: String) -> Self {
+        // "Theirs" shows on the left (not swapped), so the left answer is theirs.
+        let mut chunks = merge(original, right, left);
+        for chunk in &mut chunks {
+            if matches!(chunk.kind, ChunkKind::Mine | ChunkKind::Theirs) {
+                chunk.kind = ChunkKind::Conflict;
+            }
+        }
+        let resolutions = vec![None; chunks.len()];
+        MergeSession {
+            chunks,
+            resolutions,
+            disk_text: String::new(),
+            swapped: false,
+            review: Some(left_title),
+            mine_title: Some(right_title),
+        }
     }
 
     /// Conflicts that still need a decision.
@@ -228,6 +259,26 @@ fn matching(a: &[String], b: &[String]) -> Vec<Option<usize>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compare_puts_left_answer_on_the_left() {
+        let mut session =
+            MergeSession::compare("a\nb\nc\n", "a\nL\nc\n", "a\nR\nc\n", "Claude".to_string(), "Codex".to_string());
+        assert_eq!(session.conflicts_left(), 1);
+        assert!(!session.swapped);
+        // Left is "theirs" when not swapped.
+        session.take_all(true);
+        assert_eq!(session.result().as_deref(), Some("a\nL\nc\n"));
+        let mut right = MergeSession::compare("a\nb\n", "a\nL\n", "a\nR\n", String::new(), String::new());
+        right.take_all(false);
+        assert_eq!(right.result().as_deref(), Some("a\nR\n"));
+        // A change only one tool made is still a choice.
+        let one = MergeSession::compare("a\nb\n", "a\nL\n", "a\nb\n", String::new(), String::new());
+        assert_eq!(one.conflicts_left(), 1);
+        // The same change from both is taken.
+        let same = MergeSession::compare("a\nb\n", "a\nX\n", "a\nX\n", String::new(), String::new());
+        assert_eq!(same.result().as_deref(), Some("a\nX\n"));
+    }
 
     #[test]
     fn review_makes_every_change_a_choice() {

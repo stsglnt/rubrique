@@ -86,6 +86,11 @@ impl AiRun {
         self.end.as_ref().map(|(end, _)| end)
     }
 
+    /// How the run ended, once it has (after [`AiRun::poll`] saw it).
+    pub fn end(&self) -> Option<&RunEnd> {
+        self.end.as_ref().map(|(end, _)| end)
+    }
+
     /// Stop the program.
     pub fn stop(&mut self) {
         if self.end.is_none() {

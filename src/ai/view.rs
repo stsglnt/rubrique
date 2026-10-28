@@ -15,6 +15,8 @@ const ASK_WIDTH: f32 = 460.0;
 const ASK_RADIUS: u8 = 8;
 /// Width of the tool picker in the Ask bar.
 const TOOL_PICKER_WIDTH: f32 = 96.0;
+/// Width of the "Compare with" picker.
+const COMPARE_PICKER_WIDTH: f32 = 80.0;
 const CONSENT_WIDTH: f32 = 500.0;
 /// Longest request shown in the output panel's header.
 const HEADER_REQUEST_CHARS: usize = 60;
@@ -24,6 +26,8 @@ const HEADER_REQUEST_CHARS: usize = 60;
 pub struct AskBar {
     pub request: String,
     pub tool: AiTool,
+    /// A second tool to run at the same time, to compare the answers.
+    pub compare: Option<AiTool>,
     /// What the request is about, for the footer ("2 lines selected").
     pub scope: String,
     /// Give the field focus on the next frame.
@@ -32,7 +36,7 @@ pub struct AskBar {
 
 impl AskBar {
     pub fn new(tool: AiTool, scope: String) -> Self {
-        AskBar { request: String::new(), tool, scope, focus: true }
+        AskBar { request: String::new(), tool, compare: None, scope, focus: true }
     }
 }
 
@@ -100,7 +104,9 @@ pub fn show_ask_bar(
                 });
                 ui.separator();
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Enter to run · Esc to close").size(11.5).weak());
+                    ui.label(RichText::new("Compare with").size(11.5).weak());
+                    compare_picker(ui, bar, installed);
+                    ui.label(RichText::new("· Enter to run · Esc to close").size(11.5).weak());
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(RichText::new(&bar.scope).size(11.5).weak());
                     });
@@ -134,6 +140,30 @@ fn skills_menu(ui: &mut Ui, typed: &str, skills: &[Skill]) -> Option<AskEvent> {
     event
 }
 
+/// "Compare with": none, or a second tool (not the first one).
+fn compare_picker(ui: &mut Ui, bar: &mut AskBar, installed: [bool; 4]) {
+    if bar.compare == Some(bar.tool) {
+        bar.compare = None;
+    }
+    let label = bar.compare.map_or("None", AiTool::name);
+    egui::ComboBox::from_id_salt("ask-compare")
+        .selected_text(label)
+        .width(COMPARE_PICKER_WIDTH)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut bar.compare, None, "None");
+            for (choice, found) in AiTool::ALL.into_iter().zip(installed) {
+                if choice == bar.tool {
+                    continue;
+                }
+                ui.add_enabled_ui(found, |ui| ui.selectable_value(&mut bar.compare, Some(choice), choice.name()))
+                    .response
+                    .on_disabled_hover_text(format!("{} was not found. Set its command in Settings.", choice.name()));
+            }
+        })
+        .response
+        .on_hover_text("Run a second tool at the same time and compare the answers in the merge screen");
+}
+
 /// A small drop-down of the tools; ones that were not found are disabled.
 fn tool_picker(ui: &mut Ui, tool: &mut AiTool, installed: [bool; 4]) {
     egui::ComboBox::from_id_salt("ask-tool").selected_text(tool.name()).width(TOOL_PICKER_WIDTH).show_ui(ui, |ui| {
@@ -154,18 +184,25 @@ pub enum OutputState {
     Stopped { seconds: u64 },
 }
 
-/// What the output panel shows.
+/// One tool's run in the output panel.
+#[derive(Debug)]
+pub struct RunView {
+    pub tool: AiTool,
+    /// The command as run, prompt shortened.
+    pub command: String,
+    pub output: String,
+    pub errors: String,
+    pub state: OutputState,
+}
+
+/// What the output panel shows: one run, or two when comparing tools.
 #[derive(Debug)]
 pub struct OutputInfo<'a> {
-    pub tool: AiTool,
     pub request: &'a str,
-    /// The command as run, prompt shortened.
-    pub command: &'a str,
-    pub output: &'a str,
-    pub errors: &'a str,
-    pub state: OutputState,
-    /// The answer can go to the merge screen (a rewrite that finished well).
-    pub can_review: bool,
+    pub runs: Vec<RunView>,
+    /// The answers can go to the merge screen: "Review in merge" for one,
+    /// "Compare in merge" for two.
+    pub reviewable: usize,
 }
 
 /// What the user clicked in the output panel.
@@ -177,53 +214,42 @@ pub enum OutputAction {
     Close,
 }
 
-/// The output panel: header with state and buttons, then what the tool printed.
+/// The output panel: header with state and buttons, then what each tool printed.
 pub fn show_output(ui: &mut Ui, info: &OutputInfo) -> Option<OutputAction> {
     let mut action = None;
     let visuals = ui.visuals().clone();
+    let running = info.runs.iter().any(|run| matches!(run.state, OutputState::Running { .. }));
+    let tools = info.runs.iter().map(|run| run.tool.name()).collect::<Vec<_>>().join(" and ");
     egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 8)).show(ui, |ui| {
         ui.horizontal(|ui| {
             icon_label(ui, Icon::Sparkle);
-            ui.label(RichText::new(info.tool.name()).strong());
+            ui.label(RichText::new(tools).strong());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                match &info.state {
-                    OutputState::Running { seconds } => {
-                        if icon_text_button(ui, Icon::Stop, "Stop", "Stop the tool", false).clicked() {
-                            action = Some(OutputAction::Stop);
-                        }
-                        ui.add(egui::Spinner::new().size(12.0));
-                        ui.label(RichText::new(format_elapsed(*seconds)).monospace().weak());
+                if running {
+                    let tip = if info.runs.len() > 1 { "Stop both tools" } else { "Stop the tool" };
+                    if icon_text_button(ui, Icon::Stop, "Stop", tip, false).clicked() {
+                        action = Some(OutputAction::Stop);
                     }
-                    finished => {
-                        if ui.button("×").on_hover_text("Close").clicked() {
-                            action = Some(OutputAction::Close);
-                        }
-                        if info.can_review {
-                            let review =
-                                egui::Button::new(RichText::new("Review in merge").color(visuals.strong_text_color()))
-                                    .fill(visuals.selection.bg_fill);
-                            if ui.add(review).on_hover_text("See each change and decide").clicked() {
-                                action = Some(OutputAction::Review);
-                            }
-                        }
-                        if ui.button("Copy").clicked() {
-                            action = Some(OutputAction::Copy);
-                        }
-                        let (text, color) = match finished {
-                            OutputState::Done { seconds } => {
-                                (format!("Done in {}", format_elapsed(*seconds)), visuals.weak_text_color())
-                            }
-                            OutputState::Stopped { seconds } => {
-                                (format!("Stopped at {}", format_elapsed(*seconds)), visuals.weak_text_color())
-                            }
-                            OutputState::Failed { code, .. } => (
-                                code.map_or_else(|| "Failed".to_string(), |code| format!("Failed (exit code {code})")),
-                                visuals.error_fg_color,
-                            ),
-                            OutputState::Running { .. } => (String::new(), visuals.weak_text_color()),
-                        };
-                        ui.label(RichText::new(text).color(color));
+                    ui.add(egui::Spinner::new().size(12.0));
+                } else {
+                    if ui.button("×").on_hover_text("Close").clicked() {
+                        action = Some(OutputAction::Close);
                     }
+                    if info.reviewable > 0 {
+                        let label = if info.reviewable > 1 { "Compare in merge" } else { "Review in merge" };
+                        let review = egui::Button::new(RichText::new(label).color(visuals.strong_text_color()))
+                            .fill(visuals.selection.bg_fill);
+                        if ui.add(review).on_hover_text("See each change and decide").clicked() {
+                            action = Some(OutputAction::Review);
+                        }
+                    }
+                    if ui.button("Copy").clicked() {
+                        action = Some(OutputAction::Copy);
+                    }
+                }
+                for run in info.runs.iter().rev() {
+                    let (text, color) = state_text(run, info.runs.len() > 1, &visuals);
+                    ui.label(RichText::new(text).color(color));
                 }
                 // The request fills the space left, cut short with "…" when needed.
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
@@ -238,26 +264,58 @@ pub fn show_output(ui: &mut Ui, info: &OutputInfo) -> Option<OutputAction> {
         |ui| {
             egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 6)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.label(RichText::new(format!("$ {}", info.command)).monospace().weak());
-                if !info.output.is_empty() {
-                    ui.add(egui::Label::new(RichText::new(info.output).monospace()).selectable(true));
-                }
-                let failed = matches!(info.state, OutputState::Failed { .. });
-                if !info.errors.trim().is_empty() && (failed || info.output.trim().is_empty()) {
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(info.errors.trim_end()).monospace().color(visuals.error_fg_color),
-                        )
-                        .selectable(true),
-                    );
-                }
-                if matches!(info.state, OutputState::Done { .. }) && info.output.trim().is_empty() {
-                    ui.label(RichText::new("The tool printed nothing.").weak());
+                if let [only] = info.runs.as_slice() {
+                    run_output(ui, only, false);
+                } else {
+                    ui.columns(info.runs.len(), |columns| {
+                        for (column, run) in columns.iter_mut().zip(&info.runs) {
+                            column.with_layout(Layout::top_down(Align::LEFT), |ui| run_output(ui, run, true));
+                        }
+                    });
                 }
             });
         },
     );
     action
+}
+
+/// "Done in 0:12" and the like; with the tool name when there are two.
+fn state_text(run: &RunView, named: bool, visuals: &egui::Visuals) -> (String, egui::Color32) {
+    let name = if named { format!("{} ", run.tool.name()) } else { String::new() };
+    match run.state {
+        OutputState::Running { seconds } => (format!("{name}{}", format_elapsed(seconds)), visuals.weak_text_color()),
+        OutputState::Done { seconds } => {
+            let done = if named { name } else { "Done in ".to_string() };
+            (format!("{done}{}", format_elapsed(seconds)), visuals.weak_text_color())
+        }
+        OutputState::Stopped { seconds } => {
+            (format!("{name}stopped at {}", format_elapsed(seconds)), visuals.weak_text_color())
+        }
+        OutputState::Failed { code, .. } => (
+            code.map_or_else(|| format!("{name}failed"), |code| format!("{name}failed (exit code {code})")),
+            visuals.error_fg_color,
+        ),
+    }
+}
+
+/// What one tool printed, under its command.
+fn run_output(ui: &mut Ui, run: &RunView, titled: bool) {
+    let visuals = ui.visuals().clone();
+    if titled {
+        ui.label(RichText::new(run.tool.name()).strong());
+    }
+    ui.label(RichText::new(format!("$ {}", run.command)).monospace().weak());
+    if !run.output.is_empty() {
+        ui.add(egui::Label::new(RichText::new(&run.output).monospace()).selectable(true));
+    }
+    let failed = matches!(run.state, OutputState::Failed { .. });
+    if !run.errors.trim().is_empty() && (failed || run.output.trim().is_empty()) {
+        let errors = RichText::new(run.errors.trim_end()).monospace().color(visuals.error_fg_color);
+        ui.add(egui::Label::new(errors).selectable(true));
+    }
+    if matches!(run.state, OutputState::Done { .. }) && run.output.trim().is_empty() {
+        ui.label(RichText::new("The tool printed nothing.").weak());
+    }
 }
 
 /// `request` cut to fit the header.
@@ -274,6 +332,8 @@ fn shorten(request: &str) -> String {
 #[derive(Debug)]
 pub struct Consent {
     pub tool: AiTool,
+    /// A second tool that runs at the same time (comparing), with its command.
+    pub also: Option<(AiTool, String)>,
     pub folder: PathBuf,
     /// The command template, shown as it will run.
     pub command: String,
@@ -293,18 +353,28 @@ pub fn show_consent(ctx: &Context, consent: &mut Consent) -> Option<ConsentChoic
     let modal = egui::Modal::new(egui::Id::unique("ai-consent")).show(ctx, |ui| {
         ui.set_width(CONSENT_WIDTH);
         ui.spacing_mut().item_spacing.y = 8.0;
-        ui.heading(format!("Run {} in this folder?", consent.tool.name()));
-        ui.label(RichText::new("rubrique will start this program in:").weak());
+        let tools = match &consent.also {
+            Some((also, _)) => format!("{} and {}", consent.tool.name(), also.name()),
+            None => consent.tool.name().to_string(),
+        };
+        ui.heading(format!("Run {tools} in this folder?"));
+        let programs = if consent.also.is_some() { "these programs" } else { "this program" };
+        ui.label(RichText::new(format!("rubrique will start {programs} in:")).weak());
         path_box(ui, &consent.folder);
-        ui.label(RichText::new("Command").weak());
-        egui::Frame::new()
-            .fill(ui.visuals().code_bg_color)
-            .corner_radius(5)
-            .inner_margin(egui::Margin::symmetric(8, 6))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.label(RichText::new(&consent.command).monospace());
-            });
+        let commands: Vec<&str> = std::iter::once(consent.command.as_str())
+            .chain(consent.also.as_ref().map(|(_, command)| command.as_str()))
+            .collect();
+        ui.label(RichText::new(if commands.len() > 1 { "Commands" } else { "Command" }).weak());
+        for command in commands {
+            egui::Frame::new()
+                .fill(ui.visuals().code_bg_color)
+                .corner_radius(5)
+                .inner_margin(egui::Margin::symmetric(8, 6))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new(command).monospace());
+                });
+        }
         ui.label(
             "It gets your request and the selected text, and sends back new text. \
              Your file changes only when you press Apply in the merge screen.",
