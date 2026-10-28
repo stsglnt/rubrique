@@ -8,6 +8,13 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Added
+
+- Settings → AI: pick the tool for requests (Claude, Codex, Grok or a local
+  model) and for summaries, and edit each tool's command. rubrique shows which
+  tools are installed. The AI features that use these come next; see
+  `specs/08-ai.md`.
+
 ## [0.3.0] - 2026-10-28
 
 ### Added

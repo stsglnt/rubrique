@@ -1,5 +1,6 @@
 //! rubrique: a fast, lightweight Markdown editor for Linux and macOS.
 
+mod ai;
 mod app;
 mod date;
 mod document;

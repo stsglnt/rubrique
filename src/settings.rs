@@ -5,6 +5,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::ai::AiSettings;
 use crate::theme::catalog::ThemeChoice;
 
 pub mod view;
@@ -44,6 +45,8 @@ pub struct Settings {
     pub theme: ThemeChoice,
     /// Where new scratch files go; `None` means the default folder.
     pub scratch_folder: Option<PathBuf>,
+    /// AI tools and their commands.
+    pub ai: AiSettings,
 }
 
 impl Settings {
@@ -83,6 +86,9 @@ impl Settings {
                 continue;
             };
             let value = value.trim();
+            if settings.ai.parse_line(key.trim(), value) {
+                continue;
+            }
             match key.trim() {
                 "folder" => settings.folders.extend(non_empty_path(value)),
                 "last_folder" => legacy_folder = non_empty_path(value),
@@ -119,12 +125,13 @@ impl Settings {
             lines
         });
         format!(
-            "{folder_lines}last_file={}\nmarkdown_only={}\npreview_mode={}\ntheme={}\nscratch_folder={}\n{window_lines}",
+            "{folder_lines}last_file={}\nmarkdown_only={}\npreview_mode={}\ntheme={}\nscratch_folder={}\n{window_lines}{}",
             path_text(&self.last_file),
             self.markdown_only,
             self.markdown_view == MarkdownView::Preview,
             self.theme.id(),
             path_text(&self.scratch_folder),
+            self.ai.to_lines(),
         )
     }
 }
@@ -185,6 +192,12 @@ mod tests {
             window_size: Some((1200.0, 800.5)),
             theme: ThemeChoice::Named("dark".to_string()),
             scratch_folder: Some(PathBuf::from("/home/a/scratch")),
+            ai: {
+                let mut ai = AiSettings::default();
+                ai.default_tool = crate::ai::AiTool::Grok;
+                ai.set_command(crate::ai::AiTool::Grok, "grok-cli --headless {prompt}");
+                ai
+            },
         };
         assert_eq!(Settings::parse(&settings.to_text()), settings);
     }

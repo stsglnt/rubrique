@@ -7,6 +7,7 @@ use eframe::egui::{
     pos2, vec2,
 };
 
+use crate::ai::{AiSettings, AiTool, check_command};
 use crate::theme::catalog::{ThemeChoice, Themes};
 use crate::theme::palette::{Base, Palette, Rgb, Theme};
 
@@ -19,7 +20,16 @@ pub enum SettingsAction {
     ChooseScratchFolder,
     /// Go back to the default scratch folder.
     ResetScratchFolder,
+    /// An AI command changed, so which tools are installed may have too.
+    AiCommandChanged,
     Close,
+}
+
+/// AI settings to edit, and which tools were found (in [`AiTool::ALL`] order).
+#[derive(Debug)]
+pub struct AiInfo<'a> {
+    pub settings: &'a mut AiSettings,
+    pub installed: [bool; 4],
 }
 
 /// Where scratch files go, for the Scratches section.
@@ -65,6 +75,7 @@ pub fn show_settings(
     current: &ThemeChoice,
     themes_folder: Option<&Path>,
     scratch: ScratchInfo,
+    ai: AiInfo,
 ) -> Option<SettingsAction> {
     let mut action = None;
     egui::Frame::new().inner_margin(egui::Margin::symmetric(PANEL_MARGIN, 10)).show(ui, |ui| {
@@ -112,9 +123,100 @@ pub fn show_settings(
                     action = Some(SettingsAction::ResetScratchFolder);
                 }
             });
+
+            ui.add_space(10.0);
+            if ai_section(ui, ai) {
+                action = Some(SettingsAction::AiCommandChanged);
+            }
         });
     });
     action
+}
+
+/// Size of the dot that shows whether a tool was found.
+const STATUS_DOT: f32 = 7.0;
+
+/// The AI section: which tool to use, and each tool's command. Returns true
+/// when a command changed.
+fn ai_section(ui: &mut Ui, ai: AiInfo) -> bool {
+    let AiInfo { settings, installed } = ai;
+    let found = |tool: AiTool| installed[AiTool::ALL.iter().position(|each| *each == tool).unwrap_or_default()];
+    ui.label(RichText::new("AI").size(SECTION_SIZE).weak());
+
+    ui.label(RichText::new("Ask with").strong());
+    ui.label(RichText::new("For Ask (Cmd+K), resolving notes and folder questions.").weak());
+    tool_picker(ui, "ai-default-tool", &mut settings.default_tool, &found);
+
+    ui.label(RichText::new("Summaries with").strong());
+    ui.label(RichText::new("For summaries and file titles. A local model keeps your notes on this computer.").weak());
+    tool_picker(ui, "ai-summary-tool", &mut settings.summary_tool, &found);
+
+    ui.add_space(6.0);
+    ui.separator();
+    ui.label(RichText::new("Commands").strong());
+    ui.label(
+        RichText::new(
+            "rubrique runs these programs only when you ask. {prompt} becomes your request, \
+             passed as one argument, never through a shell.",
+        )
+        .weak(),
+    );
+    let mut changed = false;
+    for tool in AiTool::ALL {
+        ui.add_space(4.0);
+        changed |= command_row(ui, settings, tool, found(tool));
+    }
+    changed
+}
+
+/// A drop-down of the AI tools; tools that were not found say so.
+fn tool_picker(ui: &mut Ui, id: &str, choice: &mut AiTool, found: &dyn Fn(AiTool) -> bool) {
+    let label = |tool: AiTool| {
+        if found(tool) { tool.name().to_string() } else { format!("{} (not found)", tool.name()) }
+    };
+    egui::ComboBox::from_id_salt(id).selected_text(label(*choice)).width(ui.available_width()).show_ui(ui, |ui| {
+        for tool in AiTool::ALL {
+            ui.selectable_value(choice, tool, label(tool));
+        }
+    });
+}
+
+/// One tool: name, found or not, its command, and a hint or a problem.
+fn command_row(ui: &mut Ui, settings: &mut AiSettings, tool: AiTool, found: bool) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(tool.name()).strong());
+        let (dot, _) = ui.allocate_exact_size(vec2(STATUS_DOT, STATUS_DOT), Sense::hover());
+        let visuals = ui.visuals();
+        if found {
+            ui.painter().circle_filled(dot.center(), STATUS_DOT / 2.0, visuals.hyperlink_color);
+            ui.label(RichText::new("found").weak());
+        } else {
+            ui.painter().circle_stroke(
+                dot.center(),
+                STATUS_DOT / 2.0 - 0.5,
+                Stroke::new(1.0, visuals.weak_text_color()),
+            );
+            ui.label(RichText::new("not found").weak());
+        }
+        if settings.is_custom(tool) {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.small_button("Reset").on_hover_text(tool.default_command()).clicked() {
+                    settings.reset_command(tool);
+                    changed = true;
+                }
+            });
+        }
+    });
+    let edit = egui::TextEdit::singleline(settings.command_mut(tool))
+        .font(egui::TextStyle::Monospace)
+        .desired_width(f32::INFINITY);
+    changed |= ui.add(edit).changed();
+    match check_command(settings.command(tool)) {
+        Some(problem) => ui.label(RichText::new(problem.message()).color(ui.visuals().error_fg_color)),
+        None => ui.label(RichText::new(tool.hint()).weak()),
+    };
+    changed
 }
 
 /// A folder path in a small outlined box, home folder shown as `~`.

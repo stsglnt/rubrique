@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use eframe::egui::{self, Context, Key, KeyboardShortcut, Modifiers, RichText, Ui, ViewportCommand};
 
+use crate::ai::{self, AiTool};
 use crate::document::merge::MergeSession;
 use crate::document::merge_view::{MergeAction, show_merge};
 use crate::document::preview_selection;
@@ -23,7 +24,7 @@ use crate::markdown::blocks::{SourceBlock, parse_blocks, parse_source_blocks};
 use crate::markdown::html::{file_url, html_page, is_html_path, with_base};
 use crate::markdown::notes::{self, Note, find_notes, insert_note, remove_note, rewrite_note};
 use crate::scratch::{create_scratch, rename_target};
-use crate::settings::view::{ScratchInfo, SettingsAction, show_settings};
+use crate::settings::view::{AiInfo, ScratchInfo, SettingsAction, show_settings};
 use crate::settings::{MarkdownView, Settings, default_scratch_folder, themes_folder};
 use crate::theme::catalog::Themes;
 use crate::theme::style::{apply_theme, page_fill};
@@ -136,6 +137,9 @@ pub struct RubriqueApp {
     themes: Themes,
     /// The settings panel is shown on the right.
     settings_open: bool,
+    /// Which AI tools' programs were found, in [`AiTool::ALL`] order.
+    /// Checked when Settings opens and when a command changes.
+    ai_installed: [bool; 4],
     /// The "Rename" dialog, while it is open.
     renaming: Option<Renaming>,
     /// The merge screen for the open file, while it is open.
@@ -190,6 +194,7 @@ impl RubriqueApp {
             window_title: String::new(),
             themes,
             settings_open: false,
+            ai_installed: [false; 4],
             renaming: None,
             merging: None,
             last_disk_check: 0.0,
@@ -406,7 +411,7 @@ impl RubriqueApp {
             self.copy_to_clipboard(ctx, text);
         }
         if ctx.input_mut(|input| input.consume_shortcut(&TOGGLE_SETTINGS)) {
-            self.settings_open = !self.settings_open;
+            self.toggle_settings();
         }
         if ctx.input_mut(|input| input.consume_shortcut(&ADD_NOTE)) {
             self.start_note(ctx);
@@ -475,6 +480,18 @@ impl RubriqueApp {
 
     // ---------- panels ----------
 
+    fn toggle_settings(&mut self) {
+        self.settings_open = !self.settings_open;
+        if self.settings_open {
+            self.check_ai_tools();
+        }
+    }
+
+    /// Look for each AI tool's program on `PATH`.
+    fn check_ai_tools(&mut self) {
+        self.ai_installed = AiTool::ALL.map(|tool| ai::is_installed(self.settings.ai.command(tool)));
+    }
+
     /// Right panel: settings. Theme picks apply at once.
     fn settings_panel(&mut self, ui: &mut Ui) {
         let folder = themes_folder();
@@ -483,7 +500,8 @@ impl RubriqueApp {
             folder: scratch_folder.as_deref(),
             is_default: self.settings.scratch_folder.is_none() || scratch_folder == default_scratch_folder(),
         };
-        let action = show_settings(ui, &self.themes, &self.settings.theme, folder.as_deref(), scratch);
+        let ai = AiInfo { settings: &mut self.settings.ai, installed: self.ai_installed };
+        let action = show_settings(ui, &self.themes, &self.settings.theme, folder.as_deref(), scratch, ai);
         let Some(action) = action else {
             return;
         };
@@ -508,6 +526,7 @@ impl RubriqueApp {
                 }
             }
             SettingsAction::ResetScratchFolder => self.settings.scratch_folder = None,
+            SettingsAction::AiCommandChanged => self.check_ai_tools(),
             SettingsAction::Close => self.settings_open = false,
         }
     }
@@ -1334,7 +1353,7 @@ impl eframe::App for RubriqueApp {
                 ui.horizontal(|ui| {
                     let gear = icon_button(ui, Icon::Gear, "Settings", "Settings (Cmd+,)", self.settings_open);
                     if gear.clicked() {
-                        self.settings_open = !self.settings_open;
+                        self.toggle_settings();
                     }
                 });
                 ui.add_space(2.0);
