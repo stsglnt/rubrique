@@ -6,6 +6,7 @@ use std::time::Duration;
 use eframe::egui::{self, Context, Key, KeyboardShortcut, Modifiers, RichText, Ui, ViewportCommand};
 
 mod ask;
+mod summary;
 
 use crate::ai::skills::{self, Skill};
 use crate::ai::{self, AiTool};
@@ -148,6 +149,10 @@ pub struct RubriqueApp {
     ask: ask::AskState,
     /// Skills from the skills folders, read when Settings or Ask opens.
     skills: Vec<Skill>,
+    /// Hover summaries in the explorer.
+    summaries: summary::SummaryState,
+    /// Asks the window to redraw, from background threads.
+    repaint: Context,
     /// Where each AI tool's program was found, in [`AiTool::ALL`] order.
     /// Checked when Settings or Ask opens and when a command changes.
     ai_found: [Option<PathBuf>; 4],
@@ -207,6 +212,8 @@ impl RubriqueApp {
             settings_open: false,
             ask: ask::AskState::default(),
             skills: Vec::new(),
+            summaries: summary::SummaryState::default(),
+            repaint: ctx.clone(),
             ai_found: [None, None, None, None],
             renaming: None,
             merging: None,
@@ -1517,6 +1524,7 @@ impl eframe::App for RubriqueApp {
         egui::CentralPanel::default().frame(page_frame).show(ui, |ui| self.document_area(ui));
 
         self.ask_dialogs(&ctx);
+        self.hover_summary(&ctx);
         self.unsaved_dialog(&ctx);
         self.note_dialog(&ctx);
         self.rename_dialog(&ctx);

@@ -158,6 +158,11 @@ pub fn default_scratch_folder() -> Option<PathBuf> {
     config_folder().map(|folder| folder.join("scratches"))
 }
 
+/// Folder for cached file summaries (`cache/summaries` in the config folder).
+pub fn summary_cache_folder() -> Option<PathBuf> {
+    config_folder().map(|folder| folder.join("cache").join("summaries"))
+}
+
 /// Default folder for skills (`skills` in the config folder).
 pub fn default_skills_folder() -> Option<PathBuf> {
     config_folder().map(|folder| folder.join("skills"))

@@ -25,6 +25,10 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   the Notes panel, sends the file and the note to the default tool. While it
   runs the card shows the time and **Stop**; the answer opens in the merge
   screen, where the resolved notes are removed once you apply.
+- Hover summaries: rest the pointer on a file in the explorer to see a
+  two-sentence summary, made by a local model (Ollama or llama.cpp) by
+  default and cached by content, so a file is summarized again only after
+  it changes. Pick the tool or turn it off in Settings → AI → Summaries use.
 - Skills: reusable instructions for Ask, one folder per skill with a
   `SKILL.md` file, the same format as Claude Code skills. Pick one from
   **Skills…** in the Ask bar. Settings → AI → Skills sets the folder

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 pub mod run;
 pub mod skills;
+pub mod summary;
 pub mod view;
 
 /// Placeholder in a command template for the request text.

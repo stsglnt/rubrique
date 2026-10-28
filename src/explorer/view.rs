@@ -28,6 +28,32 @@ pub enum ExplorerAction {
     Rename(PathBuf),
 }
 
+/// The file row under the pointer, for the hover summary.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HoveredFile {
+    pub path: PathBuf,
+    /// Where the row is, to place the summary next to it.
+    pub rect: egui::Rect,
+}
+
+/// Remember the hovered file row for [`hovered_file`].
+fn set_hovered(ui: &Ui, file: HoveredFile) {
+    ui.ctx().data_mut(|data| data.insert_temp(hovered_id(), file));
+}
+
+/// The file row under the pointer this frame, if any.
+pub fn hovered_file(ctx: &egui::Context) -> Option<HoveredFile> {
+    ctx.data_mut(|data| {
+        let file = data.get_temp::<HoveredFile>(hovered_id());
+        data.remove::<HoveredFile>(hovered_id());
+        file
+    })
+}
+
+fn hovered_id() -> egui::Id {
+    egui::Id::unique("explorer-hovered-file")
+}
+
 /// Read-only facts the tree needs while drawing.
 #[derive(Clone, Copy, Debug)]
 pub struct TreeContext<'a> {
@@ -143,6 +169,9 @@ fn show_file(ui: &mut Ui, file: &FsNode, context: &TreeContext, action: &mut Opt
     let response = tree_row(ui, is_open, label);
     if response.clicked() {
         *action = Some(ExplorerAction::OpenFile(file.path.clone()));
+    }
+    if response.hovered() {
+        set_hovered(ui, HoveredFile { path: file.path.clone(), rect: response.rect });
     }
     file_menu(&response, &file.path, context, action);
 }
