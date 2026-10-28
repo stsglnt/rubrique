@@ -7,8 +7,9 @@ use eframe::egui::{self, Color32, Painter, Pos2, Response, Sense, Stroke, Ui, Ve
 
 /// Size of an icon button.
 const BUTTON_SIZE: Vec2 = vec2(28.0, 24.0);
-/// Line width of every icon (heavy, like the app icon's monogram).
-const LINE: f32 = 1.8;
+/// Line width of every icon: bold like the app icon's monogram, but thin
+/// enough to stay sharp at 14 px.
+const LINE: f32 = 1.5;
 
 /// The icons rubrique draws.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,7 +44,9 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, label: &str, tip: &str, active: bool
     let color = if active { visuals.strong_text_color() } else { ui.style().interact(&response).fg_stroke.color };
     let painter = ui.painter();
     painter.rect_filled(rect, visuals.widgets.inactive.corner_radius, fill);
-    paint(painter, icon, rect.center(), color, visuals.hyperlink_color);
+    // A badge cuts a gap into the shape in the color behind the icon.
+    let behind = if fill == Color32::TRANSPARENT { visuals.panel_fill } else { fill };
+    paint(painter, icon, rect.center(), Colors { line: color, accent: visuals.hyperlink_color, behind });
     response.on_hover_text(tip)
 }
 
@@ -51,7 +54,8 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, label: &str, tip: &str, active: bool
 pub fn icon_label(ui: &mut Ui, icon: Icon) {
     let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
     let visuals = ui.visuals();
-    paint(ui.painter(), icon, rect.center(), visuals.text_color(), visuals.hyperlink_color);
+    let colors = Colors { line: visuals.text_color(), accent: visuals.hyperlink_color, behind: visuals.panel_fill };
+    paint(ui.painter(), icon, rect.center(), colors);
 }
 
 /// A small button with an icon before its text (like "Ask" in the status
@@ -73,7 +77,7 @@ pub fn icon_text_button(ui: &mut Ui, icon: Icon, text: &str, tip: &str, active: 
     let painter = ui.painter();
     painter.rect_filled(rect, widget.corner_radius, fill);
     let icon_center = pos2(rect.left() + padding.x + ICON / 2.0, rect.center().y);
-    paint(painter, icon, icon_center, color, visuals.hyperlink_color);
+    paint(painter, icon, icon_center, Colors { line: color, accent: visuals.hyperlink_color, behind: fill });
     let text_pos = pos2(rect.left() + padding.x + ICON + GAP, rect.center().y - galley.size().y / 2.0);
     painter.galley(text_pos, galley, color);
     response.on_hover_text(tip)
@@ -82,7 +86,20 @@ pub fn icon_text_button(ui: &mut Ui, icon: Icon, text: &str, tip: &str, active: 
 /// Draw `icon` centered on `center` in rubrique's icon style (see
 /// `.claude/skills/rubrique-icons/SKILL.md`): a 14 × 14 box, heavy strokes with
 /// round ends and joins, softly rounded corners, and one detail in `accent`.
-fn paint(painter: &Painter, icon: Icon, center: Pos2, color: Color32, accent: Color32) {
+/// The colors an icon is drawn with.
+#[derive(Clone, Copy)]
+struct Colors {
+    line: Color32,
+    /// The one accent detail.
+    accent: Color32,
+    /// What is behind the icon, for the gap around a badge.
+    behind: Color32,
+}
+
+fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
+    // Whole pixels keep the thin lines sharp.
+    let center = center.round();
+    let Colors { line: color, accent, behind } = colors;
     let line = Stroke::new(LINE, color);
     let detail = Stroke::new(LINE, accent);
     let at = |x: f32, y: f32| center + vec2(x, y);
@@ -97,17 +114,16 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, color: Color32, accent: Co
             painter.circle_filled(center, 1.6, accent);
         }
         Icon::FolderPlus => {
-            // Folder with a soft tab; the plus is the accent.
-            let outline = [at(-7.0, -5.5), at(-2.6, -5.5), at(-1.0, -3.8), at(7.0, -3.8), at(7.0, 6.0), at(-7.0, 6.0)];
+            // Folder with a tab; the plus badge at the bottom right is the accent.
+            let outline = [at(-6.5, -4.5), at(-2.0, -4.5), at(-0.5, -3.0), at(6.5, -3.0), at(6.5, 5.5), at(-6.5, 5.5)];
             stroke_path(painter, &round_corners(&outline, CORNER, true), true, line);
-            plus(painter, at(0.0, 1.2), PLUS_HALF, detail);
+            plus_badge(painter, at(6.0, 5.5), detail, behind);
         }
         Icon::NotePlus => {
-            // Page with a folded corner, the same height as the folder; the plus is the accent.
-            let outline = [at(-5.5, -5.5), at(2.0, -5.5), at(5.5, -2.0), at(5.5, 6.0), at(-5.5, 6.0)];
+            // Page with a cut corner; the plus badge at the bottom right is the accent.
+            let outline = [at(-4.5, -6.5), at(1.0, -6.5), at(4.5, -3.0), at(4.5, 6.5), at(-4.5, 6.5)];
             stroke_path(painter, &round_corners(&outline, CORNER, true), true, line);
-            stroke_path(painter, &[at(2.0, -5.5), at(2.0, -2.0), at(5.5, -2.0)], false, line);
-            plus(painter, at(0.0, 2.0), PLUS_HALF, detail);
+            plus_badge(painter, at(5.0, 5.5), detail, behind);
         }
         Icon::Refresh => {
             // Most of a circle; the arrowhead at its end is the accent.
@@ -128,8 +144,8 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, color: Color32, accent: Co
         }
         Icon::Sparkle => {
             // A four-point star with curved sides; a small plus is the accent.
-            let tips = [at(-1.5, -5.0), at(3.8, 1.0), at(-1.5, 6.8), at(-6.8, 1.0)];
-            let waist = [at(-0.9, 0.3), at(-0.9, 1.7), at(-2.1, 1.7), at(-2.1, 0.3)];
+            let tips = [at(-1.5, -4.5), at(3.5, 1.0), at(-1.5, 6.5), at(-6.5, 1.0)];
+            let waist = [at(-0.9, 0.4), at(-0.9, 1.6), at(-2.1, 1.6), at(-2.1, 0.4)];
             let mut outline = Vec::new();
             for side in 0..4 {
                 outline.extend(quadratic(tips[side], waist[side], tips[(side + 1) % 4]));
@@ -159,9 +175,17 @@ fn quadratic(start: Pos2, control: Pos2, end: Pos2) -> Vec<Pos2> {
 }
 
 /// Corner radius of outlines.
-const CORNER: f32 = 2.0;
-/// Half the length of a plus sign's arms.
-const PLUS_HALF: f32 = 2.6;
+const CORNER: f32 = 1.5;
+/// Half the length of a badge plus sign's arms.
+const PLUS_HALF: f32 = 2.25;
+/// Radius of the gap cut around a badge.
+const BADGE_GAP: f32 = 3.6;
+
+/// A plus badge: a gap cut into the shape behind it, then the plus.
+fn plus_badge(painter: &Painter, center: Pos2, stroke: Stroke, behind: Color32) {
+    painter.circle_filled(center, BADGE_GAP, behind);
+    plus(painter, center, PLUS_HALF, stroke);
+}
 
 /// A path with round joins and round ends: the line, plus a dot of the
 /// line's width at every point (egui draws plain lines with square ends).

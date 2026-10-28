@@ -21,6 +21,11 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   changes until you press **Apply**. The first run in a folder shows the
   exact command and asks first.
 
+### Changed
+
+- Add folder and new scratch icons redrawn: a plain folder and a page with a
+  separate "+" badge, and thinner lines on all icons so they stay sharp.
+
 ## [0.3.0] - 2026-10-28
 
 ### Added
