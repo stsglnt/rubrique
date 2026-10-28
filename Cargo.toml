@@ -1,6 +1,6 @@
 [package]
 name = "rubrique"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "A fast, lightweight Markdown editor for Linux and macOS"
 publish = false

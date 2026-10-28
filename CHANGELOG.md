@@ -8,23 +8,21 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-28
+
+AI-first, still small: rubrique runs the AI command-line tools you already
+have (Claude Code, Codex, Grok, or a local model through Ollama or
+llama.cpp). It holds no API keys, and every change is shown in the merge
+screen before it touches your text.
+
 ### Added
 
-- Settings → AI: pick the default tool (Claude, Codex, Grok or Local; ones
-  not installed are greyed out), edit each tool's command (Installed with
-  its path on hover, or Not found with a hint), pick the tool for summaries
-  or turn them off, and forget the folders where AI runs were allowed. Built-in commands run read-only: Claude in plan mode
-  with rubrique's instructions as a system prompt, Codex in a read-only sandbox.
 - **Ask** (`Cmd/Ctrl+K`, or the status bar button): ask an AI tool to change
   the selection (or the whole file). Quick actions: Shorter, Fix grammar,
   Table, Translate, Explain. The output streams into a panel with **Stop**;
   **Review in merge** shows each change next to the original, and nothing
   changes until you press **Apply**. The first run in a folder shows the
   exact command and asks first.
-- Code blocks in the preview: hover one to get **Copy**, and **Prettify**
-  for ` ```json `, ` ```sql ` (also `psql`, `postgres`) and ` ```xml `
-  blocks, which formats the code in the file like Format does. The
-  language label and buttons sit in a slim row above the code.
 - Compare tools: pick **Compare with** in the Ask bar to run a second tool
   at the same time. The output panel shows both answers side by side, and
   **Compare in merge** puts them left and right of the result, with the
@@ -33,24 +31,39 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   the Notes panel, sends the file and the note to the default tool. While it
   runs the card shows the time and **Stop**; the answer opens in the merge
   screen, where the resolved notes are removed once you apply.
-- Hover summaries: rest the pointer on a file in the explorer to see a
-  two-sentence summary, made by a local model (Ollama or llama.cpp) by
-  default and cached by content, so a file is summarized again only after
-  it changes. Pick the tool or turn it off in Settings → AI → Summaries use.
-- Smart scratch names: after you save a scratch that still has its random
-  name, the summaries tool (a local model by default) suggests a name from
-  its content, like `2026-10-28-beta-launch-checklist.md`, in a bar with
-  **Rename** and **Not now**. The Rename dialog has **Suggest** too.
 - Skills: reusable instructions for Ask, one folder per skill with a
   `SKILL.md` file, the same format as Claude Code skills. Pick one from
   **Skills…** in the Ask bar. Settings → AI → Skills sets the folder
   (default `skills` in the config folder), can include Claude's own
   `~/.claude/skills`, and can create an example skill.
+- Hover summaries: rest the pointer on a file in the explorer to see a
+  two-sentence summary, made by a local model (Ollama or llama.cpp) by
+  default and cached by content, so a file is summarized again only after
+  it changes. Pick the tool or turn it off in Settings → AI → Summaries use.
+- Smart scratch names: after you save a scratch that still has its random
+  name, the summaries tool suggests a name from its content, like
+  `2026-10-28-beta-launch-checklist.md`, in a bar with **Rename** and
+  **Not now**. The Rename dialog has **Suggest** too.
+- Settings → AI: pick the default tool (Claude, Codex, Grok or Local; ones
+  not installed are greyed out), edit each tool's command (Installed with
+  its path on hover, or Not found with a hint), pick the tool for summaries
+  or turn them off, and forget the folders where AI runs were allowed.
+  Built-in commands run read-only: Claude in plan mode with rubrique's
+  instructions as a system prompt, Codex in a read-only sandbox.
+- Code blocks in the preview: hover one to get **Copy**, and **Prettify**
+  for ` ```json `, ` ```sql ` (also `psql`, `postgres`) and ` ```xml `
+  blocks, which formats the code in the file like Format does. The
+  language label and buttons sit in a slim row above the code.
 
 ### Changed
 
 - Add folder and new scratch icons redrawn: a plain folder and a page with a
   separate "+" badge, and thinner lines on all icons so they stay sharp.
+
+### Fixed
+
+- Long lines in the merge screen's columns were stretched across the
+  column with wide gaps between letters.
 
 ## [0.3.0] - 2026-10-28
 
@@ -140,6 +153,7 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   plain-text editor with a rendered Markdown preview, atomic saves, unsaved
   changes prompt, reload on outside changes, and line shortcuts.
 
-[Unreleased]: https://github.com/witseko/rubrique/compare/rubrique-v0.3.0...HEAD
+[Unreleased]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.0...HEAD
+[0.4.0]: https://github.com/witseko/rubrique/compare/rubrique-v0.3.0...rubrique-v0.4.0
 [0.3.0]: https://github.com/witseko/rubrique/compare/rubrique-v0.2.0...rubrique-v0.3.0
 [0.2.0]: https://github.com/witseko/rubrique/releases/tag/rubrique-v0.2.0
