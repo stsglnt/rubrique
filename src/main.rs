@@ -13,6 +13,7 @@ mod settings;
 #[cfg(test)]
 mod test_support;
 mod theme;
+mod voice;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;

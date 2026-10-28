@@ -440,13 +440,18 @@ pub fn program(command: &str) -> Option<String> {
 /// Where the template's program is: the file itself for a path, otherwise
 /// the first file of that name in a `PATH` folder.
 pub fn find_program(command: &str) -> Option<PathBuf> {
-    let program = program(command)?;
+    find_on_path(&program(command)?)
+}
+
+/// Where `program` is: the file itself for a path, otherwise the first file
+/// of that name in a `PATH` folder.
+pub fn find_on_path(program: &str) -> Option<PathBuf> {
     if program.contains('/') {
         let path = PathBuf::from(program);
         return path.is_file().then_some(path);
     }
     let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).map(|folder| folder.join(&program)).find(|candidate| candidate.is_file())
+    std::env::split_paths(&path).map(|folder| folder.join(program)).find(|candidate| candidate.is_file())
 }
 
 #[cfg(test)]

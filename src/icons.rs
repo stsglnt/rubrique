@@ -26,6 +26,12 @@ pub enum Icon {
     Sparkle,
     /// Stop a running AI tool.
     Stop,
+    /// Record a voice memo.
+    Mic,
+    /// Play a voice memo.
+    Play,
+    /// Pause a voice memo.
+    Pause,
 }
 
 /// A flat button with `icon` and a hover tip. `active` keeps it highlighted
@@ -158,6 +164,33 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
             stroke_path(painter, &circle_points(center, 6.2), true, line);
             let square = egui::Rect::from_center_size(center, vec2(3.8, 3.8));
             painter.rect_filled(square, 1.0, accent);
+        }
+        Icon::Mic => {
+            // A capsule in a cradle; the stand under it is the accent.
+            let capsule = [at(-2.6, -6.5), at(2.6, -6.5), at(2.6, 1.0), at(-2.6, 1.0)];
+            stroke_path(painter, &round_corners(&capsule, 2.6, true), true, line);
+            let cradle: Vec<Pos2> = (0..=16_u8)
+                .map(|step| at(0.0, -1.5) + Vec2::angled(f32::from(step) / 16.0 * TAU / 2.0) * 5.0)
+                .collect();
+            stroke_path(painter, &cradle, false, line);
+            stroke_path(painter, &[at(0.0, 3.5), at(0.0, 6.5)], false, detail);
+            stroke_path(painter, &[at(-2.5, 6.5), at(2.5, 6.5)], false, detail);
+        }
+        Icon::Play => {
+            // A circle; the triangle inside is the accent.
+            stroke_path(painter, &circle_points(center, 6.2), true, line);
+            painter.add(egui::Shape::convex_polygon(
+                vec![at(-1.6, -3.0), at(3.2, 0.0), at(-1.6, 3.0)],
+                accent,
+                Stroke::NONE,
+            ));
+        }
+        Icon::Pause => {
+            // A circle; the two bars inside are the accent.
+            stroke_path(painter, &circle_points(center, 6.2), true, line);
+            for x in [-1.6, 1.6] {
+                painter.rect_filled(egui::Rect::from_center_size(at(x, 0.0), vec2(1.6, 5.4)), 0.8, accent);
+            }
         }
     }
 }

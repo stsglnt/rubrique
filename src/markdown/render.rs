@@ -96,7 +96,10 @@ fn render_block(ui: &mut Ui, block: &Block, depth: usize) {
         Block::Heading { level, content } => render_heading(ui, *level, content),
         // A paragraph that is only hidden comments takes no room.
         Block::Paragraph(content) if content.iter().all(|inline| matches!(inline, Inline::Note { .. })) => {}
-        Block::Paragraph(content) => render_inlines(ui, content, &TextStyle::default()),
+        Block::Paragraph(content) => match crate::voice::memo_link(content) {
+            Some(link) => crate::voice::view::memo_row(ui, &link),
+            None => render_inlines(ui, content, &TextStyle::default()),
+        },
         Block::Code { info, code } => render_code(ui, info, code),
         Block::Quote(blocks) => render_quote(ui, blocks, depth),
         Block::List(list) => render_list(ui, list, depth),

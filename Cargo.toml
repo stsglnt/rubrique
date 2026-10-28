@@ -21,6 +21,11 @@ eframe = { version = "0.37.0", default-features = false, features = [
 # Native "choose a folder" window for adding explorer folders. On Linux it
 # uses the desktop's XDG portal, so no GTK libraries are needed.
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
+# Microphone and speakers for voice memos: CoreAudio on macOS, ALSA on Linux
+# (which reaches PipeWire and PulseAudio through their ALSA plugins). macOS
+# has no built-in command-line recorder, so running one would mean asking
+# people to install ffmpeg first. WAV files and resampling are our own code.
+cpal = "0.18.2"
 
 # Lint levels from the Rust guide. `unsafe_code` is `deny` rather than
 # `forbid` because date.rs needs one FFI call (`localtime_r`); that single

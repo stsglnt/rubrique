@@ -11,6 +11,7 @@ use crate::ai::skills::Skill;
 use crate::ai::{AiSettings, AiTool, CommandProblem, check_command};
 use crate::theme::catalog::{ThemeChoice, Themes};
 use crate::theme::palette::{Base, Palette, Rgb, Theme};
+use crate::voice::VoiceSettings;
 
 /// Something the user asked for in the settings panel.
 #[derive(Debug)]
@@ -33,7 +34,18 @@ pub enum SettingsAction {
     CreateExampleSkill,
     /// Ask again before the next run in every folder.
     ForgetAllowedFolders,
+    /// The transcription command changed, so look for its program again.
+    VoiceCommandChanged,
+    /// Put this text on the clipboard.
+    Copy(String),
     Close,
+}
+
+/// Voice memo settings to edit, and where the transcription program was found.
+#[derive(Debug)]
+pub struct VoiceInfo<'a> {
+    pub settings: &'a mut VoiceSettings,
+    pub found: Option<&'a Path>,
 }
 
 /// AI settings to edit, and which tools were found (in [`AiTool::ALL`] order).
@@ -92,6 +104,7 @@ pub fn show_settings(
     themes_folder: Option<&Path>,
     scratch: ScratchInfo,
     ai: AiInfo,
+    voice: VoiceInfo,
 ) -> Option<SettingsAction> {
     let mut action = None;
     egui::Frame::new().inner_margin(egui::Margin::symmetric(PANEL_MARGIN, 10)).show(ui, |ui| {
@@ -139,6 +152,11 @@ pub fn show_settings(
                     action = Some(SettingsAction::ResetScratchFolder);
                 }
             });
+
+            ui.add_space(10.0);
+            if let Some(voice_action) = voice_section(ui, voice) {
+                action = Some(voice_action);
+            }
 
             ui.add_space(10.0);
             if let Some(ai_action) = ai_section(ui, ai) {
@@ -362,6 +380,101 @@ fn command_help(tool: AiTool, problem: Option<CommandProblem>, found: bool) -> O
         (None, true, _) => return None,
     };
     Some(text)
+}
+
+/// Voice memos: where they go, dropped files, and transcription.
+fn voice_section(ui: &mut Ui, voice: VoiceInfo) -> Option<SettingsAction> {
+    let VoiceInfo { settings, found } = voice;
+    let visuals = ui.visuals().clone();
+    let mut action = None;
+    ui.label(RichText::new("VOICE MEMOS").size(SECTION_SIZE).weak());
+    ui.label(RichText::new("Memos folder").strong());
+    ui.label(RichText::new("Recordings and dropped audio go here: a folder next to the note, or a full path.").weak());
+    field_box(ui, &visuals, false, |ui| {
+        let edit = egui::TextEdit::singleline(&mut settings.folder)
+            .font(FontId::monospace(12.0))
+            .frame(egui::Frame::NONE)
+            .hint_text("next to the note")
+            .desired_width(f32::INFINITY);
+        ui.add(edit);
+    });
+    ui.checkbox(&mut settings.copy_dropped, "Copy audio from other folders into it")
+        .on_hover_text("Off: link the file where it is");
+    if cfg!(target_os = "macos") {
+        ui.label(RichText::new("macOS asks once for the microphone, the first time you record.").weak());
+    }
+
+    ui.add_space(6.0);
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Transcription").strong());
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if let Some(path) = found {
+                let status = ui.label(RichText::new("Installed").size(STATUS_SIZE).weak());
+                let (check, _) = ui.allocate_exact_size(vec2(CHECK_SIZE, CHECK_SIZE), Sense::hover());
+                paint_check(ui.painter(), check.center(), visuals.hyperlink_color);
+                status.on_hover_text(RichText::new(path.display().to_string()).monospace());
+            } else {
+                ui.label(RichText::new("Not found").size(STATUS_SIZE).color(visuals.warn_fg_color));
+            }
+            if settings.is_custom() && ui.small_button("Reset").on_hover_text(crate::voice::DEFAULT_COMMAND).clicked() {
+                settings.reset_command();
+                action = Some(SettingsAction::VoiceCommandChanged);
+            }
+        });
+    });
+    ui.label(
+        RichText::new("Runs on this computer. {audio} becomes the memo file; the text goes under the memo.").weak(),
+    );
+    let problem = settings.check_command();
+    field_box(ui, &visuals, problem.is_some(), |ui| {
+        let edit = egui::TextEdit::singleline(&mut settings.command)
+            .font(FontId::monospace(12.0))
+            .frame(egui::Frame::NONE)
+            .hint_text("command with {audio}")
+            .desired_width(f32::INFINITY);
+        if ui.add(edit).changed() {
+            action = Some(SettingsAction::VoiceCommandChanged);
+        }
+    });
+    let small = |text: String, warn: bool| {
+        let color = if warn { visuals.warn_fg_color } else { visuals.weak_text_color() };
+        RichText::new(text).size(SMALL_SIZE).color(color)
+    };
+    if let Some(problem) = problem {
+        ui.label(small(problem.message().to_string(), true));
+    } else if found.is_none() {
+        ui.label(small(
+            "Install whisper.cpp (brew install whisper-cpp, or the whisper.cpp package on Linux), \
+             or use another tool, like yap transcribe {audio} on macOS 26."
+                .to_string(),
+            false,
+        ));
+    }
+    if settings.model_missing()
+        && let Some(model) = settings.model_path()
+    {
+        ui.label(small(format!("Model not found: {}", home_relative(&model)), true));
+        if let Some(download) = settings.model_download_command() {
+            ui.label(small("Download it (466 MB) in a terminal:".to_string(), false));
+            if ui.button("Copy download command").on_hover_text(download.as_str()).clicked() {
+                action = Some(SettingsAction::Copy(download));
+            }
+        }
+    }
+    ui.checkbox(&mut settings.auto_transcribe, "Transcribe after recording");
+    action
+}
+
+/// A text field's outlined box; a warning border when `warn`.
+fn field_box(ui: &mut Ui, visuals: &egui::Visuals, warn: bool, add: impl FnOnce(&mut Ui)) {
+    let border = if warn { Stroke::new(1.0, visuals.warn_fg_color) } else { visuals.widgets.noninteractive.bg_stroke };
+    egui::Frame::new()
+        .fill(visuals.text_edit_bg_color())
+        .stroke(border)
+        .corner_radius(PREVIEW_RADIUS)
+        .inner_margin(egui::Margin::symmetric(7, 4))
+        .show(ui, add);
 }
 
 /// A folder path in a small outlined box, home folder shown as `~`.

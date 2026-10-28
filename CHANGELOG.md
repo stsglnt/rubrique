@@ -8,6 +8,42 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+Voice memos: record a memo into a note, or drop an audio file on it, play
+it in the preview, and turn it into text with a transcription tool on your
+computer (whisper.cpp by default).
+
+### Added
+
+- **Record** (`Cmd/Ctrl+Shift+R`, or the status bar button): records from
+  the microphone into a WAV file in a `memos` folder next to the note and
+  adds a link where the cursor is: `[▶ Voice memo 2026-10-28 14:03](memos/2026-10-28-1403.wav)`
+  in Markdown, `<audio controls src="…">` in HTML. A bar above the page shows
+  the time, a level meter, **Stop** and **Cancel**, and a hint when no sound
+  comes in.
+- Drag and drop audio files (WAV, M4A, MP3, OGG, Opus, FLAC, WebM, AAC) onto
+  the page to add them as memos, where you drop them. Files from other
+  folders are copied into the memos folder. **Audio…** in the status bar
+  does the same with the file window (drops do not work on Wayland yet).
+- Memos in the preview: a player row with play and pause, the time, and a
+  bar to seek. rubrique plays WAV files itself; other formats open in your
+  audio player. **Open in browser** shows the browser's audio player.
+- **Transcribe** on a memo (and right after recording): runs the
+  transcription command on the file and puts the text under the memo,
+  through the merge screen. The built-in command uses whisper.cpp
+  (`whisper-cli`) with the small model; any tool that prints text works,
+  like `yap transcribe {audio}` on macOS 26.
+- Settings → Voice memos: the memos folder, copy or link dropped files, the
+  transcription command (Installed or Not found, a missing model with a
+  **Copy download command** button), and **Transcribe after recording**.
+- Icons for record, play and pause.
+
+### Changed
+
+- New dependency: `cpal`, for the microphone and speakers. Building on Linux
+  now needs the ALSA development files (`libasound2-dev`).
+- macOS asks for the microphone the first time you record. rubrique is not
+  notarized, so it may ask again after an update.
+
 ## [0.4.0] - 2026-10-28
 
 AI-first, still small: rubrique runs the AI command-line tools you already
