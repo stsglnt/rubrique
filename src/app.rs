@@ -1327,14 +1327,19 @@ impl RubriqueApp {
             self.merging = Some(session);
             return;
         };
-        if session.review.is_some() {
+        if let Some(title) = &session.review {
+            let transcript = title.starts_with("Transcript");
             if let OpenFile::Text { document, preview, .. } = &mut self.open_file {
                 let changed = document.text != result;
                 document.text = result;
                 document.on_text_changed();
                 *preview = None;
                 self.ask.job = None;
-                let message = if changed { "AI changes applied. Save to keep them." } else { "Kept the original" };
+                let message = match (changed, transcript) {
+                    (true, true) => "Transcript added. Save to keep it.",
+                    (true, false) => "AI changes applied. Save to keep them.",
+                    (false, _) => "Kept the original",
+                };
                 self.show_status(message.to_string());
             }
             return;

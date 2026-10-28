@@ -65,6 +65,7 @@ pub fn show_merge(ui: &mut Ui, session: &mut MergeSession, file_name: &str) -> O
         ui.horizontal(|ui| {
             let heading = match (&session.review, &session.mine_title) {
                 (Some(_), Some(_)) => "Compare tools",
+                (Some(title), None) if title.starts_with("Transcript") => "Add transcript",
                 (Some(_), None) => "AI suggestion",
                 _ => "Merge changes",
             };
