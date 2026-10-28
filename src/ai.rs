@@ -12,6 +12,11 @@ pub mod view;
 
 /// Placeholder in a command template for the request text.
 pub const PROMPT: &str = "{prompt}";
+/// Placeholder for rubrique's instructions (how to answer). Tools without a
+/// system prompt option get them at the start of `{prompt}` instead.
+pub const SYSTEM: &str = "{system}";
+/// Largest prompt rubrique passes as one argument (Linux allows 128 KiB).
+pub const MAX_PROMPT_BYTES: usize = 120_000;
 
 /// The tools rubrique knows about, in the order Settings lists them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -54,8 +59,14 @@ impl AiTool {
     /// Command template used until the user changes it.
     pub fn default_command(self) -> &'static str {
         match self {
-            AiTool::Claude => "claude -p {prompt}",
-            AiTool::Codex => "codex exec {prompt}",
+            // Plan mode is read-only: Claude can read nearby files but not change
+            // them or run commands. No session is saved for these quick runs.
+            AiTool::Claude => {
+                "claude -p --output-format text --permission-mode plan --no-session-persistence \
+                 --append-system-prompt {system} {prompt}"
+            }
+            // Read-only sandbox; notes folders are often not git repositories.
+            AiTool::Codex => "codex exec --sandbox read-only --skip-git-repo-check --color never {prompt}",
             AiTool::Grok => "grok --prompt {prompt}",
             AiTool::Local => "ollama run qwen2.5:1.5b {prompt}",
         }
@@ -226,18 +237,41 @@ impl QuickAction {
     }
 }
 
-/// The full prompt sent to the tool: the request, how to answer, and the text.
-pub fn build_prompt(request: &str, text: &str, kind: AskKind, whole_file: bool) -> String {
+/// What is sent to a tool: rubrique's instructions and the request with its text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Prompt {
+    /// How to answer; goes to `{system}` when the command has it.
+    pub system: String,
+    /// The request and the text it is about; goes to `{prompt}`.
+    pub user: String,
+}
+
+impl Prompt {
+    /// Too long to pass as a command-line argument.
+    pub fn is_too_long(&self) -> bool {
+        self.system.len() + self.user.len() > MAX_PROMPT_BYTES
+    }
+}
+
+/// Build the prompt for `request` about `text`.
+pub fn build_prompt(request: &str, text: &str, kind: AskKind, whole_file: bool) -> Prompt {
     let what = if whole_file { "a Markdown file" } else { "part of a Markdown file" };
     let how = match kind {
         AskKind::Rewrite => {
-            "Apply the request to the text below and reply with only the new text: \
+            "Apply the request to the text and reply with only the new text: \
              no explanations, no quotes, no code fences around it. \
-             Keep the Markdown formatting unless the request is about it."
+             Keep the Markdown formatting and the language of the text unless the request is about them. \
+             Do not use tools or change any files."
         }
-        AskKind::Answer => "Answer the request about the text below. Reply in Markdown, short and clear.",
+        AskKind::Answer => {
+            "Answer the request about the text. Reply in Markdown, short and clear. \
+             Do not use tools or change any files."
+        }
     };
-    format!("Request: {}\n\n{how}\n\nThe text is {what}:\n<text>\n{text}\n</text>\n", request.trim())
+    Prompt {
+        system: format!("You are helping inside rubrique, a Markdown editor. {how}"),
+        user: format!("Request: {}\n\nThe text is {what}:\n<text>\n{text}\n</text>\n", request.trim()),
+    }
 }
 
 /// The tool's reply as new text: surrounding blank lines and a wrapping
@@ -259,23 +293,26 @@ pub fn clean_reply(reply: &str, original: &str) -> String {
     cleaned
 }
 
-/// The program and its arguments for `command` with `prompt` filled in.
-/// `{prompt}` inside a word is replaced too (`--prompt={prompt}`).
-pub fn command_args(command: &str, prompt: &str) -> Option<(String, Vec<String>)> {
+/// The program and its arguments for `command` with the prompt filled in.
+/// Placeholders inside a word are replaced too (`--prompt={prompt}`).
+pub fn command_args(command: &str, prompt: &Prompt) -> Option<(String, Vec<String>)> {
     let mut words = split_command(command).into_iter();
     let program = words.next().filter(|program| !program.is_empty())?;
-    let args = words.map(|word| word.replace(PROMPT, prompt)).collect();
+    let words: Vec<String> = words.collect();
+    let has_system = words.iter().any(|word| word.contains(SYSTEM));
+    let user = if has_system { prompt.user.clone() } else { format!("{}\n\n{}", prompt.system, prompt.user) };
+    let args = words.into_iter().map(|word| word.replace(SYSTEM, &prompt.system).replace(PROMPT, &user)).collect();
     Some((program, args))
 }
 
-/// The command as shown to the user, with a long prompt cut short.
+/// The command as shown to the user, with a long request cut short.
 pub fn display_command(command: &str, request: &str) -> String {
     const SHOWN: usize = 48;
     let short: String = request.chars().take(SHOWN).collect();
     let quoted = if request.chars().count() > SHOWN { format!("\"{short}…\"") } else { format!("\"{short}\"") };
     split_command(command)
         .iter()
-        .map(|word| if word.contains(PROMPT) { word.replace(PROMPT, &quoted) } else { word.clone() })
+        .map(|word| word.replace(SYSTEM, "\"(rubrique's instructions)\"").replace(PROMPT, &quoted))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -428,13 +465,15 @@ mod tests {
     #[test]
     fn builds_prompts() {
         let prompt = build_prompt(" shorter ", "Hello there.", AskKind::Rewrite, false);
-        assert!(prompt.starts_with("Request: shorter\n"));
-        assert!(prompt.contains("only the new text"));
-        assert!(prompt.contains("part of a Markdown file"));
-        assert!(prompt.ends_with("<text>\nHello there.\n</text>\n"));
+        assert!(prompt.system.contains("only the new text"));
+        assert!(prompt.user.starts_with("Request: shorter\n"));
+        assert!(prompt.user.contains("part of a Markdown file"));
+        assert!(prompt.user.ends_with("<text>\nHello there.\n</text>\n"));
         let answer = build_prompt("why?", "x", AskKind::Answer, true);
-        assert!(answer.contains("Answer the request"));
-        assert!(answer.contains("The text is a Markdown file"));
+        assert!(answer.system.contains("Answer the request"));
+        assert!(answer.user.contains("The text is a Markdown file"));
+        assert!(!answer.is_too_long());
+        assert!(build_prompt("x", &"a".repeat(MAX_PROMPT_BYTES), AskKind::Rewrite, true).is_too_long());
     }
 
     #[test]
@@ -447,17 +486,24 @@ mod tests {
 
     #[test]
     fn fills_in_the_prompt() {
-        let (program, args) = command_args("claude -p {prompt}", "say \"hi\"; rm -rf /").unwrap_or_default();
+        let prompt = Prompt { system: "Rules.".to_string(), user: "say \"hi\"; rm -rf /".to_string() };
+        let (program, args) =
+            command_args("claude -p --append-system-prompt {system} {prompt}", &prompt).unwrap_or_default();
         assert_eq!(program, "claude");
-        assert_eq!(args, ["-p", "say \"hi\"; rm -rf /"]);
-        let (_, args) = command_args("tool --prompt={prompt}", "x").unwrap_or_default();
-        assert_eq!(args, ["--prompt=x"]);
-        assert_eq!(command_args("  ", "x"), None);
+        assert_eq!(args, ["-p", "--append-system-prompt", "Rules.", "say \"hi\"; rm -rf /"]);
+        // Without {system}, the rules lead the prompt.
+        let (_, args) = command_args("tool --prompt={prompt}", &prompt).unwrap_or_default();
+        assert_eq!(args, ["--prompt=Rules.\n\nsay \"hi\"; rm -rf /"]);
+        assert_eq!(command_args("  ", &prompt), None);
     }
 
     #[test]
     fn shows_commands_short() {
         assert_eq!(display_command("claude -p {prompt}", "shorter"), "claude -p \"shorter\"");
+        assert_eq!(
+            display_command("claude --append-system-prompt {system} {prompt}", "x"),
+            "claude --append-system-prompt \"(rubrique's instructions)\" \"x\""
+        );
         let long = "a".repeat(60);
         assert_eq!(display_command("codex exec {prompt}", &long), format!("codex exec \"{}…\"", "a".repeat(48)));
         assert_eq!(format_elapsed(7), "0:07");

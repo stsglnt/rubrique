@@ -12,7 +12,8 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 - Settings → AI: pick the tool for requests (Claude, Codex, Grok or a local
   model) and for summaries, and edit each tool's command. rubrique shows which
-  tools are installed.
+  tools are installed. Built-in commands run read-only: Claude in plan mode
+  with rubrique's instructions as a system prompt, Codex in a read-only sandbox.
 - **Ask** (`Cmd/Ctrl+K`, or the status bar button): ask an AI tool to change
   the selection (or the whole file). Quick actions: Shorter, Fix grammar,
   Table, Translate, Explain. The output streams into a panel with **Stop**;

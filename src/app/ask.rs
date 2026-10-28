@@ -166,6 +166,10 @@ impl RubriqueApp {
         }
         let target = &pending.target;
         let prompt = ai::build_prompt(&pending.request, &target.text, pending.kind, target.whole_file);
+        if prompt.is_too_long() {
+            self.show_status("The text is too long to send; select a smaller part".to_string());
+            return;
+        }
         let Some((program, args)) = ai::command_args(&command, &prompt) else {
             return;
         };
