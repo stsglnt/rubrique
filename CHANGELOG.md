@@ -47,4 +47,3 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 [Unreleased]: https://github.com/witseko/rubrique/compare/rubrique-v0.2.0...HEAD
 [0.2.0]: https://github.com/witseko/rubrique/releases/tag/rubrique-v0.2.0
-[0.1.0]: https://github.com/witseko/rubrique/releases/tag/v0.1.0
