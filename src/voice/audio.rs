@@ -203,9 +203,9 @@ where
                 }
             }
             data_target.samples.lock().unwrap_or_else(PoisonError::into_inner).extend_from_slice(&out);
-            let _ = data_target.peak.fetch_update(Ordering::AcqRel, Ordering::Acquire, |bits| {
-                (peak > f32::from_bits(bits)).then_some(peak.to_bits())
-            });
+            // The peak is never negative, and the bits of positive floats
+            // sort like the floats, so the largest bits are the loudest.
+            data_target.peak.fetch_max(peak.to_bits(), Ordering::AcqRel);
         },
         move |error| {
             *error_target.error.lock().unwrap_or_else(PoisonError::into_inner) = Some(error.to_string());
