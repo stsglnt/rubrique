@@ -185,45 +185,50 @@ pub fn show_output(ui: &mut Ui, info: &OutputInfo) -> Option<OutputAction> {
         ui.horizontal(|ui| {
             icon_label(ui, Icon::Sparkle);
             ui.label(RichText::new(info.tool.name()).strong());
-            ui.label(RichText::new(format!("\u{201c}{}\u{201d}", shorten(info.request))).weak());
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| match &info.state {
-                OutputState::Running { seconds } => {
-                    if icon_text_button(ui, Icon::Stop, "Stop", "Stop the tool", false).clicked() {
-                        action = Some(OutputAction::Stop);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                match &info.state {
+                    OutputState::Running { seconds } => {
+                        if icon_text_button(ui, Icon::Stop, "Stop", "Stop the tool", false).clicked() {
+                            action = Some(OutputAction::Stop);
+                        }
+                        ui.add(egui::Spinner::new().size(12.0));
+                        ui.label(RichText::new(format_elapsed(*seconds)).monospace().weak());
                     }
-                    ui.add(egui::Spinner::new().size(12.0));
-                    ui.label(RichText::new(format_elapsed(*seconds)).monospace().weak());
+                    finished => {
+                        if ui.button("×").on_hover_text("Close").clicked() {
+                            action = Some(OutputAction::Close);
+                        }
+                        if info.can_review {
+                            let review =
+                                egui::Button::new(RichText::new("Review in merge").color(visuals.strong_text_color()))
+                                    .fill(visuals.selection.bg_fill);
+                            if ui.add(review).on_hover_text("See each change and decide").clicked() {
+                                action = Some(OutputAction::Review);
+                            }
+                        }
+                        if ui.button("Copy").clicked() {
+                            action = Some(OutputAction::Copy);
+                        }
+                        let (text, color) = match finished {
+                            OutputState::Done { seconds } => {
+                                (format!("Done in {}", format_elapsed(*seconds)), visuals.weak_text_color())
+                            }
+                            OutputState::Stopped { seconds } => {
+                                (format!("Stopped at {}", format_elapsed(*seconds)), visuals.weak_text_color())
+                            }
+                            OutputState::Failed { code, .. } => (
+                                code.map_or_else(|| "Failed".to_string(), |code| format!("Failed (exit code {code})")),
+                                visuals.error_fg_color,
+                            ),
+                            OutputState::Running { .. } => (String::new(), visuals.weak_text_color()),
+                        };
+                        ui.label(RichText::new(text).color(color));
+                    }
                 }
-                finished => {
-                    if ui.button("×").on_hover_text("Close").clicked() {
-                        action = Some(OutputAction::Close);
-                    }
-                    if info.can_review {
-                        let review =
-                            egui::Button::new(RichText::new("Review in merge").color(visuals.strong_text_color()))
-                                .fill(visuals.selection.bg_fill);
-                        if ui.add(review).on_hover_text("See each change and decide").clicked() {
-                            action = Some(OutputAction::Review);
-                        }
-                    }
-                    if ui.button("Copy").clicked() {
-                        action = Some(OutputAction::Copy);
-                    }
-                    let (text, color) = match finished {
-                        OutputState::Done { seconds } => {
-                            (format!("Done in {}", format_elapsed(*seconds)), visuals.weak_text_color())
-                        }
-                        OutputState::Stopped { seconds } => {
-                            (format!("Stopped at {}", format_elapsed(*seconds)), visuals.weak_text_color())
-                        }
-                        OutputState::Failed { code, .. } => (
-                            code.map_or_else(|| "Failed".to_string(), |code| format!("Failed (exit code {code})")),
-                            visuals.error_fg_color,
-                        ),
-                        OutputState::Running { .. } => (String::new(), visuals.weak_text_color()),
-                    };
-                    ui.label(RichText::new(text).color(color));
-                }
+                // The request fills the space left, cut short with "…" when needed.
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.add(egui::Label::new(RichText::new(shorten(info.request)).weak()).truncate());
+                });
             });
         });
     });

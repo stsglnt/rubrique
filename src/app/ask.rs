@@ -18,7 +18,7 @@ use crate::ai::{self, AiTool, AskKind};
 use crate::document::merge::MergeSession;
 use crate::document::preview_selection;
 use crate::document::view::editor_selection;
-use crate::markdown::notes::locate;
+use crate::markdown::notes::{find_notes, locate};
 
 /// Space between the top of the page and the Ask bar.
 const ASK_TOP: f32 = 56.0;
@@ -45,6 +45,16 @@ pub(super) struct PendingRun {
     kind: AskKind,
     tool: AiTool,
     skill: Option<Box<Skill>>,
+    /// Set when resolving notes: which ones.
+    resolving: Option<Resolving>,
+}
+
+/// Which notes a run resolves.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Resolving {
+    All,
+    /// The note about this quote.
+    One(String),
 }
 
 /// A run and what it was for, while its output panel is open.
@@ -133,7 +143,8 @@ impl RubriqueApp {
             );
             match event {
                 Some(AskEvent::Run { request, kind, skill }) => {
-                    let pending = PendingRun { target: target.clone(), request, kind, tool: bar.tool, skill };
+                    let pending =
+                        PendingRun { target: target.clone(), request, kind, tool: bar.tool, skill, resolving: None };
                     self.ask.bar = None;
                     self.begin_run(ctx, pending);
                 }
@@ -213,10 +224,7 @@ impl RubriqueApp {
         let can_review = matches!(state, OutputState::Done { .. })
             && job.pending.kind == AskKind::Rewrite
             && !output.trim().is_empty();
-        let request = match &job.pending.skill {
-            Some(skill) => format!("{} · {}", skill.name, job.pending.request),
-            None => job.pending.request.clone(),
-        };
+        let request = job.pending.label();
         let info = OutputInfo {
             tool: job.pending.tool,
             request: &request,
@@ -261,8 +269,68 @@ impl RubriqueApp {
             self.show_status("The tool suggested no changes".to_string());
             return;
         }
-        let title = format!("{} · \u{201c}{}\u{201d}", job.pending.tool.name(), short(&job.pending.request));
+        let title = format!("{} · {}", job.pending.tool.name(), job.pending.label());
         self.merging = Some(MergeSession::review(&document.text, &suggestion, title));
+    }
+}
+
+impl PendingRun {
+    /// What the run is for, as shown in the output panel and merge screen.
+    fn label(&self) -> String {
+        match (&self.resolving, &self.skill) {
+            (Some(Resolving::All), _) => "Resolve all notes".to_string(),
+            (Some(Resolving::One(quote)), _) => format!("Resolve note: {}", short(quote)),
+            (None, Some(skill)) => format!("{} skill", skill.name),
+            (None, None) => format!("\u{201c}{}\u{201d}", short(&self.request)),
+        }
+    }
+}
+
+impl RubriqueApp {
+    /// Ask the default tool to resolve one note (or all), on the whole file.
+    pub(super) fn resolve_notes(&mut self, ctx: &Context, which: Resolving) {
+        if self.ask.job.as_ref().is_some_and(|job| job.run.is_running()) {
+            self.show_status("Wait for the AI tool to finish, or press Stop".to_string());
+            return;
+        }
+        let OpenFile::Text { document, .. } = &self.open_file else {
+            return;
+        };
+        let request = match &which {
+            Resolving::All => ai::RESOLVE_ALL_REQUEST.to_string(),
+            Resolving::One(quote) => {
+                let Some(note) = find_notes(&document.text).into_iter().find(|note| &note.quote == quote) else {
+                    return;
+                };
+                ai::resolve_note_request(&note.quote, &note.text)
+            }
+        };
+        let text = document.text.clone();
+        let target = AskTarget { path: document.path.clone(), range: 0..text.len(), text, whole_file: true };
+        let tool = self.settings.ai.default_tool;
+        let pending = PendingRun { target, request, kind: AskKind::Rewrite, tool, skill: None, resolving: Some(which) };
+        self.check_ai_tools();
+        self.begin_run(ctx, pending);
+    }
+
+    /// The tool and seconds so far when a run is resolving `which` (a
+    /// "resolve all" run counts for every note).
+    pub(super) fn resolving_state(&self, which: &Resolving) -> Option<(AiTool, u64)> {
+        let job = self.ask.job.as_ref().filter(|job| job.run.is_running())?;
+        let resolving = job.pending.resolving.as_ref()?;
+        (resolving == which || *resolving == Resolving::All).then(|| (job.pending.tool, job.run.elapsed_seconds()))
+    }
+
+    /// An AI run is going on.
+    pub(super) fn ai_busy(&self) -> bool {
+        self.ask.job.as_ref().is_some_and(|job| job.run.is_running())
+    }
+
+    /// Stop the running tool.
+    pub(super) fn stop_ai(&mut self) {
+        if let Some(job) = &mut self.ask.job {
+            job.run.stop();
+        }
     }
 }
 

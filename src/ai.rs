@@ -304,6 +304,21 @@ pub fn build_prompt(request: &str, text: &str, kind: AskKind, whole_file: bool) 
     }
 }
 
+/// Request for resolving every note in a file.
+pub const RESOLVE_ALL_REQUEST: &str = "Resolve every note. A note is an HTML comment like \
+<!-- note on \"quoted text\": what to do -->, placed right after the text it is about. \
+For each note, change the quoted text as the note asks, then remove that comment. \
+Leave a note in place when you cannot resolve it. Change nothing else.";
+
+/// Request for resolving the note on `quote` that says `text`.
+pub fn resolve_note_request(quote: &str, text: &str) -> String {
+    format!(
+        "Resolve one note. The note on \"{quote}\" says: \"{text}\". \
+         Change that text as the note asks, then remove this note's comment \
+         (<!-- note on \"{quote}\": ... -->). Leave all other text and notes as they are."
+    )
+}
+
 /// The tool's reply as new text: surrounding blank lines and a wrapping
 /// code fence removed, and the original's final line break kept.
 pub fn clean_reply(reply: &str, original: &str) -> String {
@@ -517,6 +532,14 @@ mod tests {
         let with =
             build_prompt("x", "y", AskKind::Rewrite, false).with_skill(&skill.unwrap_or_else(|| panic!("skill")));
         assert!(with.system.ends_with("Follow the \"tidy\" skill:\nUse lists."));
+    }
+
+    #[test]
+    fn note_requests_name_the_note() {
+        let request = resolve_note_request("the first Monday", "check with legal");
+        assert!(request.contains("The note on \"the first Monday\" says: \"check with legal\""));
+        assert!(request.contains("remove this note's comment"));
+        assert!(RESOLVE_ALL_REQUEST.contains("<!-- note on"));
     }
 
     #[test]

@@ -21,6 +21,10 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   **Review in merge** shows each change next to the original, and nothing
   changes until you press **Apply**. The first run in a folder shows the
   exact command and asks first.
+- Resolve notes with AI: **Resolve** on a note card, or **Resolve all** in
+  the Notes panel, sends the file and the note to the default tool. While it
+  runs the card shows the time and **Stop**; the answer opens in the merge
+  screen, where the resolved notes are removed once you apply.
 - Skills: reusable instructions for Ask, one folder per skill with a
   `SKILL.md` file, the same format as Claude Code skills. Pick one from
   **Skills…** in the Ask bar. Settings → AI → Skills sets the folder

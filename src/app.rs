@@ -1057,10 +1057,24 @@ impl RubriqueApp {
         let notes = find_notes(&document.text);
         let mut edit = None;
         let mut delete = None;
+        let mut resolve = None;
+        let mut stop = false;
+        let busy = self.ai_busy();
+        let all_state = self.resolving_state(&ask::Resolving::All);
+        let note_states: Vec<_> =
+            notes.iter().map(|note| self.resolving_state(&ask::Resolving::One(note.quote.clone()))).collect();
         egui::Frame::new().inner_margin(egui::Margin::same(12)).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Notes").strong().size(16.0));
                 ui.label(RichText::new(format!("{} in this file", notes.len())).weak());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_enabled_ui(!busy, |ui| {
+                        let tip = "Ask AI to resolve every note; the answer opens in merge";
+                        if icon_text_button(ui, Icon::Sparkle, "Resolve all", tip, false).clicked() {
+                            resolve = Some(ask::Resolving::All);
+                        }
+                    });
+                });
             });
             ui.add_space(6.0);
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -1071,10 +1085,27 @@ impl RubriqueApp {
                         ui.label(
                             RichText::new(format!("\u{201c}{}\u{201d}", shorten(&note.quote, NOTE_QUOTE_CHARS)))
                                 .weak()
-                                .small(),
+                                .size(11.5),
                         );
                         ui.label(&note.text);
                         ui.horizontal(|ui| {
+                            if let Some((tool, seconds)) = note_states[index].or(all_state) {
+                                ui.add(egui::Spinner::new().size(11.0));
+                                let working = format!("{} is working · {}", tool.name(), ai::format_elapsed(seconds));
+                                ui.label(RichText::new(working).weak().size(11.5));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if icon_text_button(ui, Icon::Stop, "Stop", "Stop the tool", false).clicked() {
+                                        stop = true;
+                                    }
+                                });
+                                return;
+                            }
+                            ui.add_enabled_ui(!busy, |ui| {
+                                let tip = "Ask AI to do what the note says; the answer opens in merge";
+                                if icon_text_button(ui, Icon::Sparkle, "Resolve", tip, false).clicked() {
+                                    resolve = Some(ask::Resolving::One(note.quote.clone()));
+                                }
+                            });
                             if ui.small_button("Edit").clicked() {
                                 edit = Some(index);
                             }
@@ -1085,9 +1116,23 @@ impl RubriqueApp {
                     });
                     ui.add_space(8.0);
                 }
-                ui.label(RichText::new("Select text in the preview, then Add note (Cmd+Shift+M).").weak().small());
+                let tool = self.settings.ai.default_tool.name();
+                ui.label(
+                    RichText::new(format!(
+                        "Select text in the preview, then Add note (Cmd+Shift+M). \
+                         Resolve sends the file and the note to {tool}; the answer opens in merge."
+                    ))
+                    .weak()
+                    .size(11.5),
+                );
             });
         });
+        if stop {
+            self.stop_ai();
+        }
+        if let Some(which) = resolve {
+            self.resolve_notes(ui.ctx(), which);
+        }
         if let Some(index) = edit {
             let note = notes[index].clone();
             self.note_draft = Some(NoteDraft {
@@ -1110,7 +1155,8 @@ impl RubriqueApp {
 
     /// True when the preview is shown and the file has notes.
     fn shows_notes_panel(&self) -> bool {
-        self.showing_preview()
+        self.merging.is_none()
+            && self.showing_preview()
             && matches!(&self.open_file, OpenFile::Text { document, .. } if document.text.contains("<!-- note on \""))
     }
 

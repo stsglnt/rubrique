@@ -105,9 +105,11 @@ pub fn show_merge(ui: &mut Ui, session: &mut MergeSession, file_name: &str) -> O
 
     ui.columns(3, |columns| {
         let review = session.review.as_deref();
-        columns[0].label(RichText::new(left.title(review)).strong());
-        columns[1].label(RichText::new("Result").strong());
-        columns[2].label(RichText::new(right.title(review)).strong());
+        let titles = [left.title(review), "Result".to_string(), right.title(review)];
+        for (column, title) in columns.iter_mut().zip(titles) {
+            // Columns are justified layouts, which would also justify wrapped text.
+            column.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| ui.label(RichText::new(title).strong()));
+        }
     });
 
     egui::ScrollArea::vertical().id_salt("merge-scroll").auto_shrink([false, false]).show(ui, |ui| {
