@@ -20,8 +20,8 @@ use crate::theme::style::{apply_theme, page_fill};
 /// How long a status message ("Copied ...") stays visible.
 const STATUS_MESSAGE_SECONDS: f64 = 4.0;
 const EXPLORER_DEFAULT_WIDTH: f32 = 260.0;
-/// Room kept to the right of the folder field for the "Open" and settings buttons.
-const TOP_BAR_BUTTONS_ROOM: f32 = 120.0;
+/// Room kept to the right of the folder field for the "Open", "Add" and settings buttons.
+const TOP_BAR_BUTTONS_ROOM: f32 = 165.0;
 /// Width of the settings panel.
 const SETTINGS_PANEL_WIDTH: f32 = 320.0;
 /// Space around the "cannot display this file" message.
@@ -76,7 +76,10 @@ impl OpenFile {
 #[derive(Debug)]
 enum GuardedAction {
     OpenFile(PathBuf),
+    /// Replace all explorer roots with this folder.
     OpenFolder(PathBuf),
+    /// Take a root out of the explorer (closes the open file if it is inside).
+    RemoveRoot(PathBuf),
     Quit,
 }
 
@@ -92,7 +95,8 @@ enum UnsavedChoice {
 #[derive(Debug)]
 pub struct RubriqueApp {
     settings: Settings,
-    tree: FsNode,
+    /// Explorer root folders, in the order they were added. Never empty.
+    roots: Vec<FsNode>,
     open_file: OpenFile,
     /// Text in the top bar's folder field.
     folder_input: String,
@@ -114,15 +118,15 @@ pub struct RubriqueApp {
 }
 
 impl RubriqueApp {
-    /// Start with `root` in the explorer and, optionally, `file` open, and
-    /// install the saved theme.
-    pub fn new(ctx: &Context, settings: Settings, root: PathBuf, file: Option<PathBuf>) -> Self {
+    /// Start with `roots` in the explorer (at least one) and, optionally,
+    /// `file` open, and install the saved theme.
+    pub fn new(ctx: &Context, settings: Settings, roots: Vec<PathBuf>, file: Option<PathBuf>) -> Self {
         let themes = Themes::load(themes_folder().as_deref());
         apply_theme(ctx, &themes, &settings.theme);
         let mut app = RubriqueApp {
             settings,
-            folder_input: absolute_path_text(&root),
-            tree: FsNode::new_root(root),
+            folder_input: roots.first().map(|root| absolute_path_text(root)).unwrap_or_default(),
+            roots: roots.into_iter().map(FsNode::new_root).collect(),
             open_file: OpenFile::Nothing,
             pending: None,
             quit_confirmed: false,
@@ -132,7 +136,7 @@ impl RubriqueApp {
             themes,
             settings_open: false,
         };
-        app.settings.last_folder = Some(app.tree.path.clone());
+        app.remember_roots();
         if let Some(file) = file {
             app.open_file_now(file);
         }
@@ -155,6 +159,7 @@ impl RubriqueApp {
         match action {
             GuardedAction::OpenFile(path) => self.open_file_now(path),
             GuardedAction::OpenFolder(path) => self.open_folder_now(path),
+            GuardedAction::RemoveRoot(path) => self.remove_root_now(&path),
             GuardedAction::Quit => self.quit_confirmed = true,
         }
     }
@@ -174,14 +179,56 @@ impl RubriqueApp {
         }
     }
 
-    /// Make `path` the explorer root and close the open file.
+    /// Make `path` the only explorer root and close the open file.
     fn open_folder_now(&mut self, path: PathBuf) {
         self.folder_input = absolute_path_text(&path);
-        self.tree = FsNode::new_root(path.clone());
+        self.roots = vec![FsNode::new_root(path)];
+        self.close_file();
+        self.remember_roots();
+    }
+
+    /// Add `path` as one more explorer root, unless it is already one.
+    fn add_folder(&mut self, path: PathBuf) {
+        if self.roots.iter().any(|root| root.path == path) {
+            self.show_status(format!("Already in the explorer: {}", path.display()));
+            return;
+        }
+        self.roots.push(FsNode::new_root(path));
+        self.remember_roots();
+    }
+
+    /// Ask to remove a root; only an unsaved file inside it needs the question.
+    fn request_remove_root(&mut self, path: PathBuf) {
+        let file_inside = self.open_file.path().is_some_and(|file| file.starts_with(&path));
+        if file_inside {
+            self.request(GuardedAction::RemoveRoot(path));
+        } else {
+            self.remove_root_now(&path);
+        }
+    }
+
+    /// Take a root out of the explorer, keeping at least one.
+    fn remove_root_now(&mut self, path: &Path) {
+        if self.roots.len() <= 1 {
+            return;
+        }
+        self.roots.retain(|root| root.path != path);
+        if self.open_file.path().is_some_and(|file| file.starts_with(path)) {
+            self.close_file();
+        }
+        self.remember_roots();
+    }
+
+    /// Show nothing in the right panel.
+    fn close_file(&mut self) {
         self.open_file = OpenFile::Nothing;
         self.stats = None;
-        self.settings.last_folder = Some(path);
         self.settings.last_file = None;
+    }
+
+    /// Keep the settings' folder list in step with the explorer.
+    fn remember_roots(&mut self) {
+        self.settings.folders = self.roots.iter().map(|root| root.path.clone()).collect();
     }
 
     /// Save the open document; returns false when saving failed.
@@ -330,15 +377,23 @@ impl RubriqueApp {
 
     // ---------- panels ----------
 
-    /// Folder field, "Open" button and the theme picker.
+    /// Folder field, "Open" / "Add" buttons and the settings gear.
     fn top_bar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.label("Folder");
             let field_width = ui.available_width() - TOP_BAR_BUTTONS_ROOM;
             let field = ui.add(egui::TextEdit::singleline(&mut self.folder_input).desired_width(field_width));
             let entered = field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
-            if ui.button("Open").clicked() || entered {
-                self.open_typed_folder();
+            let open = ui.button("Open").on_hover_text("Show only this folder in the explorer");
+            if (open.clicked() || entered)
+                && let Some(path) = self.typed_folder()
+            {
+                self.request(GuardedAction::OpenFolder(path));
+            }
+            if ui.button("Add").on_hover_text("Add this folder to the explorer").clicked()
+                && let Some(path) = self.typed_folder()
+            {
+                self.add_folder(path);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if gear_button(ui, self.settings_open).clicked() {
@@ -369,27 +424,28 @@ impl RubriqueApp {
         }
     }
 
-    /// Open the folder typed in the top bar, if it is one.
-    fn open_typed_folder(&mut self) {
+    /// The folder typed in the top bar as an absolute path, or a status
+    /// message when it is not a folder.
+    fn typed_folder(&mut self) -> Option<PathBuf> {
         let path = PathBuf::from(self.folder_input.trim());
         if !path.is_dir() {
             self.show_status(format!("Not a folder: {}", path.display()));
-            return;
+            return None;
         }
-        let path = std::path::absolute(&path).unwrap_or(path);
-        self.request(GuardedAction::OpenFolder(path));
+        Some(std::path::absolute(&path).unwrap_or(path))
     }
 
-    /// Left panel: the file tree.
+    /// Left panel: one file tree per root folder.
     fn explorer(&mut self, ui: &mut Ui) {
         let open_path = self.open_file.path().map(Path::to_path_buf);
         let context = TreeContext {
-            root: &self.tree.path.clone(),
+            root: Path::new(""),
+            can_remove_roots: self.roots.len() > 1,
             markdown_only: self.settings.markdown_only,
             open_file: open_path.as_deref(),
             open_file_dirty: self.open_file.is_dirty(),
         };
-        let action = show_explorer(ui, &mut self.tree, &mut self.settings.markdown_only, &context);
+        let action = show_explorer(ui, &mut self.roots, &mut self.settings.markdown_only, &context);
         match action {
             Some(ExplorerAction::OpenFile(path)) => {
                 // Clicking the file that is already open does nothing.
@@ -398,7 +454,8 @@ impl RubriqueApp {
                 }
             }
             Some(ExplorerAction::Copy(text)) => self.copy_to_clipboard(ui.ctx(), text),
-            Some(ExplorerAction::Refresh) => self.tree.refresh(),
+            Some(ExplorerAction::Refresh) => self.roots.iter_mut().for_each(FsNode::refresh),
+            Some(ExplorerAction::RemoveRoot(path)) => self.request_remove_root(path),
             None => {}
         }
     }

@@ -9,7 +9,7 @@ One window, five themes, all built in: Light, Dark, Sepia, Midnight and High con
 
 ## Features (v0.1)
 
-- File explorer that shows **all** files; a **Markdown only** checkbox hides the rest
+- File explorer with several root folders at once, showing **all** files; a **Markdown only** checkbox hides the rest
 - Right-click any file or folder: copy absolute path, relative path, or name
 - Plain-text editor with Markdown syntax colors, and a rendered preview (`Cmd/Ctrl+E`)
 - Atomic saves, unsaved-changes prompt, reload when the file changes on disk
@@ -22,8 +22,9 @@ One window, five themes, all built in: Light, Dark, Sepia, Midnight and High con
 Needs Rust 1.95 or newer.
 
 ```sh
-cargo run --release -- ~/notes          # open a folder
-cargo run --release -- ~/notes/todo.md  # open a file and its folder
+cargo run --release -- ~/notes             # open a folder
+cargo run --release -- ~/notes/todo.md     # open a file and its folder
+cargo run --release -- ~/notes ~/work/docs # open several folders at once
 ```
 
 Linux also needs the usual X11/Wayland and OpenGL development libraries.

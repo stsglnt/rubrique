@@ -16,13 +16,17 @@ pub enum ExplorerAction {
     Copy(String),
     /// Re-read the folders from disk.
     Refresh,
+    /// Take this root folder out of the explorer.
+    RemoveRoot(PathBuf),
 }
 
 /// Read-only facts the tree needs while drawing.
 #[derive(Clone, Copy, Debug)]
 pub struct TreeContext<'a> {
-    /// Explorer root, for "Copy relative path".
+    /// Root folder of the entry being drawn, for "Copy relative path".
     pub root: &'a Path,
+    /// More than one root is shown, so a root may be removed.
+    pub can_remove_roots: bool,
     /// Hide files that are not Markdown.
     pub markdown_only: bool,
     /// File shown in the editor, highlighted in the tree.
@@ -31,10 +35,10 @@ pub struct TreeContext<'a> {
     pub open_file_dirty: bool,
 }
 
-/// Draw the explorer panel: filter checkbox, refresh button and the tree.
+/// Draw the explorer panel: filter checkbox, refresh button and one tree per root folder.
 pub fn show_explorer(
     ui: &mut Ui,
-    root: &mut FsNode,
+    roots: &mut [FsNode],
     markdown_only: &mut bool,
     context: &TreeContext,
 ) -> Option<ExplorerAction> {
@@ -52,11 +56,28 @@ pub fn show_explorer(
     // The checkbox above may have just changed the filter.
     let context = TreeContext { markdown_only: *markdown_only, ..*context };
     egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-        let root_label = ui.label(RichText::new(&root.name).strong());
-        path_menu(&root_label, &root.path, &context, &mut action);
-        show_children(ui, root, &context, &mut action);
+        for root in roots.iter_mut() {
+            let root_path = root.path.clone();
+            let context = TreeContext { root: &root_path, ..context };
+            show_root(ui, root, &context, &mut action);
+        }
     });
     action
+}
+
+/// A root folder: a bold row that folds its tree open and closed.
+fn show_root(ui: &mut Ui, root: &mut FsNode, context: &TreeContext, action: &mut Option<ExplorerAction>) {
+    let label = RichText::new(format!("{ICON_GAP}{}", root.name)).strong();
+    let response = ui.selectable_label(false, label).on_hover_text(absolute_path_text(&root.path));
+    paint_arrow(ui, &response, root.expanded);
+    if response.clicked() {
+        root.toggle_expanded();
+    }
+    root_menu(&response, &root.path, context, action);
+    if root.expanded {
+        let indent_id = root.path.clone();
+        ui.indent(indent_id, |ui| show_children(ui, root, context, action));
+    }
 }
 
 /// Draw a folder's entries, or why they could not be read.
@@ -143,19 +164,38 @@ fn link_marker(node: &FsNode) -> &'static str {
     if node.is_symlink { " ↗" } else { "" }
 }
 
-/// Right-click menu with the three copy actions.
-fn path_menu(response: &egui::Response, path: &Path, context: &TreeContext, action: &mut Option<ExplorerAction>) {
+/// Right-click menu of a root: the copy actions, then "Remove from explorer".
+fn root_menu(response: &egui::Response, path: &Path, context: &TreeContext, action: &mut Option<ExplorerAction>) {
     response.context_menu(|ui| {
-        let choices = [
-            ("Copy absolute path", absolute_path_text(path)),
-            ("Copy relative path", relative_path_text(path, context.root)),
-            ("Copy name", name_text(path)),
-        ];
-        for (title, text) in choices {
-            if ui.button(title).on_hover_text(&text).clicked() {
-                *action = Some(ExplorerAction::Copy(text));
-                ui.close();
-            }
+        copy_items(ui, path, context, action);
+        ui.separator();
+        let remove = ui
+            .add_enabled(context.can_remove_roots, egui::Button::new("Remove from explorer"))
+            .on_hover_text("Hide this folder here; nothing on disk changes")
+            .on_disabled_hover_text("The explorer needs at least one folder");
+        if remove.clicked() {
+            *action = Some(ExplorerAction::RemoveRoot(path.to_path_buf()));
+            ui.close();
         }
     });
+}
+
+/// Right-click menu with the three copy actions.
+fn path_menu(response: &egui::Response, path: &Path, context: &TreeContext, action: &mut Option<ExplorerAction>) {
+    response.context_menu(|ui| copy_items(ui, path, context, action));
+}
+
+/// "Copy absolute path", "Copy relative path" and "Copy name".
+fn copy_items(ui: &mut Ui, path: &Path, context: &TreeContext, action: &mut Option<ExplorerAction>) {
+    let choices = [
+        ("Copy absolute path", absolute_path_text(path)),
+        ("Copy relative path", relative_path_text(path, context.root)),
+        ("Copy name", name_text(path)),
+    ];
+    for (title, text) in choices {
+        if ui.button(title).on_hover_text(&text).clicked() {
+            *action = Some(ExplorerAction::Copy(text));
+            ui.close();
+        }
+    }
 }

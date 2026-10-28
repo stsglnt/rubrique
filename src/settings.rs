@@ -1,5 +1,6 @@
 //! User settings stored as a plain `key=value` file in the config folder.
 
+use std::fmt::Write as _;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -29,8 +30,8 @@ impl MarkdownView {
 /// Everything rubrique remembers between runs.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Settings {
-    /// Explorer root of the last session.
-    pub last_folder: Option<PathBuf>,
+    /// Explorer root folders of the last session, in order.
+    pub folders: Vec<PathBuf>,
     /// File open at the end of the last session.
     pub last_file: Option<PathBuf>,
     /// "Markdown only" checkbox in the explorer.
@@ -73,13 +74,16 @@ impl Settings {
         let mut settings = Settings::default();
         let mut width = None;
         let mut height = None;
+        // Files from before multiple folders have one `last_folder` line.
+        let mut legacy_folder = None;
         for line in text.lines() {
             let Some((key, value)) = line.split_once('=') else {
                 continue;
             };
             let value = value.trim();
             match key.trim() {
-                "last_folder" => settings.last_folder = non_empty_path(value),
+                "folder" => settings.folders.extend(non_empty_path(value)),
+                "last_folder" => legacy_folder = non_empty_path(value),
                 "last_file" => settings.last_file = non_empty_path(value),
                 "markdown_only" => settings.markdown_only = value == "true",
                 // Stored as `preview_mode=true|false` so existing settings files keep working.
@@ -89,6 +93,9 @@ impl Settings {
                 "theme" => settings.theme = ThemeChoice::parse(value),
                 _ => {}
             }
+        }
+        if settings.folders.is_empty() {
+            settings.folders.extend(legacy_folder);
         }
         if let (Some(width), Some(height)) = (width, height) {
             settings.window_size = Some((width, height));
@@ -104,9 +111,12 @@ impl Settings {
             Some((width, height)) => format!("window_width={width}\nwindow_height={height}\n"),
             None => String::new(),
         };
+        let folder_lines: String = self.folders.iter().fold(String::new(), |mut lines, folder| {
+            let _ = writeln!(lines, "folder={}", folder.display());
+            lines
+        });
         format!(
-            "last_folder={}\nlast_file={}\nmarkdown_only={}\npreview_mode={}\ntheme={}\n{window_lines}",
-            path_text(&self.last_folder),
+            "{folder_lines}last_file={}\nmarkdown_only={}\npreview_mode={}\ntheme={}\n{window_lines}",
             path_text(&self.last_file),
             self.markdown_only,
             self.markdown_view == MarkdownView::Preview,
@@ -152,7 +162,7 @@ mod tests {
     #[test]
     fn round_trip() {
         let settings = Settings {
-            last_folder: Some(PathBuf::from("/home/a/my notes")),
+            folders: vec![PathBuf::from("/home/a/my notes"), PathBuf::from("/work/docs")],
             last_file: Some(PathBuf::from("/home/a/my notes/x=y.md")),
             markdown_only: true,
             markdown_view: MarkdownView::Preview,
@@ -178,6 +188,14 @@ mod tests {
     fn reads_the_preview_mode_flag() {
         assert_eq!(Settings::parse("preview_mode=true\n").markdown_view, MarkdownView::Preview);
         assert_eq!(Settings::parse("preview_mode=false\n").markdown_view, MarkdownView::Edit);
+    }
+
+    #[test]
+    fn old_last_folder_line_becomes_the_only_folder() {
+        let settings = Settings::parse("last_folder=/home/a/notes\n");
+        assert_eq!(settings.folders, [PathBuf::from("/home/a/notes")]);
+        let both = Settings::parse("last_folder=/old\nfolder=/new\n");
+        assert_eq!(both.folders, [PathBuf::from("/new")]);
     }
 
     #[test]
