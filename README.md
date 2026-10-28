@@ -7,7 +7,7 @@ It is source-first: rubrique never rewrites your file, it only saves what you ty
 
 One window, five themes, all built in: Light, Dark, Sepia, Midnight and High contrast.
 
-## Features (v0.1)
+## Features
 
 - File explorer with several folders at once (**+ Add folder…** opens the system folder window), showing **all** files; a **Markdown only** checkbox hides the rest
 - Right-click any file or folder: copy absolute path, relative path, or name
@@ -72,3 +72,12 @@ cargo fmt --check
 ```
 
 Specs live in [`specs/`](specs/): start with `00-overview.md`.
+
+## Versions
+
+rubrique follows [Semantic Versioning](https://semver.org); see
+[`CHANGELOG.md`](CHANGELOG.md) for what changed in each version. To release:
+
+1. Move the notes under **Unreleased** in `CHANGELOG.md` to a new version heading.
+2. Set the same `version` in `Cargo.toml` and commit.
+3. Tag the commit `rubrique-vX.Y.Z` and push the tag.
