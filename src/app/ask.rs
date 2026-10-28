@@ -124,7 +124,13 @@ impl RubriqueApp {
         if let Some((bar, target)) = &mut self.ask.bar {
             let page = self.ask.page_rect.unwrap_or_else(|| ctx.content_rect());
             let left = page.left() + ((page.width() - ASK_OUTER_WIDTH) / 2.0).max(8.0);
-            let event = show_ask_bar(ctx, pos2(left, page.top() + ASK_TOP), bar, self.ai_installed, &self.skills);
+            let event = show_ask_bar(
+                ctx,
+                pos2(left, page.top() + ASK_TOP),
+                bar,
+                self.ai_found.each_ref().map(Option::is_some),
+                &self.skills,
+            );
             match event {
                 Some(AskEvent::Run { request, kind, skill }) => {
                     let pending = PendingRun { target: target.clone(), request, kind, tool: bar.tool, skill };

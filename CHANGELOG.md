@@ -10,9 +10,10 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Added
 
-- Settings → AI: pick the tool for requests (Claude, Codex, Grok or a local
-  model) and for summaries, and edit each tool's command. rubrique shows which
-  tools are installed. Built-in commands run read-only: Claude in plan mode
+- Settings → AI: pick the default tool (Claude, Codex, Grok or Local; ones
+  not installed are greyed out), edit each tool's command (Installed with
+  its path on hover, or Not found with a hint), pick the tool for summaries
+  or turn them off, and forget the folders where AI runs were allowed. Built-in commands run read-only: Claude in plan mode
   with rubrique's instructions as a system prompt, Codex in a read-only sandbox.
 - **Ask** (`Cmd/Ctrl+K`, or the status bar button): ask an AI tool to change
   the selection (or the whole file). Quick actions: Shorter, Fix grammar,

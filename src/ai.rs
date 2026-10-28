@@ -2,7 +2,7 @@
 //! `codex`, started with a command template from Settings. rubrique embeds no
 //! AI and holds no API keys; each tool handles its own login.
 //!
-//! This module is pure apart from [`is_installed`], which looks at `PATH`.
+//! This module is pure apart from [`find_program`], which looks at `PATH`.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -73,13 +73,11 @@ impl AiTool {
         }
     }
 
-    /// One line on what the tool is good for, shown under its name.
-    pub fn hint(self) -> &'static str {
+    /// Full name for the Commands list.
+    pub fn full_name(self) -> &'static str {
         match self {
-            AiTool::Claude => "Claude Code. Rewriting, notes, careful edits.",
-            AiTool::Codex => "OpenAI Codex. Code blocks, SQL and JSON in notes.",
-            AiTool::Grok => "Grok has several command-line tools; set yours here.",
-            AiTool::Local => "Ollama or llama.cpp. Summaries and titles, offline.",
+            AiTool::Claude => "Claude Code",
+            tool => tool.name(),
         }
     }
 }
@@ -89,8 +87,8 @@ impl AiTool {
 pub struct AiSettings {
     /// Tool for requests (Ask, Resolve notes, folder questions).
     pub default_tool: AiTool,
-    /// Tool for summaries and file titles.
-    pub summary_tool: AiTool,
+    /// Tool for summaries and file titles; `None` turns them off.
+    pub summary_tool: Option<AiTool>,
     /// Command templates, one per tool in [`AiTool::ALL`] order.
     commands: [String; 4],
     /// Folders where the user allowed AI runs ("Don't ask again").
@@ -105,7 +103,7 @@ impl Default for AiSettings {
     fn default() -> Self {
         AiSettings {
             default_tool: AiTool::Claude,
-            summary_tool: AiTool::Local,
+            summary_tool: Some(AiTool::Local),
             commands: AiTool::ALL.map(|tool| tool.default_command().to_string()),
             allowed_folders: Vec::new(),
             skills_folder: None,
@@ -140,7 +138,8 @@ impl AiSettings {
     pub fn parse_line(&mut self, key: &str, value: &str) -> bool {
         match key {
             "ai_tool" => self.default_tool = AiTool::from_id(value).unwrap_or(self.default_tool),
-            "ai_summary_tool" => self.summary_tool = AiTool::from_id(value).unwrap_or(self.summary_tool),
+            "ai_summary_tool" if value == "off" => self.summary_tool = None,
+            "ai_summary_tool" => self.summary_tool = AiTool::from_id(value).or(self.summary_tool),
             "skills_folder" => self.skills_folder = (!value.is_empty()).then(|| PathBuf::from(value)),
             "ai_use_claude_skills" => self.use_claude_skills = value != "false",
             "ai_allowed_folder" => {
@@ -163,7 +162,8 @@ impl AiSettings {
     /// Settings lines. Commands are written only when changed, so a better
     /// built-in command in a later version reaches everyone else.
     pub fn to_lines(&self) -> String {
-        let mut lines = format!("ai_tool={}\nai_summary_tool={}\n", self.default_tool.id(), self.summary_tool.id());
+        let summary = self.summary_tool.map_or("off", AiTool::id);
+        let mut lines = format!("ai_tool={}\nai_summary_tool={summary}\n", self.default_tool.id());
         for tool in AiTool::ALL.into_iter().filter(|tool| self.is_custom(*tool)) {
             let _ = writeln!(lines, "ai_command_{}={}", tool.id(), self.command(tool).trim());
         }
@@ -420,17 +420,16 @@ pub fn program(command: &str) -> Option<String> {
     split_command(command).into_iter().next()
 }
 
-/// Whether the template's program can be found: an existing file for a path,
-/// otherwise a file of that name in a `PATH` folder.
-pub fn is_installed(command: &str) -> bool {
-    let Some(program) = program(command) else {
-        return false;
-    };
+/// Where the template's program is: the file itself for a path, otherwise
+/// the first file of that name in a `PATH` folder.
+pub fn find_program(command: &str) -> Option<PathBuf> {
+    let program = program(command)?;
     if program.contains('/') {
-        return Path::new(&program).is_file();
+        let path = PathBuf::from(program);
+        return path.is_file().then_some(path);
     }
-    std::env::var_os("PATH")
-        .is_some_and(|path| std::env::split_paths(&path).any(|folder| folder.join(&program).is_file()))
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).map(|folder| folder.join(&program)).find(|candidate| candidate.is_file())
 }
 
 #[cfg(test)]
@@ -480,6 +479,16 @@ mod tests {
         assert_eq!(read, settings);
         read.reset_command(AiTool::Local);
         assert!(!read.is_custom(AiTool::Local));
+    }
+
+    #[test]
+    fn summaries_can_be_off() {
+        let mut settings = AiSettings::default();
+        assert!(settings.parse_line("ai_summary_tool", "off"));
+        assert_eq!(settings.summary_tool, None);
+        assert!(settings.to_lines().contains("ai_summary_tool=off\n"));
+        settings.parse_line("ai_summary_tool", "codex");
+        assert_eq!(settings.summary_tool, Some(AiTool::Codex));
     }
 
     #[test]
@@ -563,9 +572,9 @@ mod tests {
 
     #[test]
     fn finds_programs_by_path() {
-        assert!(is_installed("/bin/sh -c {prompt}"));
-        assert!(is_installed("sh -c {prompt}"));
-        assert!(!is_installed("surely-not-a-real-program-xyz {prompt}"));
-        assert!(!is_installed(""));
+        assert_eq!(find_program("surely-not-a-real-program-xyz {prompt}"), None);
+        assert_eq!(find_program(""), None);
+        assert_eq!(find_program("/bin/sh {prompt}"), Some(PathBuf::from("/bin/sh")));
+        assert!(find_program("sh {prompt}").is_some_and(|path| path.ends_with("sh")));
     }
 }

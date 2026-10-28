@@ -148,9 +148,9 @@ pub struct RubriqueApp {
     ask: ask::AskState,
     /// Skills from the skills folders, read when Settings or Ask opens.
     skills: Vec<Skill>,
-    /// Which AI tools' programs were found, in [`AiTool::ALL`] order.
-    /// Checked when Settings opens and when a command changes.
-    ai_installed: [bool; 4],
+    /// Where each AI tool's program was found, in [`AiTool::ALL`] order.
+    /// Checked when Settings or Ask opens and when a command changes.
+    ai_found: [Option<PathBuf>; 4],
     /// The "Rename" dialog, while it is open.
     renaming: Option<Renaming>,
     /// The merge screen for the open file, while it is open.
@@ -207,7 +207,7 @@ impl RubriqueApp {
             settings_open: false,
             ask: ask::AskState::default(),
             skills: Vec::new(),
-            ai_installed: [false; 4],
+            ai_found: [None, None, None, None],
             renaming: None,
             merging: None,
             last_disk_check: 0.0,
@@ -513,7 +513,7 @@ impl RubriqueApp {
 
     /// Look for each AI tool's program on `PATH`.
     fn check_ai_tools(&mut self) {
-        self.ai_installed = AiTool::ALL.map(|tool| ai::is_installed(self.settings.ai.command(tool)));
+        self.ai_found = AiTool::ALL.map(|tool| ai::find_program(self.settings.ai.command(tool)));
     }
 
     /// Right panel: settings. Theme picks apply at once.
@@ -527,7 +527,7 @@ impl RubriqueApp {
         let skills_folder = self.settings.ai.skills_folder.clone().or_else(default_skills_folder);
         let ai = AiInfo {
             settings: &mut self.settings.ai,
-            installed: self.ai_installed,
+            found: &self.ai_found,
             skills: &self.skills,
             skills_folder: skills_folder.as_deref(),
         };
@@ -557,6 +557,10 @@ impl RubriqueApp {
             }
             SettingsAction::ResetScratchFolder => self.settings.scratch_folder = None,
             SettingsAction::AiCommandChanged => self.check_ai_tools(),
+            SettingsAction::ForgetAllowedFolders => {
+                self.settings.ai.allowed_folders.clear();
+                self.show_status("rubrique will ask again before the next AI run in each folder".to_string());
+            }
             SettingsAction::ChooseSkillsFolder => {
                 let mut dialog = rfd::FileDialog::new().set_title("Folder for skills");
                 if let Some(current) = &skills_folder {
