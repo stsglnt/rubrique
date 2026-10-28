@@ -7,6 +7,7 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+pub mod naming;
 pub mod run;
 pub mod skills;
 pub mod summary;

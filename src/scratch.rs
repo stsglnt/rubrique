@@ -29,6 +29,18 @@ pub fn scratch_name(date: &str, seed: u64) -> String {
     format!("{date}-{adjective}-{noun}.md")
 }
 
+/// The name is still a random scratch name (`DATE-adjective-noun.md`).
+pub fn is_random_scratch_name(name: &str) -> bool {
+    let Some(stem) = name.strip_suffix(".md") else {
+        return false;
+    };
+    let mut parts = stem.rsplitn(3, '-');
+    let (Some(noun), Some(adjective), Some(date)) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    date.len() == 10 && NOUNS.contains(&noun) && ADJECTIVES.contains(&adjective)
+}
+
 /// A random number, different on every call (from the standard library's
 /// randomly seeded hasher, so no extra dependency).
 fn random_seed(attempt: u32) -> u64 {
@@ -80,6 +92,15 @@ pub fn rename_target(path: &Path, new_name: &str) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn knows_random_names() {
+        assert!(is_random_scratch_name(&scratch_name("2026-10-28", 7)));
+        assert!(is_random_scratch_name("2026-10-28-brave-otter.md"));
+        assert!(!is_random_scratch_name("2026-10-28-beta-plan.md"));
+        assert!(!is_random_scratch_name("brave-otter.md"));
+        assert!(!is_random_scratch_name("2026-10-28-brave-otter.txt"));
+    }
     use crate::test_support::TempFolder;
 
     #[test]

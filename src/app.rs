@@ -6,6 +6,7 @@ use std::time::Duration;
 use eframe::egui::{self, Context, Key, KeyboardShortcut, Modifiers, RichText, Ui, ViewportCommand};
 
 mod ask;
+mod naming;
 mod summary;
 
 use crate::ai::skills::{self, Skill};
@@ -151,6 +152,8 @@ pub struct RubriqueApp {
     skills: Vec<Skill>,
     /// Hover summaries in the explorer.
     summaries: summary::SummaryState,
+    /// Name suggestions for scratch files.
+    naming: naming::NamingState,
     /// Asks the window to redraw, from background threads.
     repaint: Context,
     /// Where each AI tool's program was found, in [`AiTool::ALL`] order.
@@ -213,6 +216,7 @@ impl RubriqueApp {
             ask: ask::AskState::default(),
             skills: Vec::new(),
             summaries: summary::SummaryState::default(),
+            naming: naming::NamingState::default(),
             repaint: ctx.clone(),
             ai_found: [None, None, None, None],
             renaming: None,
@@ -323,6 +327,7 @@ impl RubriqueApp {
                 *disk_notice = None;
                 let message = format!("Saved {}", document.path.display());
                 self.show_status(message);
+                self.maybe_suggest_scratch_name();
                 true
             }
             Err(error) => {
@@ -739,6 +744,7 @@ impl RubriqueApp {
 
     /// Draw the "Rename" dialog while it is open.
     fn rename_dialog(&mut self, ctx: &Context) {
+        let waiting = self.naming.dialog_waiting();
         let Some(renaming) = &mut self.renaming else {
             return;
         };
@@ -758,11 +764,34 @@ impl RubriqueApp {
             ui.horizontal(|ui| {
                 let rename = ui.button("Rename").clicked() || entered;
                 let cancel = ui.button("Cancel").clicked();
-                (rename, cancel)
+                ui.separator();
+                let suggest = if waiting {
+                    ui.add(egui::Spinner::new().size(12.0));
+                    ui.label(RichText::new("Thinking of a name…").weak());
+                    false
+                } else {
+                    let tip = "Ask the Summaries use tool (Settings → AI) for a name from the content";
+                    icon_text_button(ui, Icon::Sparkle, "Suggest", tip, false).clicked()
+                };
+                (rename, cancel, suggest)
             })
             .inner
         });
-        let (rename, cancel) = modal.inner;
+        let (rename, cancel, suggest) = modal.inner;
+        if suggest {
+            let path = renaming.path.clone();
+            let open_text = match &self.open_file {
+                OpenFile::Text { document, .. } if document.path == path => Some(document.text.clone()),
+                _ => None,
+            };
+            let text = open_text.or_else(|| std::fs::read_to_string(&path).ok()).unwrap_or_default();
+            if let Err(error) = self.start_naming(path, &text, true)
+                && let Some(renaming) = &mut self.renaming
+            {
+                renaming.error = Some(error);
+            }
+            return;
+        }
         if cancel || modal.should_close() {
             self.renaming = None;
             return;
@@ -826,6 +855,7 @@ impl RubriqueApp {
         self.ask.page_rect = Some(ui.max_rect());
         let showing_preview = self.showing_preview();
         let mut notice_choice = None;
+        let mut name_choice = None;
         let mut merge_action = None;
         let mut preview_event = None;
         match &mut self.open_file {
@@ -843,6 +873,12 @@ impl RubriqueApp {
                     merge_action = show_merge(ui, session, &name_text(&document.path));
                 } else if let Some(state) = disk_notice {
                     notice_choice = disk_notice_bar(ui, state);
+                }
+                let offer = self.naming.offer.as_ref().filter(|(path, _)| *path == document.path);
+                if self.merging.is_none()
+                    && let Some((_, name)) = offer
+                {
+                    name_choice = naming::name_offer_bar(ui, name);
                 }
                 if self.merging.is_some() {
                     // The merge screen fills the page.
@@ -864,6 +900,9 @@ impl RubriqueApp {
         }
         if let Some(choice) = notice_choice {
             self.apply_notice_choice(choice);
+        }
+        if let Some(choice) = name_choice {
+            self.apply_name_choice(choice);
         }
         if let Some(action) = merge_action {
             self.finish_merge(action);
@@ -1477,6 +1516,7 @@ impl eframe::App for RubriqueApp {
         self.handle_window_events(&ctx);
         self.handle_shortcuts(&ctx);
         self.poll_disk(&ctx);
+        self.poll_naming();
 
         let style = ctx.global_style();
         let bar_frame =

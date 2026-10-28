@@ -29,6 +29,10 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   two-sentence summary, made by a local model (Ollama or llama.cpp) by
   default and cached by content, so a file is summarized again only after
   it changes. Pick the tool or turn it off in Settings → AI → Summaries use.
+- Smart scratch names: after you save a scratch that still has its random
+  name, the summaries tool (a local model by default) suggests a name from
+  its content, like `2026-10-28-beta-launch-checklist.md`, in a bar with
+  **Rename** and **Not now**. The Rename dialog has **Suggest** too.
 - Skills: reusable instructions for Ask, one folder per skill with a
   `SKILL.md` file, the same format as Claude Code skills. Pick one from
   **Skills…** in the Ask bar. Settings → AI → Skills sets the folder
