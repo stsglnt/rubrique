@@ -29,6 +29,10 @@ One window, five themes, all built in: Light, Dark, Sepia, Midnight and High con
 - Five built-in themes (Light, Dark, Sepia, Midnight, High contrast), or follow the system; add your own as small text files
 - Two dependencies (`eframe` for the window, `rfd` for the folder window); the Markdown parser and everything else is our own code
 
+<img src="docs/screenshots/ai.png" alt="rubrique comparing Claude and Codex answers in the merge screen, with the Ask bar and a hover summary from a local model" width="880">
+
+Ask Claude and Codex at once and pick the best parts in the merge screen; hover a file for a local summary.
+
 ## Install
 
 Download the latest version from [Releases](https://github.com/witseko/rubrique/releases):
