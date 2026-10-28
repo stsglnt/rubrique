@@ -73,7 +73,7 @@ jobs:
         run: |
           sh packaging/linux/package.sh "${{ needs.plan.outputs.version }}"
           cargo deb --no-build --output dist/
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: rubrique-linux
           path: dist/*
@@ -97,7 +97,7 @@ jobs:
           cargo build --release --locked --target x86_64-apple-darwin
       - name: Bundle
         run: sh packaging/macos/bundle.sh "${{ needs.plan.outputs.version }}"
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: rubrique-macos
           path: |
