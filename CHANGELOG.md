@@ -12,6 +12,16 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 - App icon: a lowercase "m" ending in a marker tip. Shown on the window,
   in the macOS app and in Linux menus.
+- Scratch files: **+ Scratch** or `Cmd/Ctrl+N` creates an empty note with a
+  random name like `2026-10-28-brave-otter.md` in a scratches folder
+  (set in Settings → Files).
+- **Rename…** in a file's right-click menu.
+
+### Fixed
+
+- The unsaved-changes dot showed as an empty box.
+- A long file path in the status bar ran into the word count; it is now
+  shortened with "…".
 
 ## [0.2.0] - 2026-10-28
 

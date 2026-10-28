@@ -20,6 +20,10 @@ pub enum ExplorerAction {
     RemoveRoot(PathBuf),
     /// Ask the system for a folder to add as a root.
     AddFolder,
+    /// Create a new scratch file and open it.
+    NewScratch,
+    /// Ask for a new name for this file.
+    Rename(PathBuf),
 }
 
 /// Read-only facts the tree needs while drawing.
@@ -46,8 +50,11 @@ pub fn show_explorer(
 ) -> Option<ExplorerAction> {
     let mut action = None;
     ui.horizontal(|ui| {
-        if ui.button("+ Add folder…").on_hover_text("Choose a folder to show in the explorer").clicked() {
+        if ui.button("+ Folder…").on_hover_text("Choose a folder to show in the explorer").clicked() {
             action = Some(ExplorerAction::AddFolder);
+        }
+        if ui.button("+ Scratch").on_hover_text("New scratch file for quick notes (Cmd+N)").clicked() {
+            action = Some(ExplorerAction::NewScratch);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.small_button("Refresh").on_hover_text("Re-read all folders from disk").clicked() {
@@ -126,13 +133,13 @@ fn show_folder(ui: &mut Ui, folder: &mut FsNode, context: &TreeContext, action: 
 /// Draw one file row; clicking it asks the app to open the file.
 fn show_file(ui: &mut Ui, file: &FsNode, context: &TreeContext, action: &mut Option<ExplorerAction>) {
     let is_open = context.open_file == Some(file.path.as_path());
-    let dirty_marker = if is_open && context.open_file_dirty { " ●" } else { "" };
+    let dirty_marker = if is_open && context.open_file_dirty { " •" } else { "" };
     let label = format!("{ICON_GAP}{}{}{dirty_marker}", file.name, link_marker(file));
     let response = ui.selectable_label(is_open, label);
     if response.clicked() {
         *action = Some(ExplorerAction::OpenFile(file.path.clone()));
     }
-    path_menu(&response, &file.path, context, action);
+    file_menu(&response, &file.path, context, action);
 }
 
 /// Room at the start of each row for the folder arrow, so file names line
@@ -180,6 +187,18 @@ fn root_menu(response: &egui::Response, path: &Path, context: &TreeContext, acti
             .on_disabled_hover_text("The explorer needs at least one folder");
         if remove.clicked() {
             *action = Some(ExplorerAction::RemoveRoot(path.to_path_buf()));
+            ui.close();
+        }
+    });
+}
+
+/// Right-click menu of a file: the copy actions, then "Rename…".
+fn file_menu(response: &egui::Response, path: &Path, context: &TreeContext, action: &mut Option<ExplorerAction>) {
+    response.context_menu(|ui| {
+        copy_items(ui, path, context, action);
+        ui.separator();
+        if ui.button("Rename…").clicked() {
+            *action = Some(ExplorerAction::Rename(path.to_path_buf()));
             ui.close();
         }
     });

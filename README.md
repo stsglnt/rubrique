@@ -10,7 +10,8 @@ One window, five themes, all built in: Light, Dark, Sepia, Midnight and High con
 ## Features
 
 - File explorer with several folders at once (**+ Add folder…** opens the system folder window), showing **all** files; a **Markdown only** checkbox hides the rest
-- Right-click any file or folder: copy absolute path, relative path, or name
+- Scratch files (`Cmd/Ctrl+N`): an empty note with a random name, for pasting things for later
+- Right-click any file or folder: copy absolute path, relative path, or name; rename files
 - Plain-text editor with Markdown syntax colors, and a rendered preview (`Cmd/Ctrl+E`)
 - Atomic saves, unsaved-changes prompt, reload when the file changes on disk
 - Line shortcuts: move (`Alt+Up/Down`), duplicate (`Cmd/Ctrl+D`), insert date (`Cmd/Ctrl+Shift+D`)
@@ -52,6 +53,7 @@ Linux also needs the usual X11/Wayland and OpenGL development libraries.
 | Cmd+S | Save |
 | Cmd+E | Toggle edit / preview |
 | Cmd+, | Open or close Settings |
+| Cmd+N | New scratch file |
 | Cmd+Shift+C | Copy path of the open file |
 | Alt+Up / Alt+Down | Move line(s) |
 | Cmd+D | Duplicate line(s) |

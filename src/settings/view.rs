@@ -15,7 +15,19 @@ use crate::theme::palette::{Base, Palette, Rgb, Theme};
 pub enum SettingsAction {
     PickTheme(ThemeChoice),
     ReloadThemes,
+    /// Pick another folder for scratch files.
+    ChooseScratchFolder,
+    /// Go back to the default scratch folder.
+    ResetScratchFolder,
     Close,
+}
+
+/// Where scratch files go, for the Scratches section.
+#[derive(Clone, Copy, Debug)]
+pub struct ScratchInfo<'a> {
+    pub folder: Option<&'a Path>,
+    /// The folder is the default one (so "Use default" has nothing to do).
+    pub is_default: bool,
 }
 
 /// Size of the gear button at the bottom of the explorer.
@@ -91,6 +103,7 @@ pub fn show_settings(
     themes: &Themes,
     current: &ThemeChoice,
     themes_folder: Option<&Path>,
+    scratch: ScratchInfo,
 ) -> Option<SettingsAction> {
     let mut action = None;
     egui::Frame::new().inner_margin(egui::Margin::symmetric(PANEL_MARGIN, 10)).show(ui, |ui| {
@@ -117,23 +130,44 @@ pub fn show_settings(
             ui.label(RichText::new("Your themes").strong());
             ui.label(RichText::new("Add .theme files to this folder, then reload.").weak());
             if let Some(folder) = themes_folder {
-                let path = home_relative(folder);
-                egui::Frame::new()
-                    .fill(ui.visuals().text_edit_bg_color())
-                    .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
-                    .corner_radius(PREVIEW_RADIUS)
-                    .inner_margin(egui::Margin::symmetric(8, 6))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.label(RichText::new(path).monospace().size(12.0));
-                    });
+                path_box(ui, folder);
             }
             if ui.button("Reload themes").clicked() {
                 action = Some(SettingsAction::ReloadThemes);
             }
+
+            ui.add_space(10.0);
+            ui.label(RichText::new("FILES").size(SECTION_SIZE).weak());
+            ui.label(RichText::new("Scratches").strong());
+            ui.label(RichText::new("New scratch files (Cmd+N) go to this folder.").weak());
+            if let Some(folder) = scratch.folder {
+                path_box(ui, folder);
+            }
+            ui.horizontal(|ui| {
+                if ui.button("Change…").clicked() {
+                    action = Some(SettingsAction::ChooseScratchFolder);
+                }
+                if ui.add_enabled(!scratch.is_default, egui::Button::new("Use default")).clicked() {
+                    action = Some(SettingsAction::ResetScratchFolder);
+                }
+            });
         });
     });
     action
+}
+
+/// A folder path in a small outlined box, home folder shown as `~`.
+fn path_box(ui: &mut Ui, folder: &Path) {
+    let path = home_relative(folder);
+    egui::Frame::new()
+        .fill(ui.visuals().text_edit_bg_color())
+        .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+        .corner_radius(PREVIEW_RADIUS)
+        .inner_margin(egui::Margin::symmetric(8, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(path).monospace().size(12.0));
+        });
 }
 
 /// One card for "System" and one per theme, two per row. Returns the clicked choice.

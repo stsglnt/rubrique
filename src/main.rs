@@ -5,6 +5,7 @@ mod date;
 mod document;
 mod explorer;
 mod markdown;
+mod scratch;
 mod settings;
 #[cfg(test)]
 mod test_support;

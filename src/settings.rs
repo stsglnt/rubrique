@@ -42,6 +42,8 @@ pub struct Settings {
     pub window_size: Option<(f32, f32)>,
     /// Color theme, or "system" to follow the OS.
     pub theme: ThemeChoice,
+    /// Where new scratch files go; `None` means the default folder.
+    pub scratch_folder: Option<PathBuf>,
 }
 
 impl Settings {
@@ -91,6 +93,7 @@ impl Settings {
                 "window_width" => width = value.parse::<f32>().ok(),
                 "window_height" => height = value.parse::<f32>().ok(),
                 "theme" => settings.theme = ThemeChoice::parse(value),
+                "scratch_folder" => settings.scratch_folder = non_empty_path(value),
                 _ => {}
             }
         }
@@ -116,11 +119,12 @@ impl Settings {
             lines
         });
         format!(
-            "{folder_lines}last_file={}\nmarkdown_only={}\npreview_mode={}\ntheme={}\n{window_lines}",
+            "{folder_lines}last_file={}\nmarkdown_only={}\npreview_mode={}\ntheme={}\nscratch_folder={}\n{window_lines}",
             path_text(&self.last_file),
             self.markdown_only,
             self.markdown_view == MarkdownView::Preview,
             self.theme.id(),
+            path_text(&self.scratch_folder),
         )
     }
 }
@@ -133,6 +137,18 @@ fn preview_mode_view(value: &str) -> MarkdownView {
 /// An empty value means "not set".
 fn non_empty_path(value: &str) -> Option<PathBuf> {
     (!value.is_empty()).then(|| PathBuf::from(value))
+}
+
+impl Settings {
+    /// The folder for new scratch files: the chosen one, else the default.
+    pub fn scratch_folder_or_default(&self) -> Option<PathBuf> {
+        self.scratch_folder.clone().or_else(default_scratch_folder)
+    }
+}
+
+/// Default folder for scratch files (`scratches` in the config folder).
+pub fn default_scratch_folder() -> Option<PathBuf> {
+    config_folder().map(|folder| folder.join("scratches"))
 }
 
 /// Folder for the user's own `*.theme` files (`themes` in the config folder).
@@ -168,6 +184,7 @@ mod tests {
             markdown_view: MarkdownView::Preview,
             window_size: Some((1200.0, 800.5)),
             theme: ThemeChoice::Named("dark".to_string()),
+            scratch_folder: Some(PathBuf::from("/home/a/scratch")),
         };
         assert_eq!(Settings::parse(&settings.to_text()), settings);
     }
@@ -196,6 +213,14 @@ mod tests {
         assert_eq!(settings.folders, [PathBuf::from("/home/a/notes")]);
         let both = Settings::parse("last_folder=/old\nfolder=/new\n");
         assert_eq!(both.folders, [PathBuf::from("/new")]);
+    }
+
+    #[test]
+    fn scratch_folder_falls_back_to_the_default() {
+        let custom = Settings { scratch_folder: Some(PathBuf::from("/tmp/s")), ..Settings::default() };
+        assert_eq!(custom.scratch_folder_or_default(), Some(PathBuf::from("/tmp/s")));
+        assert_eq!(Settings::default().scratch_folder_or_default(), default_scratch_folder());
+        assert_eq!(Settings::parse("scratch_folder=\n").scratch_folder, None);
     }
 
     #[test]

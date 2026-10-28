@@ -12,8 +12,9 @@ use crate::explorer::paths::{absolute_path_text, name_text};
 use crate::explorer::tree::{FsNode, is_markdown_path};
 use crate::explorer::view::{ExplorerAction, TreeContext, show_explorer};
 use crate::markdown::blocks::{Block, parse_blocks};
-use crate::settings::view::{SettingsAction, gear_button, show_settings};
-use crate::settings::{MarkdownView, Settings, themes_folder};
+use crate::scratch::{create_scratch, rename_target};
+use crate::settings::view::{ScratchInfo, SettingsAction, gear_button, show_settings};
+use crate::settings::{MarkdownView, Settings, default_scratch_folder, themes_folder};
 use crate::theme::catalog::Themes;
 use crate::theme::style::{apply_theme, page_fill};
 
@@ -24,15 +25,18 @@ const EXPLORER_DEFAULT_WIDTH: f32 = 260.0;
 const SETTINGS_PANEL_WIDTH: f32 = 320.0;
 /// Space around the "cannot display this file" message.
 const UNSUPPORTED_MARGIN: f32 = 16.0;
+/// Width of the "Rename" dialog.
+const RENAME_DIALOG_WIDTH: f32 = 320.0;
 /// Inner margin (x, y) of the status bar.
 const BAR_MARGIN: (i8, i8) = (10, 6);
 /// Opacity of the warning color behind the "changed on disk" bar.
 const NOTICE_TINT: f32 = 0.15;
 /// Shown before the file name while it has unsaved changes.
-const DIRTY_MARKER: &str = "● ";
+const DIRTY_MARKER: &str = "• ";
 
 const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
 const TOGGLE_PREVIEW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::E);
+const NEW_SCRATCH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
 const TOGGLE_SETTINGS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma);
 const COPY_OPEN_PATH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::C);
 
@@ -109,6 +113,18 @@ pub struct RubriqueApp {
     themes: Themes,
     /// The settings panel is shown on the right.
     settings_open: bool,
+    /// The "Rename" dialog, while it is open.
+    renaming: Option<Renaming>,
+}
+
+/// State of the "Rename" dialog.
+#[derive(Debug)]
+struct Renaming {
+    path: PathBuf,
+    /// The name being typed.
+    name: String,
+    /// Why the last attempt failed, shown under the field.
+    error: Option<String>,
 }
 
 impl RubriqueApp {
@@ -128,6 +144,7 @@ impl RubriqueApp {
             window_title: String::new(),
             themes,
             settings_open: false,
+            renaming: None,
         };
         app.remember_roots();
         if let Some(file) = file {
@@ -307,8 +324,12 @@ impl RubriqueApp {
         if ctx.input_mut(|input| input.consume_shortcut(&TOGGLE_SETTINGS)) {
             self.settings_open = !self.settings_open;
         }
+        if ctx.input_mut(|input| input.consume_shortcut(&NEW_SCRATCH)) {
+            self.new_scratch(ctx);
+        }
         if self.settings_open
             && self.pending.is_none()
+            && self.renaming.is_none()
             && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
         {
             self.settings_open = false;
@@ -364,7 +385,13 @@ impl RubriqueApp {
     /// Right panel: settings. Theme picks apply at once.
     fn settings_panel(&mut self, ui: &mut Ui) {
         let folder = themes_folder();
-        let Some(action) = show_settings(ui, &self.themes, &self.settings.theme, folder.as_deref()) else {
+        let scratch_folder = self.settings.scratch_folder_or_default();
+        let scratch = ScratchInfo {
+            folder: scratch_folder.as_deref(),
+            is_default: self.settings.scratch_folder.is_none() || scratch_folder == default_scratch_folder(),
+        };
+        let action = show_settings(ui, &self.themes, &self.settings.theme, folder.as_deref(), scratch);
+        let Some(action) = action else {
             return;
         };
         match action {
@@ -378,7 +405,111 @@ impl RubriqueApp {
                 let count = self.themes.list.len();
                 self.show_status(format!("Loaded {count} themes"));
             }
+            SettingsAction::ChooseScratchFolder => {
+                let mut dialog = rfd::FileDialog::new().set_title("Folder for scratch files");
+                if let Some(current) = &scratch_folder {
+                    dialog = dialog.set_directory(current);
+                }
+                if let Some(chosen) = dialog.pick_folder() {
+                    self.settings.scratch_folder = Some(chosen);
+                }
+            }
+            SettingsAction::ResetScratchFolder => self.settings.scratch_folder = None,
             SettingsAction::Close => self.settings_open = false,
+        }
+    }
+
+    /// Create a scratch file, show its folder in the explorer, and open it for typing.
+    fn new_scratch(&mut self, ctx: &Context) {
+        let Some(folder) = self.settings.scratch_folder_or_default() else {
+            self.show_status("No folder for scratch files: set one in Settings".to_string());
+            return;
+        };
+        let path = match create_scratch(&folder, &crate::date::today_iso()) {
+            Ok(path) => path,
+            Err(error) => {
+                self.show_status(format!("Cannot create a scratch in {}: {error}", folder.display()));
+                return;
+            }
+        };
+        if self.roots.iter().any(|root| folder.starts_with(&root.path)) {
+            self.roots.iter_mut().for_each(FsNode::refresh);
+        } else {
+            self.add_folder(folder);
+        }
+        self.settings.markdown_view = MarkdownView::Edit;
+        self.request(GuardedAction::OpenFile(path));
+        focus_editor(ctx);
+    }
+
+    /// Open the "Rename" dialog for `path`.
+    fn start_rename(&mut self, path: PathBuf) {
+        let name = name_text(&path);
+        self.renaming = Some(Renaming { path, name, error: None });
+    }
+
+    /// Rename the file on disk and follow it if it is the open one.
+    /// Returns an error message to show in the dialog.
+    fn finish_rename(&mut self, path: &Path, new_name: &str) -> Result<(), String> {
+        let target = rename_target(path, new_name)?;
+        if target == path {
+            return Ok(());
+        }
+        std::fs::rename(path, &target).map_err(|error| format!("Cannot rename: {error}"))?;
+        match &mut self.open_file {
+            OpenFile::Text { document, .. } if document.path == path => document.path.clone_from(&target),
+            OpenFile::Unsupported { path: open, .. } if open == path => open.clone_from(&target),
+            _ => {}
+        }
+        if self.settings.last_file.as_deref() == Some(path) {
+            self.settings.last_file = Some(target.clone());
+        }
+        self.roots.iter_mut().for_each(FsNode::refresh);
+        self.show_status(format!("Renamed to {}", name_text(&target)));
+        Ok(())
+    }
+
+    /// Draw the "Rename" dialog while it is open.
+    fn rename_dialog(&mut self, ctx: &Context) {
+        let Some(renaming) = &mut self.renaming else {
+            return;
+        };
+        let modal = egui::Modal::new(egui::Id::unique("rename-file")).show(ctx, |ui| {
+            ui.set_width(RENAME_DIALOG_WIDTH);
+            ui.heading("Rename");
+            ui.add_space(4.0);
+            let field = ui.add(egui::TextEdit::singleline(&mut renaming.name).desired_width(f32::INFINITY));
+            if !field.has_focus() && renaming.error.is_none() && !field.lost_focus() {
+                field.request_focus();
+            }
+            let entered = field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
+            if let Some(error) = &renaming.error {
+                ui.colored_label(ui.visuals().error_fg_color, error);
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let rename = ui.button("Rename").clicked() || entered;
+                let cancel = ui.button("Cancel").clicked();
+                (rename, cancel)
+            })
+            .inner
+        });
+        let (rename, cancel) = modal.inner;
+        if cancel || modal.should_close() {
+            self.renaming = None;
+            return;
+        }
+        if rename {
+            let path = renaming.path.clone();
+            let name = renaming.name.clone();
+            match self.finish_rename(&path, &name) {
+                Ok(()) => self.renaming = None,
+                Err(error) => {
+                    if let Some(renaming) = &mut self.renaming {
+                        renaming.error = Some(error);
+                    }
+                }
+            }
         }
     }
 
@@ -416,6 +547,8 @@ impl RubriqueApp {
             Some(ExplorerAction::Refresh) => self.roots.iter_mut().for_each(FsNode::refresh),
             Some(ExplorerAction::RemoveRoot(path)) => self.request_remove_root(path),
             Some(ExplorerAction::AddFolder) => self.choose_folder_to_add(),
+            Some(ExplorerAction::NewScratch) => self.new_scratch(ui.ctx()),
+            Some(ExplorerAction::Rename(path)) => self.start_rename(path),
             None => {}
         }
     }
@@ -510,29 +643,34 @@ impl RubriqueApp {
             return;
         };
         let dirty = if self.open_file.is_dirty() { DIRTY_MARKER } else { "" };
-        ui.label(format!("{dirty}{}", path.display()));
-        if !matches!(self.open_file, OpenFile::Text { .. }) {
-            return;
-        }
+        let path_text = format!("{dirty}{}", path.display());
+        let is_text = matches!(self.open_file, OpenFile::Text { .. });
         let showing_preview = self.showing_preview();
         let is_markdown = self.open_file.path().is_some_and(is_markdown_path);
+        // Right side first, so a long path is shortened instead of overlapping it.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let mode = if showing_preview { "Preview" } else { "Edit" };
-            // Markdown files switch mode with a click; other files only edit.
-            if is_markdown {
-                let toggle = ui.small_button(mode).on_hover_text("Switch edit / preview (Cmd+E)");
-                if toggle.clicked() {
-                    self.toggle_preview();
-                    if !self.showing_preview() {
-                        focus_editor(ui.ctx());
+            if is_text {
+                let mode = if showing_preview { "Preview" } else { "Edit" };
+                // Markdown files switch mode with a click; other files only edit.
+                if is_markdown {
+                    let toggle = ui.small_button(mode).on_hover_text("Switch edit / preview (Cmd+E)");
+                    if toggle.clicked() {
+                        self.toggle_preview();
+                        if !self.showing_preview() {
+                            focus_editor(ui.ctx());
+                        }
                     }
+                } else {
+                    ui.label(mode);
                 }
-            } else {
-                ui.label(mode);
+                if !showing_preview && let Some(stats) = &self.stats {
+                    ui.label(format!("{}   ", stats.summary()));
+                }
             }
-            if !showing_preview && let Some(stats) = &self.stats {
-                ui.label(format!("{}   ", stats.summary()));
-            }
+            let left = egui::Layout::left_to_right(egui::Align::Center);
+            ui.allocate_ui_with_layout(ui.available_size(), left, |ui| {
+                ui.add(egui::Label::new(path_text.as_str()).truncate()).on_hover_text(path_text.as_str());
+            });
         });
     }
 
@@ -662,6 +800,7 @@ impl eframe::App for RubriqueApp {
         egui::CentralPanel::default().frame(page_frame).show(ui, |ui| self.document_area(ui));
 
         self.unsaved_dialog(&ctx);
+        self.rename_dialog(&ctx);
         self.update_title(&ctx);
     }
 
