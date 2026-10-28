@@ -8,6 +8,8 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-28
+
 ### Added
 
 - App icon: a lowercase "m" ending in a marker tip. Shown on the window,
@@ -21,7 +23,6 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 - **Open in browser** (`Cmd/Ctrl+Shift+B`, or the status bar button): shows
   the Markdown as a full web page in the current theme's colors, or an HTML
   file as it is, in the default browser. Unsaved changes are included.
-
 - Live check for changes by other programs (every 2 seconds). A file without
   unsaved edits reloads with a status message. With unsaved edits a bar
   offers **Compare and merge…**, **Reload theirs** or **Keep mine**, and you
@@ -29,12 +30,10 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 - Merge screen: the file on disk, the result and your version side by side
   (**Swap sides** flips them). One-sided changes merge by themselves; for
   conflicts pick left, right or both, or edit the result, then **Apply**.
-
 - **Format** (`Cmd/Ctrl+Shift+F`, or the status bar button in `.json`,
   `.sql` and `.xml` files): pretty-prints JSON, XML, and SQL in
   PostgreSQL / pgFormatter style. Works on the selection too, guessing its
   language, so code blocks in notes can be formatted. Undo with `Cmd/Ctrl+Z`.
-
 - Edit in the preview: click a block (paragraph, heading, list, quote, code)
   to edit just that block's Markdown in place; Esc or a click outside shows it
   rendered again.
@@ -49,9 +48,8 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Changed
 
-- Explorer and settings icons redrawn in the app icon's style: heavy rounded
-  lines, the same size, with one detail in the theme's accent color.
-- The "m" in the app icon is larger.
+- The settings gear is redrawn to match the app icon, like the new explorer
+  icons: heavy rounded lines with one detail in the theme's accent color.
 
 ### Fixed
 
@@ -98,5 +96,6 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   plain-text editor with a rendered Markdown preview, atomic saves, unsaved
   changes prompt, reload on outside changes, and line shortcuts.
 
-[Unreleased]: https://github.com/witseko/rubrique/compare/rubrique-v0.2.0...HEAD
+[Unreleased]: https://github.com/witseko/rubrique/compare/rubrique-v0.3.0...HEAD
+[0.3.0]: https://github.com/witseko/rubrique/compare/rubrique-v0.2.0...rubrique-v0.3.0
 [0.2.0]: https://github.com/witseko/rubrique/releases/tag/rubrique-v0.2.0

@@ -14,3 +14,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Its tag is the Rust version to install (stable, or 1.95 for the
+      # oldest supported Rust), not a version of the action.
+      - dependency-name: dtolnay/rust-toolchain
