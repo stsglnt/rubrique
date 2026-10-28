@@ -40,6 +40,8 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 - The unsaved-changes dot showed as an empty box.
 - A long file path in the status bar ran into the word count; it is now
   shortened with "…".
+- Long names in the explorer wrapped onto two lines with the folder arrow
+  drawn over them; rows now stay on one line and the explorer scrolls sideways.
 
 ## [0.2.0] - 2026-10-28
 

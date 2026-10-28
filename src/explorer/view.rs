@@ -69,7 +69,10 @@ pub fn show_explorer(
 
     // The checkbox above may have just changed the filter.
     let context = TreeContext { markdown_only: *markdown_only, ..*context };
+    // Rows never wrap (a wrapped name would put the folder arrow over its
+    // text); long names scroll sideways instead.
     egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
         for root in roots.iter_mut() {
             let root_path = root.path.clone();
             let context = TreeContext { root: &root_path, ..context };
@@ -82,7 +85,7 @@ pub fn show_explorer(
 /// A root folder: a bold row that folds its tree open and closed.
 fn show_root(ui: &mut Ui, root: &mut FsNode, context: &TreeContext, action: &mut Option<ExplorerAction>) {
     let label = RichText::new(format!("{ICON_GAP}{}", root.name)).strong();
-    let response = ui.selectable_label(false, label).on_hover_text(absolute_path_text(&root.path));
+    let response = tree_row(ui, false, label).on_hover_text(absolute_path_text(&root.path));
     paint_arrow(ui, &response, root.expanded);
     if response.clicked() {
         root.toggle_expanded();
@@ -116,7 +119,7 @@ fn show_children(ui: &mut Ui, folder: &mut FsNode, context: &TreeContext, action
 /// Draw one folder row and, when expanded, its contents indented below.
 fn show_folder(ui: &mut Ui, folder: &mut FsNode, context: &TreeContext, action: &mut Option<ExplorerAction>) {
     let label = format!("{ICON_GAP}{}{}", folder.name, link_marker(folder));
-    let response = ui.selectable_label(false, label);
+    let response = tree_row(ui, false, label);
     if folder.kind == NodeKind::SymlinkLoop {
         response.clone().on_hover_text("Link to a parent folder; not expanded to avoid a loop");
     } else {
@@ -137,11 +140,16 @@ fn show_file(ui: &mut Ui, file: &FsNode, context: &TreeContext, action: &mut Opt
     let is_open = context.open_file == Some(file.path.as_path());
     let dirty_marker = if is_open && context.open_file_dirty { " •" } else { "" };
     let label = format!("{ICON_GAP}{}{}{dirty_marker}", file.name, link_marker(file));
-    let response = ui.selectable_label(is_open, label);
+    let response = tree_row(ui, is_open, label);
     if response.clicked() {
         *action = Some(ExplorerAction::OpenFile(file.path.clone()));
     }
     file_menu(&response, &file.path, context, action);
+}
+
+/// One explorer row on a single line (the tree scrolls sideways for long names).
+fn tree_row(ui: &mut Ui, selected: bool, label: impl Into<egui::WidgetText>) -> egui::Response {
+    ui.add(egui::Button::selectable(selected, label.into()))
 }
 
 /// Room at the start of each row for the folder arrow, so file names line
