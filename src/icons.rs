@@ -26,11 +26,15 @@ pub enum Icon {
     Sparkle,
     /// Stop a running AI tool.
     Stop,
-    /// Play a video.
+    /// Play a video or a voice memo.
     Play,
     /// Close a tab. A plain cross with no accent: it sits on every tab, and
     /// a colored mark there would pull the eye from the file names.
     Close,
+    /// Record a voice memo.
+    Mic,
+    /// Pause a voice memo.
+    Pause,
 }
 
 /// A flat button with `icon` and a hover tip. `active` keeps it highlighted
@@ -182,6 +186,23 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
             // Two crossing strokes, smaller than the box so they read as a control.
             stroke_path(painter, &[at(-3.5, -3.5), at(3.5, 3.5)], false, line);
             stroke_path(painter, &[at(3.5, -3.5), at(-3.5, 3.5)], false, line);
+        }
+        Icon::Mic => {
+            // A capsule in a cradle; the stand under it is the accent.
+            let capsule = [at(-2.6, -6.5), at(2.6, -6.5), at(2.6, 1.0), at(-2.6, 1.0)];
+            stroke_path(painter, &round_corners(&capsule, 2.6, true), true, line);
+            let cradle: Vec<Pos2> = (0..=16_u8)
+                .map(|step| at(0.0, -1.5) + Vec2::angled(f32::from(step) / 16.0 * TAU / 2.0) * 5.0)
+                .collect();
+            stroke_path(painter, &cradle, false, line);
+            stroke_path(painter, &[at(0.0, 3.5), at(0.0, 6.5)], false, detail);
+            stroke_path(painter, &[at(-2.5, 6.5), at(2.5, 6.5)], false, detail);
+        }
+        Icon::Pause => {
+            // A circle; the two bars inside are the accent.
+            stroke_path(painter, &circle_points(center, 6.2), true, line);
+            stroke_path(painter, &[at(-1.6, -2.6), at(-1.6, 2.6)], false, detail);
+            stroke_path(painter, &[at(1.6, -2.6), at(1.6, 2.6)], false, detail);
         }
     }
 }

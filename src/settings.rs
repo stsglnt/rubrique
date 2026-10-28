@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::ai::AiSettings;
 use crate::theme::catalog::ThemeChoice;
+use crate::voice::VoiceSettings;
 
 pub mod view;
 
@@ -49,6 +50,8 @@ pub struct Settings {
     pub scratch_folder: Option<PathBuf>,
     /// AI tools and their commands.
     pub ai: AiSettings,
+    /// Voice memos: folder, dropped files, transcription.
+    pub voice: VoiceSettings,
 }
 
 impl Settings {
@@ -88,7 +91,7 @@ impl Settings {
                 continue;
             };
             let value = value.trim();
-            if settings.ai.parse_line(key.trim(), value) {
+            if settings.ai.parse_line(key.trim(), value) || settings.voice.parse_line(key.trim(), value) {
                 continue;
             }
             match key.trim() {
@@ -132,13 +135,14 @@ impl Settings {
         let folder_lines = path_lines("folder", &self.folders);
         let tab_lines = path_lines("tab", &self.open_tabs);
         format!(
-            "{folder_lines}{tab_lines}last_file={}\nmarkdown_only={}\npreview_mode={}\ntheme={}\nscratch_folder={}\n{window_lines}{}",
+            "{folder_lines}{tab_lines}last_file={}\nmarkdown_only={}\npreview_mode={}\ntheme={}\nscratch_folder={}\n{window_lines}{}{}",
             path_text(&self.last_file),
             self.markdown_only,
             self.markdown_view == MarkdownView::Preview,
             self.theme.id(),
             path_text(&self.scratch_folder),
             self.ai.to_lines(),
+            self.voice.to_lines(),
         )
     }
 }
@@ -215,6 +219,12 @@ mod tests {
                 ai.default_tool = crate::ai::AiTool::Grok;
                 ai.set_command(crate::ai::AiTool::Grok, "grok-cli --headless {prompt}");
                 ai
+            },
+            voice: crate::voice::VoiceSettings {
+                folder: "audio".to_string(),
+                copy_dropped: false,
+                auto_transcribe: false,
+                command: "yap transcribe {audio}".to_string(),
             },
         };
         assert_eq!(Settings::parse(&settings.to_text()), settings);

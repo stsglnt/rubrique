@@ -57,7 +57,10 @@ fn style(palette: &Palette) -> String {
          hr {{ border: 0; border-top: 1px solid var(--border); margin: 2em 0; }}\n\
          li > p {{ margin: 0; }}\n\
          li.task {{ list-style: none; margin-left: -1.4em; }}\n\
-         li.task input {{ accent-color: var(--accent); margin-right: 0.5em; }}\n",
+         li.task input {{ accent-color: var(--accent); margin-right: 0.5em; }}\n\
+         figure.memo {{ margin: 1em 0; }}\n\
+         figure.memo audio {{ width: 100%; }}\n\
+         figure.memo figcaption {{ color: var(--weak); font-size: 0.9em; }}\n",
         css(palette.background),
         css(palette.text),
         css(palette.text_strong),
@@ -87,9 +90,13 @@ fn write_block(out: &mut String, block: &Block) {
             let _ = writeln!(out, "</h{level}>");
         }
         Block::Paragraph(content) => {
-            out.push_str("<p>");
-            write_inlines(out, content);
-            out.push_str("</p>\n");
+            if let Some(memo) = crate::voice::memo_link(content).filter(|memo| is_safe_link(&memo.url)) {
+                write_memo(out, &memo);
+            } else {
+                out.push_str("<p>");
+                write_inlines(out, content);
+                out.push_str("</p>\n");
+            }
         }
         Block::Code { info, code } => {
             let language = info.split_whitespace().next().unwrap_or("");
@@ -109,6 +116,17 @@ fn write_block(out: &mut String, block: &Block) {
         Block::List(list) => write_list(out, list),
         Block::ThematicBreak => out.push_str("<hr>\n"),
     }
+}
+
+/// A voice memo: the browser's audio player with the memo's name under it.
+fn write_memo(out: &mut String, memo: &crate::voice::MemoLink) {
+    let label = if memo.label.is_empty() { "Voice memo" } else { memo.label.as_str() };
+    let _ = writeln!(
+        out,
+        "<figure class=\"memo\"><audio controls preload=\"metadata\" src=\"{}\"></audio><figcaption>{}</figcaption></figure>",
+        escape(&memo.url),
+        escape(label)
+    );
 }
 
 fn write_list(out: &mut String, list: &List) {
@@ -259,6 +277,17 @@ mod tests {
         assert_eq!(body("[a](https://x.org)"), "<p><a href=\"https://x.org\">a</a></p>\n");
         assert_eq!(body("[a](notes/b.md)"), "<p><a href=\"notes/b.md\">a</a></p>\n");
         assert_eq!(body("[a](javascript:alert(1))"), "<p>a</p>\n");
+    }
+
+    #[test]
+    fn voice_memos_get_an_audio_player() {
+        assert_eq!(
+            body("[▶ Voice memo](memos/a%20b.wav)"),
+            "<figure class=\"memo\"><audio controls preload=\"metadata\" src=\"memos/a%20b.wav\"></audio>\
+             <figcaption>Voice memo</figcaption></figure>\n"
+        );
+        assert_eq!(body("[x](javascript:a.wav)"), "<p>x</p>\n");
+        assert_eq!(body("Listen: [x](a.wav)"), "<p>Listen: <a href=\"a.wav\">x</a></p>\n");
     }
 
     #[test]

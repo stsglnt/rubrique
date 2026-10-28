@@ -9,6 +9,7 @@ mod ask;
 mod naming;
 mod summary;
 mod tabs;
+mod voice;
 
 use crate::ai::skills::{self, Skill};
 use crate::ai::{self, AiTool};
@@ -34,10 +35,11 @@ use crate::markdown::notes::{self, Note, find_notes, insert_note, remove_note, r
 use crate::markdown::render::CodeAction;
 use crate::media::{MediaKind, format_name, image_uri, media_kind, open_with_system, size_text};
 use crate::scratch::{create_scratch, rename_target};
-use crate::settings::view::{AiInfo, ScratchInfo, SettingsAction, show_settings};
+use crate::settings::view::{AiInfo, ScratchInfo, SettingsAction, VoiceInfo, show_settings};
 use crate::settings::{MarkdownView, Settings, default_scratch_folder, default_skills_folder, themes_folder};
 use crate::theme::catalog::Themes;
 use crate::theme::style::{apply_theme, page_fill};
+use crate::voice::view::set_memo_states;
 
 /// How long a status message ("Copied ...") stays visible.
 const STATUS_MESSAGE_SECONDS: f64 = 4.0;
@@ -75,6 +77,7 @@ const OPEN_IN_BROWSER: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMA
 const NEW_SCRATCH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
 const TOGGLE_SETTINGS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma);
 const ASK: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::K);
+const RECORD: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::R);
 const COPY_OPEN_PATH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::C);
 const CLOSE_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::W);
 const NEXT_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::Tab);
@@ -205,6 +208,8 @@ pub struct RubriqueApp {
     block_edit: Option<BlockEdit>,
     /// The note being written or edited.
     note_draft: Option<NoteDraft>,
+    /// Voice memos: recording, playback, transcription.
+    voice: voice::VoiceState,
 }
 
 /// A note in the making (new, or an existing one being edited).
@@ -262,6 +267,7 @@ impl RubriqueApp {
             last_disk_check: 0.0,
             block_edit: None,
             note_draft: None,
+            voice: voice::VoiceState::default(),
         };
         preview_selection::install(ctx);
         egui_extras::install_image_loaders(ctx);
@@ -354,6 +360,7 @@ impl RubriqueApp {
         self.merging = None;
         self.block_edit = None;
         self.note_draft = None;
+        self.voice.stop_playback();
         crate::document::view::restore_editor_state(&self.repaint, None);
         if let Some(file) = self.load_file(path) {
             self.open_file = file;
@@ -545,6 +552,9 @@ impl RubriqueApp {
         if ctx.input_mut(|input| input.consume_shortcut(&OPEN_IN_BROWSER)) {
             self.open_in_browser(ctx);
         }
+        if ctx.input_mut(|input| input.consume_shortcut(&RECORD)) {
+            self.toggle_recording(ctx);
+        }
         if ctx.input_mut(|input| input.consume_shortcut(&NEW_SCRATCH)) {
             self.new_scratch(ctx);
         }
@@ -615,6 +625,7 @@ impl RubriqueApp {
         if self.settings_open {
             self.check_ai_tools();
             self.load_skills();
+            self.voice.program_found = self.settings.voice.find_program();
         }
     }
 
@@ -643,7 +654,8 @@ impl RubriqueApp {
             skills: &self.skills,
             skills_folder: skills_folder.as_deref(),
         };
-        let action = show_settings(ui, &self.themes, &self.settings.theme, folder.as_deref(), scratch, ai);
+        let voice = VoiceInfo { settings: &mut self.settings.voice, found: self.voice.program_found.as_deref() };
+        let action = show_settings(ui, &self.themes, &self.settings.theme, folder.as_deref(), scratch, ai, voice);
         let Some(action) = action else {
             return;
         };
@@ -700,6 +712,11 @@ impl RubriqueApp {
                 Some(Err(error)) => self.show_status(format!("Cannot create the example skill: {error}")),
                 None => {}
             },
+            SettingsAction::VoiceCommandChanged => self.voice.program_found = self.settings.voice.find_program(),
+            SettingsAction::Copy(text) => {
+                ui.ctx().copy_text(text);
+                self.show_status("Copied the command; paste it into a terminal".to_string());
+            }
             SettingsAction::Close => self.settings_open = false,
         }
     }
@@ -1004,6 +1021,10 @@ impl RubriqueApp {
             self.tab_bar(ui);
         }
         self.ask.page_rect = Some(ui.available_rect_before_wrap());
+        let page = ui.available_rect_before_wrap();
+        if self.merging.is_none() {
+            self.recording_bar(ui);
+        }
         let showing_preview = self.showing_preview();
         let mut notice_choice = None;
         let mut name_choice = None;
@@ -1042,7 +1063,11 @@ impl RubriqueApp {
                     // The merge screen fills the page.
                 } else if showing_preview {
                     let blocks = preview.get_or_insert_with(|| parse_source_blocks(&document.text));
-                    preview_event = show_preview(ui, &document.path, blocks, self.block_edit.as_mut());
+                    let folder = document.path.parent().unwrap_or(Path::new("/"));
+                    set_memo_states(ui.ctx(), self.voice.memo_states(folder, blocks));
+                    let output = show_preview(ui, &document.path, blocks, self.block_edit.as_mut());
+                    preview_event = output.event;
+                    self.voice.preview_hover = output.hovered;
                 } else {
                     let was_dirty = document.is_dirty();
                     let markdown = is_markdown_path(&document.path);
@@ -1069,12 +1094,14 @@ impl RubriqueApp {
             Some(PreviewEvent::StartEdit(index)) => self.start_block_edit(index),
             Some(PreviewEvent::FinishEdit) => self.finish_block_edit(),
             Some(PreviewEvent::Code { index, action }) => self.code_block_action(ui.ctx(), index, action),
+            Some(PreviewEvent::Memo(action)) => self.memo_action(ui.ctx(), action),
             Some(PreviewEvent::PlayVideo(path)) => self.play_video(&path),
             None => {}
         }
         if let Some(event) = media_event {
             self.media_action(ui.ctx(), event);
         }
+        self.drop_hint(ui.ctx(), page);
         if showing_preview && self.block_edit.is_none() && self.note_draft.is_none() {
             self.add_note_button(ui.ctx());
         }
@@ -1480,14 +1507,19 @@ impl RubriqueApp {
             self.merging = Some(session);
             return;
         };
-        if session.review.is_some() {
+        if let Some(title) = &session.review {
+            let transcript = title.starts_with("Transcript");
             if let OpenFile::Text { document, preview, .. } = &mut self.open_file {
                 let changed = document.text != result;
                 document.text = result;
                 document.on_text_changed();
                 *preview = None;
                 self.ask.job = None;
-                let message = if changed { "AI changes applied. Save to keep them." } else { "Kept the original" };
+                let message = match (changed, transcript) {
+                    (true, true) => "Transcript added. Save to keep it.",
+                    (true, false) => "AI changes applied. Save to keep them.",
+                    (false, _) => "Kept the original",
+                };
                 self.show_status(message.to_string());
             }
             return;
@@ -1589,6 +1621,9 @@ impl RubriqueApp {
                     self.check_ai_tools();
                     self.load_skills();
                     self.open_ask(ui.ctx());
+                }
+                if is_markdown || is_html {
+                    self.voice_buttons(ui);
                 }
                 if !showing_preview && let Some(stats) = &self.stats {
                     ui.label(format!("{}   ", stats.summary()));
@@ -1765,6 +1800,7 @@ impl eframe::App for RubriqueApp {
         self.handle_shortcuts(&ctx);
         self.poll_disk(&ctx);
         self.poll_naming();
+        self.poll_voice(&ctx);
 
         let style = ctx.global_style();
         let bar_frame =
@@ -1810,6 +1846,7 @@ impl eframe::App for RubriqueApp {
                 .show(ui, |ui| self.ai_output_panel(ui));
         }
         egui::CentralPanel::default().frame(page_frame).show(ui, |ui| self.document_area(ui));
+        self.handle_dropped_files(&ctx);
 
         self.ask_dialogs(&ctx);
         self.hover_summary(&ctx);

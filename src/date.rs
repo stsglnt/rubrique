@@ -1,4 +1,5 @@
-//! Today's local date as `YYYY-MM-DD`, using the C library (no date crate).
+//! Today's local date as `YYYY-MM-DD` and the time of day, using the C
+//! library (no date crate).
 //!
 //! The only `unsafe` code in rubrique lives here: one call to `localtime_r`,
 //! wrapped in the safe function [`local_time`].
@@ -53,6 +54,20 @@ unsafe extern "C" {
 
 /// Today's date in the user's local time zone, e.g. `2026-10-27`.
 pub fn today_iso() -> String {
+    now_local().date
+}
+
+/// The local date and time of day, for names like `2026-10-27-1403`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalNow {
+    /// `YYYY-MM-DD`.
+    pub date: String,
+    pub hour: u8,
+    pub minute: u8,
+}
+
+/// The current local date and time.
+pub fn now_local() -> LocalNow {
     // A clock before 1970 or past the year 292 billion is not worth an error
     // path: fall back to the epoch.
     let now = SystemTime::now()
@@ -61,8 +76,12 @@ pub fn today_iso() -> String {
         .and_then(|duration| i64::try_from(duration.as_secs()).ok())
         .unwrap_or(0);
     match local_time(now) {
-        Some(local) => iso_date(local.tm_year + 1900, local.tm_mon + 1, local.tm_mday),
-        None => iso_date(1970, 1, 1),
+        Some(local) => LocalNow {
+            date: iso_date(local.tm_year + 1900, local.tm_mon + 1, local.tm_mday),
+            hour: u8::try_from(local.tm_hour).unwrap_or(0),
+            minute: u8::try_from(local.tm_min).unwrap_or(0),
+        },
+        None => LocalNow { date: iso_date(1970, 1, 1), hour: 0, minute: 0 },
     }
 }
 
@@ -94,6 +113,13 @@ mod tests {
         assert!(today.starts_with("20"));
         assert_eq!(&today[4..5], "-");
         assert_eq!(&today[7..8], "-");
+    }
+
+    #[test]
+    fn time_of_day_is_in_range() {
+        let now = now_local();
+        assert!(now.hour < 24 && now.minute < 60);
+        assert_eq!(now.date.len(), 10);
     }
 
     #[test]

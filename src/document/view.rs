@@ -14,6 +14,7 @@ use crate::markdown::blocks::SourceBlock;
 use crate::markdown::render::{
     CodeAction, render_top_block, set_image_folder, take_code_action, take_play_request, top_gap,
 };
+use crate::voice::view::{MemoAction, take_memo_action};
 
 /// Widest the preview text gets, for comfortable reading.
 const PREVIEW_MAX_WIDTH: f32 = 760.0;
@@ -83,6 +84,16 @@ pub fn show_editor(ui: &mut Ui, document: &mut Document, markdown: bool) -> Opti
     if output.response.changed() {
         document.on_text_changed();
     }
+    // While a file is dragged over the editor, the cursor follows the
+    // pointer, so the drop lands where it shows.
+    let dragging_files = ui.ctx().input(|input| !input.raw.hovered_files.is_empty());
+    if dragging_files
+        && let Some(pointer) = ui.ctx().pointer_latest_pos()
+        && output.response.response.rect.contains(pointer)
+    {
+        let cursor = output.galley.cursor_from_pos(pointer - output.galley_pos);
+        set_editor_cursor(ui.ctx(), cursor.index.0);
+    }
     let range = output.cursor_range?;
     let sorted = range.as_sorted_char_range();
     Some(text_stats(&document.text, range.primary.index.0, sorted.start.0..sorted.end.0))
@@ -102,7 +113,7 @@ pub struct BlockEdit {
 }
 
 /// What the user did in the preview.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PreviewEvent {
     /// Clicked a block: edit it.
     StartEdit(usize),
@@ -112,6 +123,16 @@ pub enum PreviewEvent {
     Code { index: usize, action: CodeAction },
     /// Play on a video in the preview.
     PlayVideo(PathBuf),
+    /// A button on a voice memo.
+    Memo(MemoAction),
+}
+
+/// What the preview reports after drawing.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PreviewOutput {
+    pub event: Option<PreviewEvent>,
+    /// The top-level block under the pointer, if any.
+    pub hovered: Option<usize>,
 }
 
 /// Opacity of the accent behind a block under the mouse.
@@ -128,8 +149,9 @@ pub fn show_preview(
     path: &Path,
     blocks: &[SourceBlock],
     mut editing: Option<&mut BlockEdit>,
-) -> Option<PreviewEvent> {
+) -> PreviewOutput {
     let mut event = None;
+    let mut hovered = None;
     // Relative image paths are next to the file.
     set_image_folder(ui.ctx(), path.parent().map(Path::to_path_buf));
     egui::ScrollArea::vertical().id_salt(("preview-scroll", path)).auto_shrink([false, false]).show(ui, |ui| {
@@ -139,17 +161,22 @@ pub fn show_preview(
                 if index > 0 {
                     ui.add_space(top_gap(&source.block) - f32::from(BLOCK_PAD) * 2.0);
                 }
+                let top = ui.cursor().top();
                 let found = match editing.as_deref_mut() {
                     Some(edit) if edit.index == index => edit_box(ui, edit),
                     _ => clickable_block(ui, index, source),
                 };
+                let span = egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=ui.cursor().top());
+                if ui.rect_contains_pointer(span) {
+                    hovered = Some(index);
+                }
                 if event.is_none() {
                     event = found;
                 }
             }
         });
     });
-    event
+    PreviewOutput { event, hovered }
 }
 
 /// A rendered block: tinted under the mouse, a click (not a text selection
@@ -169,6 +196,9 @@ fn clickable_block(ui: &mut Ui, index: usize, source: &SourceBlock) -> Option<Pr
     // A code block button was clicked: that, not editing the block.
     if let Some(action) = take_code_action(ui.ctx()) {
         return Some(PreviewEvent::Code { index, action });
+    }
+    if let Some(action) = take_memo_action(ui.ctx()) {
+        return Some(PreviewEvent::Memo(action));
     }
     if let Some(path) = take_play_request(ui.ctx()) {
         return Some(PreviewEvent::PlayVideo(path));
@@ -240,6 +270,12 @@ pub fn editor_selection(ctx: &Context) -> Option<(usize, usize)> {
     let state = TextEditState::load(ctx, editor_id())?;
     let range = state.cursor.char_range()?.as_sorted_char_range();
     (range.start.0 < range.end.0).then_some((range.start.0, range.end.0))
+}
+
+/// The editor's cursor as a character index, when it has one.
+pub fn editor_cursor(ctx: &Context) -> Option<usize> {
+    let state = TextEditState::load(ctx, editor_id())?;
+    Some(state.cursor.char_range()?.primary.index.0)
 }
 
 /// Put the editor's cursor at character `index` (no selection).

@@ -22,6 +22,7 @@ One window, five themes, all built in: Light, Dark, Sepia, Midnight and High con
 - **Compare tools**: run two AI tools on the same request and pick the best parts of each in the merge screen
 - **Resolve notes with AI**: one note or all of them, reviewed in the merge screen
 - **Skills**: reusable AI instructions as `SKILL.md` folders (the same format as Claude Code skills), picked from the Ask bar; the skills folder is set in Settings
+- **Voice memos** (`Cmd/Ctrl+Shift+R`): record into the note, or drop an audio file on it; play it in the preview and **Transcribe** it with whisper.cpp or another tool on your computer, reviewed in the merge screen
 - Code blocks in the preview have **Copy**, and **Prettify** for ` ```json `, ` ```sql ` and ` ```xml ` blocks
 - **Format** (`Cmd/Ctrl+Shift+F`): pretty-print JSON, SQL (PostgreSQL style, like pgFormatter) or XML, for the whole file or the selection
 - **Open in browser** (`Cmd/Ctrl+Shift+B`): Markdown as a full web page in your theme's colors, or HTML files as they are
@@ -29,7 +30,7 @@ One window, five themes, all built in: Light, Dark, Sepia, Midnight and High con
 - Notices when another program changes the open file: reloads it if you have no edits, otherwise offers a side-by-side **merge** (on disk | result | mine), reload or keep mine, without interrupting your typing
 - Line shortcuts: move (`Alt+Up/Down`), duplicate (`Cmd/Ctrl+D`), insert date (`Cmd/Ctrl+Shift+D`)
 - Five built-in themes (Light, Dark, Sepia, Midnight, High contrast), or follow the system; add your own as small text files
-- Few dependencies (`eframe` for the window, `rfd` for the folder window, `egui_extras` and `image` to decode images); the Markdown parser and everything else is our own code
+- Few dependencies (`eframe` for the window, `rfd` for the file windows, `egui_extras` and `image` to decode images, `cpal` for the microphone); the Markdown parser, WAV files and everything else are our own code
 
 <img src="docs/screenshots/ai.png" alt="rubrique comparing Claude and Codex answers in the merge screen, with the Ask bar and a hover summary from a local model" width="880">
 
@@ -59,7 +60,18 @@ cargo run --release -- ~/notes/todo.md     # open a file and its folder
 cargo run --release -- ~/notes ~/work/docs # open several folders at once
 ```
 
-Linux also needs the usual X11/Wayland and OpenGL development libraries.
+Linux also needs the usual X11/Wayland and OpenGL development libraries,
+and ALSA for voice memos (`libasound2-dev` on Debian and Ubuntu,
+`alsa-lib-devel` on Fedora).
+
+Transcribing memos needs a speech-to-text tool. The default is whisper.cpp
+with its small model:
+
+```sh
+brew install whisper-cpp     # macOS; on Linux, the whisper.cpp package
+curl -L --create-dirs -o ~/.local/share/whisper/ggml-small.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+```
 
 ## Shortcuts
 
@@ -74,6 +86,7 @@ Linux also needs the usual X11/Wayland and OpenGL development libraries.
 | Cmd+, | Open or close Settings |
 | Cmd+K | Ask AI about the selection |
 | Cmd+N | New scratch file |
+| Cmd+Shift+R | Record a voice memo / stop |
 | Cmd+Shift+B | Open in browser (Markdown and HTML) |
 | Cmd+Shift+F | Format JSON, SQL or XML |
 | Cmd+Shift+M | Add a note about the selected text |
