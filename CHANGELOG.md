@@ -16,6 +16,9 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   random name like `2026-10-28-brave-otter.md` in a scratches folder
   (set in Settings → Files).
 - **Rename…** in a file's right-click menu.
+- **Open in browser** (`Cmd/Ctrl+Shift+B`, or the status bar button): shows
+  the Markdown as a full web page in the current theme's colors, or an HTML
+  file as it is, in the default browser. Unsaved changes are included.
 
 ### Fixed
 

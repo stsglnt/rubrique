@@ -12,6 +12,7 @@ use crate::explorer::paths::{absolute_path_text, name_text};
 use crate::explorer::tree::{FsNode, is_markdown_path};
 use crate::explorer::view::{ExplorerAction, TreeContext, show_explorer};
 use crate::markdown::blocks::{Block, parse_blocks};
+use crate::markdown::html::{file_url, html_page, is_html_path, with_base};
 use crate::scratch::{create_scratch, rename_target};
 use crate::settings::view::{ScratchInfo, SettingsAction, gear_button, show_settings};
 use crate::settings::{MarkdownView, Settings, default_scratch_folder, themes_folder};
@@ -36,6 +37,7 @@ const DIRTY_MARKER: &str = "• ";
 
 const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
 const TOGGLE_PREVIEW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::E);
+const OPEN_IN_BROWSER: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::B);
 const NEW_SCRATCH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
 const TOGGLE_SETTINGS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma);
 const COPY_OPEN_PATH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::C);
@@ -324,6 +326,9 @@ impl RubriqueApp {
         if ctx.input_mut(|input| input.consume_shortcut(&TOGGLE_SETTINGS)) {
             self.settings_open = !self.settings_open;
         }
+        if ctx.input_mut(|input| input.consume_shortcut(&OPEN_IN_BROWSER)) {
+            self.open_in_browser(ctx);
+        }
         if ctx.input_mut(|input| input.consume_shortcut(&NEW_SCRATCH)) {
             self.new_scratch(ctx);
         }
@@ -417,6 +422,47 @@ impl RubriqueApp {
             SettingsAction::ResetScratchFolder => self.settings.scratch_folder = None,
             SettingsAction::Close => self.settings_open = false,
         }
+    }
+
+    /// Show the open Markdown (rendered, in the current theme's colors) or
+    /// HTML file in the system browser, from a temporary copy so unsaved
+    /// changes show too.
+    fn open_in_browser(&mut self, ctx: &Context) {
+        let OpenFile::Text { document, .. } = &self.open_file else {
+            return;
+        };
+        let path = document.path.clone();
+        let folder = path.parent().map(|folder| format!("{}/", file_url(folder))).unwrap_or_default();
+        let page = if is_markdown_path(&path) {
+            let palette = self.current_palette(ctx);
+            html_page(&name_text(&path), &parse_blocks(&document.text), &palette, Some(&folder))
+        } else if is_html_path(&path) {
+            with_base(&document.text, &folder)
+        } else {
+            self.show_status("Open in browser works for Markdown and HTML files".to_string());
+            return;
+        };
+        match write_browser_copy(&path, &page) {
+            Ok(copy) => {
+                ctx.open_url(egui::OpenUrl::new_tab(file_url(&copy)));
+                self.show_status(format!("Opened {} in the browser", name_text(&path)));
+            }
+            Err(error) => self.show_status(format!("Cannot write the browser copy: {error}")),
+        }
+    }
+
+    /// Colors of the theme on screen now (for System, the light or dark one in use).
+    fn current_palette(&self, ctx: &Context) -> crate::theme::palette::Palette {
+        if let crate::theme::catalog::ThemeChoice::Named(id) = &self.settings.theme
+            && let Some(theme) = self.themes.find(id)
+        {
+            return theme.palette;
+        }
+        let base = match ctx.theme() {
+            egui::Theme::Dark => crate::theme::palette::Base::Dark,
+            egui::Theme::Light => crate::theme::palette::Base::Light,
+        };
+        self.themes.for_base(base).palette
     }
 
     /// Create a scratch file, show its folder in the explorer, and open it for typing.
@@ -647,8 +693,16 @@ impl RubriqueApp {
         let is_text = matches!(self.open_file, OpenFile::Text { .. });
         let showing_preview = self.showing_preview();
         let is_markdown = self.open_file.path().is_some_and(is_markdown_path);
+        let is_html = self.open_file.path().is_some_and(is_html_path);
         // Right side first, so a long path is shortened instead of overlapping it.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if is_text && (is_markdown || is_html) {
+                let browser =
+                    ui.small_button("Open in browser").on_hover_text("Show it in your web browser (Cmd+Shift+B)");
+                if browser.clicked() {
+                    self.open_in_browser(ui.ctx());
+                }
+            }
             if is_text {
                 let mode = if showing_preview { "Preview" } else { "Edit" };
                 // Markdown files switch mode with a click; other files only edit.
@@ -701,6 +755,20 @@ impl RubriqueApp {
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
     }
+}
+
+/// Write `page` to a temporary file for the browser, one per source file, and
+/// return its path.
+fn write_browser_copy(source: &Path, page: &str) -> std::io::Result<PathBuf> {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let folder = std::env::temp_dir().join("rubrique-browser");
+    std::fs::create_dir_all(&folder)?;
+    let mut hasher = DefaultHasher::new();
+    source.hash(&mut hasher);
+    let stem = source.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
+    let copy = folder.join(format!("{stem}-{:08x}.html", hasher.finish() & 0xffff_ffff));
+    std::fs::write(&copy, page)?;
+    Ok(copy)
 }
 
 /// Buttons on the "changed on disk" bar.

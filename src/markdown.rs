@@ -3,5 +3,6 @@
 
 pub mod blocks;
 pub mod highlight;
+pub mod html;
 pub mod inlines;
 pub mod render;
