@@ -17,6 +17,20 @@ One window, five themes, all built in: Light, Dark, Sepia, Midnight and High con
 - Five built-in themes (Light, Dark, Sepia, Midnight, High contrast), or follow the system; add your own as small text files
 - Two dependencies (`eframe` for the window, `rfd` for the folder window); the Markdown parser and everything else is our own code
 
+## Install
+
+Download the latest version from [Releases](https://github.com/witseko/rubrique/releases):
+
+- **macOS** (Apple Silicon and Intel): open the `.dmg` and drag rubrique to
+  Applications. The app is not notarized yet, so the first time right-click
+  rubrique and choose **Open**.
+- **Debian / Ubuntu**: `sudo apt install ./rubrique_X.Y.Z-1_amd64.deb`
+- **Other Linux**: unpack the `.tar.gz` and run `./install.sh` (installs to
+  `~/.local`; `sudo ./install.sh /usr/local` for all users).
+
+Every push to `main` also builds these packages; find them under the run's
+artifacts in [Actions](https://github.com/witseko/rubrique/actions/workflows/release.yml).
+
 ## Build and run
 
 Needs Rust 1.95 or newer.
@@ -79,5 +93,8 @@ rubrique follows [Semantic Versioning](https://semver.org); see
 [`CHANGELOG.md`](CHANGELOG.md) for what changed in each version. To release:
 
 1. Move the notes under **Unreleased** in `CHANGELOG.md` to a new version heading.
-2. Set the same `version` in `Cargo.toml` and commit.
-3. Tag the commit `rubrique-vX.Y.Z` and push the tag.
+2. Set the same `version` in `Cargo.toml` and push to `main`.
+
+The Release workflow sees a version with no `rubrique-vX.Y.Z` tag, builds the macOS
+and Linux packages, then creates the tag and a GitHub release with the
+changelog notes. Pushing a `rubrique-vX.Y.Z` tag yourself works too.
