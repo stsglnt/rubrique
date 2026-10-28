@@ -9,7 +9,7 @@ One window, five themes, all built in: Light, Dark, Sepia, Midnight and High con
 
 ## Features
 
-- File explorer with several folders at once (**+ Add folder…** opens the system folder window), showing **all** files; a **Markdown only** checkbox hides the rest
+- File explorer with several folders at once (the folder-plus icon opens the system folder window), showing **all** files; a **Markdown only** checkbox hides the rest
 - Scratch files (`Cmd/Ctrl+N`): an empty note with a random name, for pasting things for later
 - Right-click any file or folder: copy absolute path, relative path, or name; rename files
 - Plain-text editor with Markdown syntax colors, and a rendered preview (`Cmd/Ctrl+E`)

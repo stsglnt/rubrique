@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use eframe::egui::{
-    self, Align, Align2, Color32, FontId, Layout, Rect, Response, RichText, Sense, Stroke, StrokeKind, Ui, Vec2,
-    WidgetInfo, pos2, vec2,
+    self, Align, Align2, Color32, FontId, Layout, Rect, Response, RichText, Sense, Stroke, StrokeKind, Ui, WidgetInfo,
+    pos2, vec2,
 };
 
 use crate::theme::catalog::{ThemeChoice, Themes};
@@ -30,13 +30,6 @@ pub struct ScratchInfo<'a> {
     pub is_default: bool,
 }
 
-/// Size of the gear button at the bottom of the explorer.
-const GEAR_BUTTON_SIZE: Vec2 = vec2(30.0, 24.0);
-const GEAR_RING_RADIUS: f32 = 5.0;
-const GEAR_HOLE_RADIUS: f32 = 2.0;
-const GEAR_TOOTH_LENGTH: f32 = 2.5;
-const GEAR_TEETH: u16 = 8;
-const GEAR_STROKE: f32 = 1.6;
 /// Space around the panel's content.
 const PANEL_MARGIN: i8 = 14;
 const TITLE_SIZE: f32 = 16.0;
@@ -63,38 +56,6 @@ enum BarKind {
     Accent,
     Text,
     Weak,
-}
-
-/// Gear button that opens Settings; highlighted while the panel is open.
-pub fn gear_button(ui: &mut Ui, open: bool) -> Response {
-    let (rect, response) = ui.allocate_exact_size(GEAR_BUTTON_SIZE, Sense::click());
-    response.widget_info(|| WidgetInfo::selected(egui::Role::Button, true, open, "Settings"));
-    let visuals = ui.visuals();
-    let fill = if open {
-        visuals.selection.bg_fill
-    } else if response.hovered() {
-        visuals.widgets.hovered.weak_bg_fill
-    } else {
-        Color32::TRANSPARENT
-    };
-    let color = if open { visuals.strong_text_color() } else { ui.style().interact(&response).fg_stroke.color };
-    let painter = ui.painter();
-    painter.rect_filled(rect, visuals.widgets.inactive.corner_radius, fill);
-    paint_gear(painter, rect.center(), color);
-    response.on_hover_text("Settings (Cmd+,)")
-}
-
-/// A ring with a hole and teeth around it.
-fn paint_gear(painter: &egui::Painter, center: egui::Pos2, color: Color32) {
-    let stroke = Stroke::new(GEAR_STROKE, color);
-    painter.circle_stroke(center, GEAR_RING_RADIUS, stroke);
-    painter.circle_stroke(center, GEAR_HOLE_RADIUS, stroke);
-    for tooth in 0..GEAR_TEETH {
-        let angle = f32::from(tooth) * std::f32::consts::TAU / f32::from(GEAR_TEETH);
-        let direction = vec2(angle.cos(), angle.sin());
-        let inner = center + direction * GEAR_RING_RADIUS;
-        painter.line_segment([inner, inner + direction * GEAR_TOOTH_LENGTH], stroke);
-    }
 }
 
 /// Draw the settings panel's content. Returns what the user clicked.

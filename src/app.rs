@@ -11,10 +11,11 @@ use crate::document::view::{focus_editor, handle_editor_shortcuts, show_editor, 
 use crate::explorer::paths::{absolute_path_text, name_text};
 use crate::explorer::tree::{FsNode, is_markdown_path};
 use crate::explorer::view::{ExplorerAction, TreeContext, show_explorer};
+use crate::icons::{Icon, icon_button};
 use crate::markdown::blocks::{Block, parse_blocks};
 use crate::markdown::html::{file_url, html_page, is_html_path, with_base};
 use crate::scratch::{create_scratch, rename_target};
-use crate::settings::view::{ScratchInfo, SettingsAction, gear_button, show_settings};
+use crate::settings::view::{ScratchInfo, SettingsAction, show_settings};
 use crate::settings::{MarkdownView, Settings, default_scratch_folder, themes_folder};
 use crate::theme::catalog::Themes;
 use crate::theme::style::{apply_theme, page_fill};
@@ -849,7 +850,8 @@ impl eframe::App for RubriqueApp {
             egui::Panel::bottom("explorer-footer").show_separator_line(false).show(ui, |ui| {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    if gear_button(ui, self.settings_open).clicked() {
+                    let gear = icon_button(ui, Icon::Gear, "Settings", "Settings (Cmd+,)", self.settings_open);
+                    if gear.clicked() {
                         self.settings_open = !self.settings_open;
                     }
                 });

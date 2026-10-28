@@ -12,10 +12,12 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 - App icon: a lowercase "m" ending in a marker tip. Shown on the window,
   in the macOS app and in Linux menus.
-- Scratch files: **+ Scratch** or `Cmd/Ctrl+N` creates an empty note with a
+- Scratch files: the page-plus icon or `Cmd/Ctrl+N` creates an empty note with a
   random name like `2026-10-28-brave-otter.md` in a scratches folder
   (set in Settings → Files).
 - **Rename…** in a file's right-click menu.
+- The explorer's top row uses icons: add folder, new scratch and refresh
+  (hover for a tip), like the settings gear.
 - **Open in browser** (`Cmd/Ctrl+Shift+B`, or the status bar button): shows
   the Markdown as a full web page in the current theme's colors, or an HTML
   file as it is, in the default browser. Unsaved changes are included.

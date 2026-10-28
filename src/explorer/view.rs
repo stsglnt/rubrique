@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, RichText, Ui};
 
+use crate::icons::{Icon, icon_button};
+
 use super::paths::{absolute_path_text, name_text, relative_path_text};
 use super::tree::{Children, FsNode, NodeKind, is_markdown_path};
 
@@ -50,14 +52,14 @@ pub fn show_explorer(
 ) -> Option<ExplorerAction> {
     let mut action = None;
     ui.horizontal(|ui| {
-        if ui.button("+ Folder…").on_hover_text("Choose a folder to show in the explorer").clicked() {
+        if icon_button(ui, Icon::FolderPlus, "Add folder", "Add a folder to the explorer", false).clicked() {
             action = Some(ExplorerAction::AddFolder);
         }
-        if ui.button("+ Scratch").on_hover_text("New scratch file for quick notes (Cmd+N)").clicked() {
+        if icon_button(ui, Icon::NotePlus, "New scratch", "New scratch file for quick notes (Cmd+N)", false).clicked() {
             action = Some(ExplorerAction::NewScratch);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.small_button("Refresh").on_hover_text("Re-read all folders from disk").clicked() {
+            if icon_button(ui, Icon::Refresh, "Refresh", "Re-read all folders from disk", false).clicked() {
                 action = Some(ExplorerAction::Refresh);
             }
         });
