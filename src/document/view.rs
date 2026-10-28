@@ -9,7 +9,7 @@ use super::line_ops::{Direction, Selection, duplicate_lines, insert_text, move_l
 use super::text_file::Document;
 use super::text_stats::{TextStats, text_stats};
 use crate::markdown::blocks::SourceBlock;
-use crate::markdown::render::{render_top_block, top_gap};
+use crate::markdown::render::{CodeAction, render_top_block, take_code_action, top_gap};
 
 /// Widest the preview text gets, for comfortable reading.
 const PREVIEW_MAX_WIDTH: f32 = 760.0;
@@ -70,12 +70,14 @@ pub struct BlockEdit {
 }
 
 /// What the user did in the preview.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PreviewEvent {
     /// Clicked a block: edit it.
     StartEdit(usize),
     /// Done with the block being edited (Esc, Cmd+Enter, Done, or a click elsewhere).
     FinishEdit,
+    /// Copy or Prettify on a code block inside top-level block `index`.
+    Code { index: usize, action: CodeAction },
 }
 
 /// Opacity of the accent behind a block under the mouse.
@@ -100,7 +102,9 @@ pub fn show_preview(ui: &mut Ui, blocks: &[SourceBlock], mut editing: Option<&mu
                     Some(edit) if edit.index == index => edit_box(ui, edit),
                     _ => clickable_block(ui, index, source),
                 };
-                event = event.or(found);
+                if event.is_none() {
+                    event = found;
+                }
             }
         });
     });
@@ -120,6 +124,10 @@ fn clickable_block(ui: &mut Ui, index: usize, source: &SourceBlock) -> Option<Pr
     if hovered {
         let fill = ui.visuals().hyperlink_color.gamma_multiply(HOVER_TINT);
         ui.painter().set(background, egui::Shape::rect_filled(rect, 6, fill));
+    }
+    // A code block button was clicked: that, not editing the block.
+    if let Some(action) = take_code_action(ui.ctx()) {
+        return Some(PreviewEvent::Code { index, action });
     }
     // A click (pointer released without dragging) that did not open a link;
     // drags select text for notes instead.

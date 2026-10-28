@@ -20,6 +20,7 @@ One window, five themes, all built in: Light, Dark, Sepia, Midnight and High con
 - **Compare tools**: run two AI tools on the same request and pick the best parts of each in the merge screen
 - **Resolve notes with AI**: one note or all of them, reviewed in the merge screen
 - **Skills**: reusable AI instructions as `SKILL.md` folders (the same format as Claude Code skills), picked from the Ask bar; the skills folder is set in Settings
+- Code blocks in the preview have **Copy**, and **Prettify** for ` ```json `, ` ```sql ` and ` ```xml ` blocks
 - **Format** (`Cmd/Ctrl+Shift+F`): pretty-print JSON, SQL (PostgreSQL style, like pgFormatter) or XML, for the whole file or the selection
 - **Open in browser** (`Cmd/Ctrl+Shift+B`): Markdown as a full web page in your theme's colors, or HTML files as they are
 - Atomic saves and an unsaved-changes prompt

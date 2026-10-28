@@ -29,6 +29,7 @@ use crate::icons::{Icon, icon_button};
 use crate::markdown::blocks::{SourceBlock, parse_blocks, parse_source_blocks};
 use crate::markdown::html::{file_url, html_page, is_html_path, with_base};
 use crate::markdown::notes::{self, Note, find_notes, insert_note, remove_note, rewrite_note};
+use crate::markdown::render::CodeAction;
 use crate::scratch::{create_scratch, rename_target};
 use crate::settings::view::{AiInfo, ScratchInfo, SettingsAction, show_settings};
 use crate::settings::{MarkdownView, Settings, default_scratch_folder, default_skills_folder, themes_folder};
@@ -678,6 +679,55 @@ impl RubriqueApp {
         self.show_status(format!("Formatted as {}", language.name()));
     }
 
+    /// Copy or Prettify on a code block in the preview. Prettify rewrites the
+    /// code inside block `index` in the file.
+    fn code_block_action(&mut self, ctx: &Context, index: usize, action: CodeAction) {
+        let (info, code) = match action {
+            CodeAction::Copy(code) => {
+                let lines = code.lines().count();
+                ctx.copy_text(code);
+                let noun = if lines == 1 { "line" } else { "lines" };
+                self.show_status(format!("Copied the code ({lines} {noun})"));
+                return;
+            }
+            CodeAction::Prettify { info, code } => (info, code),
+        };
+        let Some(language) = Language::from_code_info(&info) else {
+            return;
+        };
+        let formatted = match format(language, &code) {
+            Ok(formatted) => formatted.trim_end_matches('\n').to_string(),
+            Err(error) => {
+                self.show_status(format!("Cannot prettify this {}: {error}", language.name()));
+                return;
+            }
+        };
+        if formatted == code {
+            self.show_status(format!("This {} is already tidy", language.name()));
+            return;
+        }
+        let OpenFile::Text { document, preview, .. } = &mut self.open_file else {
+            return;
+        };
+        let blocks = parse_source_blocks(&document.text);
+        // The code as written between the fences; indented code (inside a
+        // list) does not match line for line, so it is left to Format.
+        let found = blocks.get(index).and_then(|block| {
+            let start = block.range.start + document.text[block.range.clone()].find(code.as_str())?;
+            Some(start..start + code.len())
+        });
+        let Some(range) = found else {
+            self.show_status(
+                "Prettify works on code blocks that are not indented; use Format in Edit mode".to_string(),
+            );
+            return;
+        };
+        document.text.replace_range(range, &formatted);
+        document.on_text_changed();
+        *preview = None;
+        self.show_status(format!("Prettified the {} (save to keep it)", language.name()));
+    }
+
     /// Colors of the theme on screen now (for System, the light or dark one in use).
     fn current_palette(&self, ctx: &Context) -> crate::theme::palette::Palette {
         if let crate::theme::catalog::ThemeChoice::Named(id) = &self.settings.theme
@@ -910,6 +960,7 @@ impl RubriqueApp {
         match preview_event {
             Some(PreviewEvent::StartEdit(index)) => self.start_block_edit(index),
             Some(PreviewEvent::FinishEdit) => self.finish_block_edit(),
+            Some(PreviewEvent::Code { index, action }) => self.code_block_action(ui.ctx(), index, action),
             None => {}
         }
         if showing_preview && self.block_edit.is_none() && self.note_draft.is_none() {

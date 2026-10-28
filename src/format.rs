@@ -27,6 +27,17 @@ impl Language {
         }
     }
 
+    /// The language of a fenced code block from its info string (` ```sql `).
+    pub fn from_code_info(info: &str) -> Option<Self> {
+        let name = info.split_whitespace().next()?.to_ascii_lowercase();
+        match name.as_str() {
+            "json" | "jsonc" | "geojson" | "json5" => Some(Language::Json),
+            "sql" | "psql" | "pgsql" | "postgres" | "postgresql" | "plpgsql" => Some(Language::Sql),
+            "xml" | "xsd" | "xsl" | "xslt" | "svg" | "plist" => Some(Language::Xml),
+            _ => None,
+        }
+    }
+
     /// Guess the language of a snippet: `{` or `[` is JSON, `<` is XML, the rest SQL.
     pub fn guess(text: &str) -> Self {
         match text.trim_start().chars().next() {
@@ -94,6 +105,16 @@ fn floor_char_boundary(text: &str, index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn languages_from_code_info() {
+        assert_eq!(Language::from_code_info("sql"), Some(Language::Sql));
+        assert_eq!(Language::from_code_info("PostgreSQL title=\"q\""), Some(Language::Sql));
+        assert_eq!(Language::from_code_info("json"), Some(Language::Json));
+        assert_eq!(Language::from_code_info("xml"), Some(Language::Xml));
+        assert_eq!(Language::from_code_info("rust"), None);
+        assert_eq!(Language::from_code_info(""), None);
+    }
 
     #[test]
     fn languages_from_paths_and_snippets() {

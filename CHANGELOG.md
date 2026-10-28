@@ -21,6 +21,10 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   **Review in merge** shows each change next to the original, and nothing
   changes until you press **Apply**. The first run in a folder shows the
   exact command and asks first.
+- Code blocks in the preview: hover one to get **Copy**, and **Prettify**
+  for ` ```json `, ` ```sql ` (also `psql`, `postgres`) and ` ```xml `
+  blocks, which formats the code in the file like Format does. The
+  language label and buttons sit in a slim row above the code.
 - Compare tools: pick **Compare with** in the Ask bar to run a second tool
   at the same time. The output panel shows both answers side by side, and
   **Compare in merge** puts them left and right of the result, with the

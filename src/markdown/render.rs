@@ -1,8 +1,6 @@
 //! Draw parsed Markdown blocks with egui widgets (the read-only preview).
 
-use eframe::egui::{
-    self, Align, Align2, Color32, FontId, Layout, Margin, RichText, Sense, Stroke, StrokeKind, Ui, pos2, vec2,
-};
+use eframe::egui::{self, Align, Color32, Layout, Margin, RichText, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 
 use super::blocks::{Block, List};
 use super::inlines::{Inline, is_openable_url};
@@ -47,8 +45,12 @@ const CODE_RADIUS: u8 = 6;
 /// Inner margin (x, y) of a code block.
 const CODE_MARGIN: (i8, i8) = (14, 12);
 const CODE_LABEL_SIZE: f32 = 11.0;
-/// Offset of the language label from the code block's top-right corner.
-const CODE_LABEL_OFFSET: (f32, f32) = (10.0, 6.0);
+/// Space between the code block's right edge and its buttons.
+const CODE_BUTTON_INSET: f32 = 5.0;
+/// Height of the row above the code with the language and the buttons.
+const CODE_BUTTON_HEIGHT: f32 = 18.0;
+/// Top margin above that row.
+const CODE_HEADER_TOP: i8 = 5;
 /// Opacity of the warning color behind text that has a note.
 const NOTE_TINT: f32 = 0.35;
 /// Total space a thematic break takes, its line in the middle.
@@ -117,23 +119,82 @@ fn render_heading(ui: &mut Ui, level: u8, content: &[Inline]) {
     }
 }
 
-/// Code block in an outlined box, with its info string as a small label at the top right.
+/// A button clicked on a code block in the preview.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CodeAction {
+    /// Copy this code.
+    Copy(String),
+    /// Pretty-print this code as the language of its info string.
+    Prettify { info: String, code: String },
+}
+
+/// The code block button clicked this frame, if any (taken once).
+pub fn take_code_action(ctx: &egui::Context) -> Option<CodeAction> {
+    ctx.data_mut(|data| {
+        let action = data.get_temp::<CodeAction>(code_action_id());
+        data.remove::<CodeAction>(code_action_id());
+        action
+    })
+}
+
+fn code_action_id() -> egui::Id {
+    egui::Id::unique("rubrique-code-action")
+}
+
+/// Code block in an outlined box, with its info string as a small label at
+/// the top right. Under the mouse, Copy (and Prettify for JSON, SQL and
+/// XML) show there too.
 fn render_code(ui: &mut Ui, info: &str, code: &str) {
     let visuals = ui.visuals();
     let frame = egui::Frame::new()
         .fill(visuals.code_bg_color)
         .stroke(visuals.widgets.noninteractive.bg_stroke)
         .corner_radius(CODE_RADIUS)
-        .inner_margin(Margin::symmetric(CODE_MARGIN.0, CODE_MARGIN.1));
+        .inner_margin(Margin { top: CODE_HEADER_TOP, ..Margin::symmetric(CODE_MARGIN.0, CODE_MARGIN.1) });
+    let mut header = egui::Rect::NOTHING;
     let response = frame.show(ui, |ui| {
         ui.set_width(ui.available_width());
+        // A slim row above the code for the language and the buttons, so
+        // they never cover the code.
+        header = ui.allocate_exact_size(vec2(ui.available_width(), CODE_BUTTON_HEIGHT), Sense::hover()).0;
         ui.label(RichText::new(code).monospace().size(CODE_SIZE).line_height(Some(CODE_LINE_HEIGHT)));
     });
-    if !info.is_empty() {
-        let corner = response.response.rect.right_top() + vec2(-CODE_LABEL_OFFSET.0, CODE_LABEL_OFFSET.1);
-        let color = ui.visuals().weak_text_color();
-        ui.painter().text(corner, Align2::RIGHT_TOP, info, FontId::proportional(CODE_LABEL_SIZE), color);
-    }
+    // The header spans the box's full width, minus a small inset on the right.
+    let header = egui::Rect::from_min_max(
+        egui::pos2(response.response.rect.left() + f32::from(CODE_MARGIN.0), header.top()),
+        egui::pos2(response.response.rect.right() - CODE_BUTTON_INSET, header.bottom()),
+    );
+    code_header(ui, header, info, code, ui.rect_contains_pointer(response.response.rect));
+}
+
+/// The language at the right of the header; under the mouse, Copy (and
+/// Prettify for JSON, SQL and XML) after it.
+fn code_header(ui: &mut Ui, header: egui::Rect, info: &str, code: &str, hovered: bool) {
+    let layout = egui::Layout::right_to_left(egui::Align::Center);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(header).layout(layout), |ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let mut action = None;
+        if hovered {
+            let fill = ui.visuals().widgets.inactive.weak_bg_fill;
+            let button =
+                |text: &str| egui::Button::new(RichText::new(text).size(CODE_LABEL_SIZE + 1.0)).fill(fill).small();
+            if ui.add(button("Copy")).on_hover_text("Copy the code").clicked() {
+                action = Some(CodeAction::Copy(code.to_string()));
+            }
+            if let Some(language) = crate::format::Language::from_code_info(info) {
+                let tip = format!("Pretty-print this {} in the file", language.name());
+                if ui.add(button("Prettify")).on_hover_text(tip).clicked() {
+                    action = Some(CodeAction::Prettify { info: info.to_string(), code: code.to_string() });
+                }
+            }
+        }
+        if !info.is_empty() {
+            ui.label(RichText::new(info).size(CODE_LABEL_SIZE).weak());
+        }
+        if let Some(action) = action {
+            ui.ctx().data_mut(|data| data.insert_temp(code_action_id(), action));
+        }
+    });
 }
 
 /// Quoted blocks in softer text, with a bar in the accent color on the left.
