@@ -394,7 +394,11 @@ impl RubriqueApp {
                 }
             }
             MemoAction::Open(url) => match resolve_url(&folder, &url) {
-                Some(path) => open_with_system(&path),
+                Some(path) => {
+                    if let Err(error) = crate::media::open_with_system(&path) {
+                        self.show_status(error);
+                    }
+                }
                 None => ctx.open_url(egui::OpenUrl::new_tab(url)),
             },
         }
@@ -546,10 +550,4 @@ fn wav_duration(path: &Path) -> Option<f64> {
     let mut start = Vec::with_capacity(HEADER_READ);
     file.take(HEADER_READ as u64).read_to_end(&mut start).ok()?;
     wav::duration_seconds(&start, length)
-}
-
-/// Open a file in the program the system uses for it.
-fn open_with_system(path: &Path) {
-    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-    let _ = std::process::Command::new(opener).arg(path).spawn();
 }

@@ -19,17 +19,20 @@ pub enum Icon {
     /// Add a folder to the explorer.
     FolderPlus,
     /// New scratch file.
-    NotePlus,
+    NewScratch,
     /// Re-read from disk.
     Refresh,
     /// Ask AI.
     Sparkle,
     /// Stop a running AI tool.
     Stop,
+    /// Play a video or a voice memo.
+    Play,
+    /// Close a tab. A plain cross with no accent: it sits on every tab, and
+    /// a colored mark there would pull the eye from the file names.
+    Close,
     /// Record a voice memo.
     Mic,
-    /// Play a voice memo.
-    Play,
     /// Pause a voice memo.
     Pause,
 }
@@ -120,16 +123,24 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
             painter.circle_filled(center, 1.6, accent);
         }
         Icon::FolderPlus => {
-            // Folder with a tab; the plus badge at the bottom right is the accent.
-            let outline = [at(-6.5, -4.5), at(-2.0, -4.5), at(-0.5, -3.0), at(6.5, -3.0), at(6.5, 5.5), at(-6.5, 5.5)];
+            // Folder with a tab; the round plus badge at the bottom right is the accent.
+            let outline = [at(-6.5, -5.5), at(-2.0, -5.5), at(-0.4, -3.9), at(6.5, -3.9), at(6.5, 5.5), at(-6.5, 5.5)];
             stroke_path(painter, &round_corners(&outline, CORNER, true), true, line);
-            plus_badge(painter, at(6.0, 5.5), detail, behind);
+            plus_badge(painter, at(4.0, 3.5), accent, behind);
         }
-        Icon::NotePlus => {
-            // Page with a cut corner; the plus badge at the bottom right is the accent.
-            let outline = [at(-4.5, -6.5), at(1.0, -6.5), at(4.5, -3.0), at(4.5, 6.5), at(-4.5, 6.5)];
-            stroke_path(painter, &round_corners(&outline, CORNER, true), true, line);
-            plus_badge(painter, at(5.0, 5.5), detail, behind);
+        Icon::NewScratch => {
+            // A square open at the top right with a pencil writing into it; the
+            // pencil tip is the accent, like the marker tip of the app icon.
+            let square = [at(0.0, -5.5), at(-6.5, -5.5), at(-6.5, 6.5), at(5.5, 6.5), at(5.5, 0.0)];
+            stroke_path(painter, &round_corners(&square, CORNER, false), false, line);
+            let along = vec2(1.0, -1.0).normalized();
+            let across = vec2(1.0, 1.0).normalized();
+            let tip = at(-1.6, 1.6);
+            let cone = tip + along * 2.2;
+            let back = tip + along * 10.4;
+            let body = [cone + across, back + across, back - across, cone - across];
+            stroke_path(painter, &body, true, line);
+            stroke_path(painter, &[cone + across, tip, cone - across], false, detail);
         }
         Icon::Refresh => {
             // Most of a circle; the arrowhead at its end is the accent.
@@ -165,6 +176,17 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
             let square = egui::Rect::from_center_size(center, vec2(3.8, 3.8));
             painter.rect_filled(square, 1.0, accent);
         }
+        Icon::Play => {
+            // A circle; the triangle inside is the accent.
+            stroke_path(painter, &circle_points(center, 6.2), true, line);
+            let triangle = [at(-1.6, -2.6), at(2.8, 0.0), at(-1.6, 2.6)];
+            stroke_path(painter, &round_corners(&triangle, 0.6, true), true, detail);
+        }
+        Icon::Close => {
+            // Two crossing strokes, smaller than the box so they read as a control.
+            stroke_path(painter, &[at(-3.5, -3.5), at(3.5, 3.5)], false, line);
+            stroke_path(painter, &[at(3.5, -3.5), at(-3.5, 3.5)], false, line);
+        }
         Icon::Mic => {
             // A capsule in a cradle; the stand under it is the accent.
             let capsule = [at(-2.6, -6.5), at(2.6, -6.5), at(2.6, 1.0), at(-2.6, 1.0)];
@@ -176,23 +198,28 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
             stroke_path(painter, &[at(0.0, 3.5), at(0.0, 6.5)], false, detail);
             stroke_path(painter, &[at(-2.5, 6.5), at(2.5, 6.5)], false, detail);
         }
-        Icon::Play => {
-            // A circle; the triangle inside is the accent.
-            stroke_path(painter, &circle_points(center, 6.2), true, line);
-            painter.add(egui::Shape::convex_polygon(
-                vec![at(-1.6, -3.0), at(3.2, 0.0), at(-1.6, 3.0)],
-                accent,
-                Stroke::NONE,
-            ));
-        }
         Icon::Pause => {
             // A circle; the two bars inside are the accent.
             stroke_path(painter, &circle_points(center, 6.2), true, line);
-            for x in [-1.6, 1.6] {
-                painter.rect_filled(egui::Rect::from_center_size(at(x, 0.0), vec2(1.6, 5.4)), 0.8, accent);
-            }
+            stroke_path(painter, &[at(-1.6, -2.6), at(-1.6, 2.6)], false, detail);
+            stroke_path(painter, &[at(1.6, -2.6), at(1.6, 2.6)], false, detail);
         }
     }
+}
+
+/// A small flat button with `icon` (like a tab's close cross), `size` wide
+/// and tall. `label` is what screen readers announce.
+pub fn small_icon_button(ui: &mut Ui, icon: Icon, size: f32, label: &str, tip: &str) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(egui::Role::Button, true, label));
+    let visuals = ui.visuals();
+    let fill = if response.hovered() { visuals.widgets.hovered.weak_bg_fill } else { Color32::TRANSPARENT };
+    let color = if response.hovered() { visuals.strong_text_color() } else { visuals.weak_text_color() };
+    let painter = ui.painter();
+    painter.rect_filled(rect, visuals.widgets.inactive.corner_radius, fill);
+    let behind = if fill == Color32::TRANSPARENT { visuals.panel_fill } else { fill };
+    paint(painter, icon, rect.center(), Colors { line: color, accent: visuals.hyperlink_color, behind });
+    response.on_hover_text(tip)
 }
 
 /// Points along a quadratic curve from `start` to `end` bent toward `control`.
@@ -207,17 +234,21 @@ fn quadratic(start: Pos2, control: Pos2, end: Pos2) -> Vec<Pos2> {
         .collect()
 }
 
-/// Corner radius of outlines.
-const CORNER: f32 = 1.5;
-/// Half the length of a badge plus sign's arms.
-const PLUS_HALF: f32 = 2.25;
-/// Radius of the gap cut around a badge.
-const BADGE_GAP: f32 = 3.6;
+/// Corner radius of outlines: soft, like SF Symbols.
+const CORNER: f32 = 2.0;
+/// Radius of a badge's accent disc.
+const BADGE: f32 = 4.25;
+/// Radius of the gap cut around a badge, so it never touches the shape.
+const BADGE_GAP: f32 = 5.5;
+/// Half the length of the arms of the plus cut out of a badge.
+const PLUS_HALF: f32 = 1.75;
 
-/// A plus badge: a gap cut into the shape behind it, then the plus.
-fn plus_badge(painter: &Painter, center: Pos2, stroke: Stroke, behind: Color32) {
+/// A plus badge: a gap cut into the shape behind it, a disc in `accent`,
+/// and a plus cut out of the disc in the color behind the icon.
+fn plus_badge(painter: &Painter, center: Pos2, accent: Color32, behind: Color32) {
     painter.circle_filled(center, BADGE_GAP, behind);
-    plus(painter, center, PLUS_HALF, stroke);
+    painter.circle_filled(center, BADGE, accent);
+    plus(painter, center, PLUS_HALF, Stroke::new(LINE, behind));
 }
 
 /// A path with round joins and round ends: the line, plus a dot of the

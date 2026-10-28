@@ -50,6 +50,7 @@ fn style(palette: &Palette) -> String {
          a {{ color: var(--accent); }}\n\
          code, pre {{ font-family: ui-monospace, \"JetBrains Mono\", Menlo, monospace; font-size: 0.9em; }}\n\
          code {{ background: var(--code); padding: 0.1em 0.35em; border-radius: 4px; }}\n\
+         img, video {{ max-width: 100%; height: auto; }}\n\
          pre {{ background: var(--code); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; overflow-x: auto; }}\n\
          pre code {{ background: none; padding: 0; }}\n\
          blockquote {{ margin: 1em 0; padding: 0 0 0 16px; border-left: 3px solid var(--accent); color: var(--weak); }}\n\
@@ -176,6 +177,14 @@ fn write_inlines(out: &mut String, inlines: &[Inline]) {
                     write_inlines(out, content);
                 }
             }
+            Inline::Image { alt, url } if is_safe_link(url) => {
+                if crate::media::media_kind_of_url(url) == Some(crate::media::MediaKind::Video) {
+                    let _ = write!(out, "<video controls src=\"{}\" title=\"{}\"></video>", escape(url), escape(alt));
+                } else {
+                    let _ = write!(out, "<img src=\"{}\" alt=\"{}\">", escape(url), escape(alt));
+                }
+            }
+            Inline::Image { alt, .. } => out.push_str(&escape(alt)),
             Inline::LineBreak => out.push_str("<br>\n"),
             // Notes stay private to rubrique, like the comments they come from.
             Inline::Note { .. } => {}
@@ -279,6 +288,13 @@ mod tests {
         );
         assert_eq!(body("[x](javascript:a.wav)"), "<p>x</p>\n");
         assert_eq!(body("Listen: [x](a.wav)"), "<p>Listen: <a href=\"a.wav\">x</a></p>\n");
+    }
+
+    #[test]
+    fn images_and_videos() {
+        assert_eq!(body("![a \"cat\"](img/cat.png)"), "<p><img src=\"img/cat.png\" alt=\"a &quot;cat&quot;\"></p>\n");
+        assert_eq!(body("![demo](clip.mp4)"), "<p><video controls src=\"clip.mp4\" title=\"demo\"></video></p>\n");
+        assert_eq!(body("![x](javascript:alert(1))"), "<p>x</p>\n");
     }
 
     #[test]

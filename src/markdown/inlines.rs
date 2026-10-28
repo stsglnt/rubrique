@@ -17,6 +17,11 @@ pub enum Inline {
         content: Vec<Inline>,
         url: String,
     },
+    /// `![alt](url)`: an image, or a video when the url names one.
+    Image {
+        alt: String,
+        url: String,
+    },
     /// Hard line break (two trailing spaces or a trailing backslash).
     LineBreak,
     /// A note comment (`<!-- note on "quote": text -->`) about the text
@@ -44,6 +49,7 @@ fn parse_chars(chars: &[char]) -> Vec<Inline> {
             '`' => Some(parse_code_span(chars, index, &mut output)),
             '<' => parse_comment(chars, index, &mut output).or_else(|| parse_autolink(chars, index, &mut output)),
             '[' => parse_link(chars, index, &mut output),
+            '!' if chars.get(index + 1) == Some(&'[') => parse_image(chars, index, &mut output),
             '*' | '_' | '~' => Some(parse_delimiter_run(chars, index, &mut output)),
             _ => None,
         };
@@ -169,18 +175,51 @@ fn parse_autolink(chars: &[char], index: usize, output: &mut Output) -> Option<u
 
 /// `[text](url "optional title")`
 fn parse_link(chars: &[char], index: usize, output: &mut Output) -> Option<usize> {
-    let text_close = find_closing(chars, index, '[', ']')?;
+    let (text_close, url, next) = link_parts(chars, index)?;
+    let content = parse_chars(&chars[index + 1..text_close]);
+    output.push(Inline::Link { content, url });
+    Some(next)
+}
+
+/// `![alt](url "optional title")`; the alt text is kept as plain text.
+fn parse_image(chars: &[char], index: usize, output: &mut Output) -> Option<usize> {
+    let (text_close, url, next) = link_parts(chars, index + 1)?;
+    let alt = plain_text(&parse_chars(&chars[index + 2..text_close]));
+    output.push(Inline::Image { alt, url });
+    Some(next)
+}
+
+/// For `[text](url …)` starting at `open`: where the `]` is, the url, and
+/// the index after the `)`.
+fn link_parts(chars: &[char], open: usize) -> Option<(usize, String, usize)> {
+    let text_close = find_closing(chars, open, '[', ']')?;
     if chars.get(text_close + 1) != Some(&'(') {
         return None;
     }
     let destination_close = find_closing(chars, text_close + 1, '(', ')')?;
     let destination: String = chars[text_close + 2..destination_close].iter().collect();
-    // The title after the first whitespace is not shown in v0.1.
+    // The title after the first whitespace is not shown.
     let url = destination.split_whitespace().next().unwrap_or("");
     let url = url.trim_start_matches('<').trim_end_matches('>').to_string();
-    let content = parse_chars(&chars[index + 1..text_close]);
-    output.push(Inline::Link { content, url });
-    Some(destination_close + 1)
+    Some((text_close, url, destination_close + 1))
+}
+
+/// The text of `inlines` without any formatting.
+fn plain_text(inlines: &[Inline]) -> String {
+    let mut text = String::new();
+    for inline in inlines {
+        match inline {
+            Inline::Text(part) | Inline::Code(part) => text.push_str(part),
+            Inline::Emphasis(children) | Inline::Strong(children) | Inline::Strikethrough(children) => {
+                text.push_str(&plain_text(children));
+            }
+            Inline::Link { content, .. } => text.push_str(&plain_text(content)),
+            Inline::Image { alt, .. } => text.push_str(alt),
+            Inline::LineBreak => text.push(' '),
+            Inline::Note { .. } => {}
+        }
+    }
+    text
 }
 
 /// `*em*`, `_em_`, `**strong**`, `__strong__`, `***both***`, `~~strike~~`.
@@ -317,6 +356,23 @@ mod tests {
     #[test]
     fn plain_text() {
         assert_eq!(parse_inlines("hello world"), vec![text("hello world")]);
+    }
+
+    #[test]
+    fn images_keep_alt_text_and_url() {
+        let image = |alt: &str, url: &str| Image { alt: alt.to_string(), url: url.to_string() };
+        assert_eq!(parse_inlines("![a *cat*](img/cat.png)"), vec![image("a cat", "img/cat.png")]);
+        assert_eq!(
+            parse_inlines("see ![](clip.mp4 \"Demo\") here"),
+            vec![text("see "), image("", "clip.mp4"), text(" here")]
+        );
+        // A linked image: the image is the link's content.
+        assert_eq!(
+            parse_inlines("[![logo](logo.png)](https://example.com)"),
+            vec![Link { content: vec![image("logo", "logo.png")], url: "https://example.com".to_string() }]
+        );
+        // A lone `!` or one before a plain bracket stays text.
+        assert_eq!(parse_inlines("wow! [x]"), vec![text("wow! [x]")]);
     }
 
     #[test]

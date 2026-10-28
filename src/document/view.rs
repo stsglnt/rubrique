@@ -1,5 +1,7 @@
 //! Draw the editor and the preview, and apply editor keyboard shortcuts.
 
+use std::path::{Path, PathBuf};
+
 use eframe::egui::text::{CCursor, CCursorRange};
 use eframe::egui::text_edit::TextEditState;
 use eframe::egui::{self, Context, Id, Key, Modifiers, TextBuffer, Ui};
@@ -9,7 +11,9 @@ use super::line_ops::{Direction, Selection, duplicate_lines, insert_text, move_l
 use super::text_file::Document;
 use super::text_stats::{TextStats, text_stats};
 use crate::markdown::blocks::SourceBlock;
-use crate::markdown::render::{CodeAction, render_top_block, take_code_action, top_gap};
+use crate::markdown::render::{
+    CodeAction, render_top_block, set_image_folder, take_code_action, take_play_request, top_gap,
+};
 use crate::voice::view::{MemoAction, take_memo_action};
 
 /// Widest the preview text gets, for comfortable reading.
@@ -24,6 +28,33 @@ fn editor_id() -> Id {
     Id::unique("rubrique-editor")
 }
 
+/// The editor's cursor, selection and undo history for a tab that is not
+/// shown. There is one editor widget, so each tab keeps its own copy.
+#[derive(Clone)]
+pub struct EditorState(Box<TextEditState>);
+
+impl std::fmt::Debug for EditorState {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("EditorState")
+    }
+}
+
+/// Take the editor's state out of egui, for the tab being left.
+pub fn take_editor_state(ctx: &Context) -> Option<EditorState> {
+    let state = TextEditState::load(ctx, editor_id())?;
+    ctx.data_mut(|data| data.remove::<TextEditState>(editor_id()));
+    Some(EditorState(Box::new(state)))
+}
+
+/// Give the editor the state of the tab being shown; `None` starts fresh
+/// (so Undo never reaches into another file).
+pub fn restore_editor_state(ctx: &Context, state: Option<EditorState>) {
+    match state {
+        Some(EditorState(state)) => state.store(ctx, editor_id()),
+        None => ctx.data_mut(|data| data.remove::<TextEditState>(editor_id())),
+    }
+}
+
 /// Draw the text editor, coloring Markdown syntax when `markdown` is set.
 /// Returns status-bar stats for the cursor.
 pub fn show_editor(ui: &mut Ui, document: &mut Document, markdown: bool) -> Option<TextStats> {
@@ -35,7 +66,8 @@ pub fn show_editor(ui: &mut Ui, document: &mut Document, markdown: bool) -> Opti
         ui.ctx().fonts_mut(|fonts| fonts.layout_job(job))
     };
     let output = egui::ScrollArea::both()
-        .id_salt("editor-scroll")
+        // One scroll position per file, so each tab keeps its place.
+        .id_salt(("editor-scroll", &document.path))
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let editor = egui::TextEdit::multiline(&mut document.text)
@@ -89,6 +121,8 @@ pub enum PreviewEvent {
     FinishEdit,
     /// Copy or Prettify on a code block inside top-level block `index`.
     Code { index: usize, action: CodeAction },
+    /// Play on a video in the preview.
+    PlayVideo(PathBuf),
     /// A button on a voice memo.
     Memo(MemoAction),
 }
@@ -110,10 +144,17 @@ const BLOCK_PAD: i8 = 6;
 
 /// Draw the rendered Markdown, one clickable block at a time; the block in
 /// `editing` shows as a Markdown text box instead.
-pub fn show_preview(ui: &mut Ui, blocks: &[SourceBlock], mut editing: Option<&mut BlockEdit>) -> PreviewOutput {
+pub fn show_preview(
+    ui: &mut Ui,
+    path: &Path,
+    blocks: &[SourceBlock],
+    mut editing: Option<&mut BlockEdit>,
+) -> PreviewOutput {
     let mut event = None;
     let mut hovered = None;
-    egui::ScrollArea::vertical().id_salt("preview-scroll").auto_shrink([false, false]).show(ui, |ui| {
+    // Relative image paths are next to the file.
+    set_image_folder(ui.ctx(), path.parent().map(Path::to_path_buf));
+    egui::ScrollArea::vertical().id_salt(("preview-scroll", path)).auto_shrink([false, false]).show(ui, |ui| {
         egui::Frame::new().inner_margin(egui::Margin::symmetric(PREVIEW_MARGIN.0, PREVIEW_MARGIN.1)).show(ui, |ui| {
             ui.set_max_width(PREVIEW_MAX_WIDTH.min(ui.available_width()));
             for (index, source) in blocks.iter().enumerate() {
@@ -158,6 +199,9 @@ fn clickable_block(ui: &mut Ui, index: usize, source: &SourceBlock) -> Option<Pr
     }
     if let Some(action) = take_memo_action(ui.ctx()) {
         return Some(PreviewEvent::Memo(action));
+    }
+    if let Some(path) = take_play_request(ui.ctx()) {
+        return Some(PreviewEvent::PlayVideo(path));
     }
     // A click (pointer released without dragging) that did not open a link;
     // drags select text for notes instead.

@@ -10,6 +10,8 @@ One window, five themes, all built in: Light, Dark, Sepia, Midnight and High con
 ## Features
 
 - File explorer with several folders at once (the folder-plus icon opens the system folder window), showing **all** files; a **Markdown only** checkbox hides the rest
+- **Tabs**: every file you open gets a tab and keeps its unsaved changes, cursor and undo history; `Cmd/Ctrl+W` closes, `Ctrl+Tab` switches; tabs reopen next time
+- **Images and videos**: images (PNG, JPEG, GIF, WebP, BMP, ICO, TIFF) open in their own view, fitted or at actual size; videos show a card that plays them in your video player or the browser; `![alt](img.png)` shows images in the preview
 - Scratch files (`Cmd/Ctrl+N`): an empty note with a random name, for pasting things for later; once saved, a local model can suggest a real name from the content
 - Right-click any file or folder: copy absolute path, relative path, or name; rename files
 - Plain-text editor with Markdown syntax colors, and a rendered preview (`Cmd/Ctrl+E`)
@@ -28,7 +30,7 @@ One window, five themes, all built in: Light, Dark, Sepia, Midnight and High con
 - Notices when another program changes the open file: reloads it if you have no edits, otherwise offers a side-by-side **merge** (on disk | result | mine), reload or keep mine, without interrupting your typing
 - Line shortcuts: move (`Alt+Up/Down`), duplicate (`Cmd/Ctrl+D`), insert date (`Cmd/Ctrl+Shift+D`)
 - Five built-in themes (Light, Dark, Sepia, Midnight, High contrast), or follow the system; add your own as small text files
-- Three dependencies (`eframe` for the window, `rfd` for the file windows, `cpal` for the microphone); the Markdown parser, WAV files and everything else are our own code
+- Few dependencies (`eframe` for the window, `rfd` for the file windows, `egui_extras` and `image` to decode images, `cpal` for the microphone); the Markdown parser, WAV files and everything else are our own code
 
 <img src="docs/screenshots/ai.png" alt="rubrique comparing Claude and Codex answers in the merge screen, with the Ask bar and a hover summary from a local model" width="880">
 
@@ -78,6 +80,8 @@ curl -L --create-dirs -o ~/.local/share/whisper/ggml-small.bin \
 | Shortcut | Action |
 | --- | --- |
 | Cmd+S | Save |
+| Cmd+W | Close tab |
+| Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Cmd+E | Toggle edit / preview |
 | Cmd+, | Open or close Settings |
 | Cmd+K | Ask AI about the selection |

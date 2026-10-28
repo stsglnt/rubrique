@@ -8,6 +8,7 @@ mod explorer;
 mod format;
 mod icons;
 mod markdown;
+mod media;
 mod scratch;
 mod settings;
 #[cfg(test)]

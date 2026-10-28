@@ -81,7 +81,8 @@ pub fn show_explorer(
         if icon_button(ui, Icon::FolderPlus, "Add folder", "Add a folder to the explorer", false).clicked() {
             action = Some(ExplorerAction::AddFolder);
         }
-        if icon_button(ui, Icon::NotePlus, "New scratch", "New scratch file for quick notes (Cmd+N)", false).clicked() {
+        if icon_button(ui, Icon::NewScratch, "New scratch", "New scratch file for quick notes (Cmd+N)", false).clicked()
+        {
             action = Some(ExplorerAction::NewScratch);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

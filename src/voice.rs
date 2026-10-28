@@ -109,7 +109,7 @@ pub fn memo_link(content: &[Inline]) -> Option<MemoLink> {
 fn plain_text(inlines: &[Inline], out: &mut String) {
     for inline in inlines {
         match inline {
-            Inline::Text(text) | Inline::Code(text) => out.push_str(text),
+            Inline::Text(text) | Inline::Code(text) | Inline::Image { alt: text, .. } => out.push_str(text),
             Inline::Emphasis(children) | Inline::Strong(children) | Inline::Strikethrough(children) => {
                 plain_text(children, out);
             }

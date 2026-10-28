@@ -2,8 +2,11 @@
 
 use eframe::egui::{self, Align, Color32, Layout, Margin, RichText, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 
+use std::path::{Path, PathBuf};
+
 use super::blocks::{Block, List};
 use super::inlines::{Inline, is_openable_url};
+use crate::media::{MediaKind, image_uri, media_kind_of_url};
 
 /// Heading font sizes for levels 1 to 6.
 const HEADING_SIZES: [f32; 6] = [30.0, 24.0, 19.0, 16.0, 15.0, 14.0];
@@ -53,6 +56,9 @@ const CODE_BUTTON_HEIGHT: f32 = 18.0;
 const CODE_HEADER_TOP: i8 = 5;
 /// Opacity of the warning color behind text that has a note.
 const NOTE_TINT: f32 = 0.35;
+/// Tallest an image gets in the preview.
+const PREVIEW_IMAGE_MAX_HEIGHT: f32 = 720.0;
+const IMAGE_RADIUS: u8 = 4;
 /// Total space a thematic break takes, its line in the middle.
 const RULE_SPACING: f32 = 20.0;
 
@@ -324,9 +330,15 @@ impl Default for TextStyle {
     }
 }
 
-/// A run of text with one style, or a hard line break.
+/// A run of text with one style, an image, or a hard line break.
 enum Span {
     Text(String, TextStyle),
+    /// `![alt](url)`, inside a link when `link` is set.
+    Image {
+        alt: String,
+        url: String,
+        link: Option<String>,
+    },
     LineBreak,
 }
 
@@ -341,6 +353,7 @@ fn render_inlines(ui: &mut Ui, inlines: &[Inline], style: &TextStyle) {
             match span {
                 Span::LineBreak => ui.end_row(),
                 Span::Text(text, style) => render_span(ui, text, &style),
+                Span::Image { alt, url, link } => render_image(ui, &alt, &url, link.as_deref()),
             }
         }
     });
@@ -389,6 +402,121 @@ fn render_span(ui: &mut Ui, text: String, style: &TextStyle) {
     }
 }
 
+/// Set the folder that relative image paths in the preview resolve against
+/// (the open file's folder). Call before drawing the blocks.
+pub fn set_image_folder(ctx: &egui::Context, folder: Option<PathBuf>) {
+    ctx.data_mut(|data| match folder {
+        Some(folder) => {
+            data.insert_temp(image_folder_id(), folder);
+        }
+        None => data.remove::<PathBuf>(image_folder_id()),
+    });
+}
+
+fn image_folder_id() -> egui::Id {
+    egui::Id::unique("rubrique-image-folder")
+}
+
+/// The local file an image url points at: relative paths resolve against
+/// the open file's folder, `file://` and absolute paths are used as they
+/// are. Web and other addresses give `None`: the preview never loads
+/// anything from the network.
+fn local_media_path(ctx: &egui::Context, url: &str) -> Option<PathBuf> {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    let path = path.strip_prefix("file://").unwrap_or(path);
+    if path.is_empty() || (path.contains(':') && !path.starts_with('/')) {
+        return None;
+    }
+    let path = Path::new(path);
+    if path.is_absolute() {
+        return Some(path.to_path_buf());
+    }
+    let folder = ctx.data(|data| data.get_temp::<PathBuf>(image_folder_id()))?;
+    Some(folder.join(path))
+}
+
+/// The video a preview card asked to play this frame, if any (taken once).
+pub fn take_play_request(ctx: &egui::Context) -> Option<PathBuf> {
+    ctx.data_mut(|data| {
+        let path = data.get_temp::<PathBuf>(play_request_id());
+        data.remove::<PathBuf>(play_request_id());
+        path
+    })
+}
+
+fn play_request_id() -> egui::Id {
+    egui::Id::unique("rubrique-play-video")
+}
+
+/// An image from a local file, as wide as the text column at most; a video
+/// as a card with Play. Web images and missing files show their alt text.
+fn render_image(ui: &mut Ui, alt: &str, url: &str, link: Option<&str>) {
+    let Some(path) = local_media_path(ui.ctx(), url) else {
+        image_fallback(
+            ui,
+            alt,
+            &format!("{url}\n(web images are not loaded in the preview; Open in browser shows them)"),
+        );
+        return;
+    };
+    if media_kind_of_url(url) == Some(MediaKind::Video) {
+        video_card(ui, alt, &path);
+        return;
+    }
+    let max_width = ui.max_rect().width();
+    let image = egui::Image::new(image_uri(&path))
+        .fit_to_original_size(1.0)
+        .max_width(max_width)
+        .max_height(PREVIEW_IMAGE_MAX_HEIGHT)
+        .corner_radius(IMAGE_RADIUS);
+    if let Err(error) = image.load_for_size(ui.ctx(), vec2(max_width, PREVIEW_IMAGE_MAX_HEIGHT)) {
+        image_fallback(ui, alt, &format!("{}\n{error}", path.display()));
+        return;
+    }
+    let tip = if alt.is_empty() { path.display().to_string() } else { alt.to_string() };
+    match link {
+        Some(url) if is_openable_url(url) => {
+            let response = ui.add(image.sense(Sense::click())).on_hover_text(url);
+            if response.clicked() {
+                ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+            }
+        }
+        _ => {
+            ui.add(image).on_hover_text(tip);
+        }
+    }
+}
+
+/// "[image: alt]" in soft text, for an image that cannot be shown.
+fn image_fallback(ui: &mut Ui, alt: &str, why: &str) {
+    let name = if alt.is_empty() { "image" } else { alt };
+    let text = RichText::new(format!("[{name}]")).size(BODY_SIZE).line_height(Some(BODY_LINE_HEIGHT)).weak();
+    ui.label(text).on_hover_text(why);
+}
+
+/// A video in the preview: its name and a Play button that opens it in the
+/// system's video player (rubrique cannot play video itself).
+fn video_card(ui: &mut Ui, alt: &str, path: &Path) {
+    let visuals = ui.visuals();
+    let frame = egui::Frame::new()
+        .fill(visuals.code_bg_color)
+        .stroke(visuals.widgets.noninteractive.bg_stroke)
+        .corner_radius(CODE_RADIUS)
+        .inner_margin(Margin::symmetric(12, 8));
+    frame.show(ui, |ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.horizontal(|ui| {
+            crate::icons::icon_label(ui, crate::icons::Icon::Play);
+            let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+            let title = if alt.is_empty() { name } else { format!("{alt} ({name})") };
+            ui.label(RichText::new(title).size(BODY_SIZE));
+            if ui.button("Play").on_hover_text("Open in your video player").clicked() {
+                ui.ctx().data_mut(|data| data.insert_temp(play_request_id(), path.to_path_buf()));
+            }
+        });
+    });
+}
+
 /// Highlight the end of the spans so far that matches `quote` (the text a
 /// note is about) and attach the note to it, splitting a span if needed.
 fn mark_note(spans: &mut Vec<Span>, quote: &str, note: &str) {
@@ -434,6 +562,9 @@ fn collect_spans(inlines: &[Inline], style: &TextStyle, spans: &mut Vec<Span>) {
             }
             Inline::Link { content, url } => {
                 collect_spans(content, &TextStyle { link: Some(url.clone()), ..style.clone() }, spans);
+            }
+            Inline::Image { alt, url } => {
+                spans.push(Span::Image { alt: alt.clone(), url: url.clone(), link: style.link.clone() });
             }
             Inline::LineBreak => spans.push(Span::LineBreak),
             Inline::Note { quote, text } => mark_note(spans, quote, text),

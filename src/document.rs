@@ -2,6 +2,7 @@
 
 pub mod highlighting;
 pub mod line_ops;
+pub mod media_view;
 pub mod merge;
 pub mod merge_view;
 pub mod preview_selection;
