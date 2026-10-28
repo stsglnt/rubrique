@@ -1,4 +1,4 @@
-# rubrique
+# <img src="assets/icon/rubrique-128.png" alt="" width="40" align="top"> rubrique
 
 A fast, lightweight Markdown editor for Linux and macOS, written in Rust.
 It is source-first: rubrique never rewrites your file, it only saves what you typed.

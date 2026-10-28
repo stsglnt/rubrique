@@ -14,9 +14,16 @@ lipo -create \
     target/x86_64-apple-darwin/release/rubrique \
     -output "$app/Contents/MacOS/rubrique"
 sed "s/__VERSION__/$version/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
-if [ -f assets/icon/rubrique.icns ]; then
-    cp assets/icon/rubrique.icns "$app/Contents/Resources/rubrique.icns"
-fi
+# App icon: an .iconset from the PNG sizes, turned into .icns by iconutil.
+iconset="dist/rubrique.iconset"
+rm -rf "$iconset"
+mkdir -p "$iconset"
+for size in 16 32 128 256 512; do
+    cp "assets/icon/rubrique-$size.png" "$iconset/icon_${size}x${size}.png"
+    cp "assets/icon/rubrique-$((size * 2)).png" "$iconset/icon_${size}x${size}@2x.png"
+done
+iconutil -c icns "$iconset" -o "$app/Contents/Resources/rubrique.icns"
+rm -rf "$iconset"
 # Ad-hoc signature: not notarized, but keeps Apple Silicon happy.
 codesign --force --deep --sign - "$app"
 

@@ -8,6 +8,11 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Added
+
+- App icon: a lowercase "m" ending in a marker tip. Shown on the window,
+  in the macOS app and in Linux menus.
+
 ## [0.2.0] - 2026-10-28
 
 ### Added

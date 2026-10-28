@@ -20,6 +20,9 @@ use settings::Settings;
 /// Window size (width, height) on the first run, before one is saved.
 const DEFAULT_WINDOW_SIZE: (f32, f32) = (1100.0, 720.0);
 
+/// App icon for the window (the same art as the packaged icons).
+const WINDOW_ICON_PNG: &[u8] = include_bytes!("../assets/icon/rubrique-256.png");
+
 const USAGE: &str = "Usage: rubrique [FOLDER | FILE]...
 
 Opens each FOLDER in the explorer, and each FILE's folder; the first FILE opens.
@@ -50,10 +53,12 @@ fn main() -> ExitCode {
     };
 
     let (width, height) = settings.window_size.unwrap_or(DEFAULT_WINDOW_SIZE);
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_title("rubrique").with_inner_size([width, height]),
-        ..Default::default()
-    };
+    let mut viewport = egui::ViewportBuilder::default().with_title("rubrique").with_inner_size([width, height]);
+    // Window and taskbar icon. A broken image only means no icon, never a failed start.
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(WINDOW_ICON_PNG) {
+        viewport = viewport.with_icon(icon);
+    }
+    let options = eframe::NativeOptions { viewport, ..Default::default() };
     let result = eframe::run_native(
         "rubrique",
         options,
