@@ -1,4 +1,4 @@
-//! SQL pretty-printer in the style of pgFormatter, the usual PostgreSQL
+//! SQL pretty-printer in the style of pgFormatter, the usual `PostgreSQL`
 //! formatter: keywords upper case, data types lower case, identifiers and
 //! function names as written; 4-space indent; every clause on its own line
 //! with one item per line and trailing commas; `AND` / `OR` leading their

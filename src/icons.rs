@@ -26,6 +26,11 @@ pub enum Icon {
     Sparkle,
     /// Stop a running AI tool.
     Stop,
+    /// Play a video.
+    Play,
+    /// Close a tab. A plain cross with no accent: it sits on every tab, and
+    /// a colored mark there would pull the eye from the file names.
+    Close,
 }
 
 /// A flat button with `icon` and a hover tip. `active` keeps it highlighted
@@ -159,7 +164,33 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
             let square = egui::Rect::from_center_size(center, vec2(3.8, 3.8));
             painter.rect_filled(square, 1.0, accent);
         }
+        Icon::Play => {
+            // A circle; the triangle inside is the accent.
+            stroke_path(painter, &circle_points(center, 6.2), true, line);
+            let triangle = [at(-1.6, -2.6), at(2.8, 0.0), at(-1.6, 2.6)];
+            stroke_path(painter, &round_corners(&triangle, 0.6, true), true, detail);
+        }
+        Icon::Close => {
+            // Two crossing strokes, smaller than the box so they read as a control.
+            stroke_path(painter, &[at(-3.5, -3.5), at(3.5, 3.5)], false, line);
+            stroke_path(painter, &[at(3.5, -3.5), at(-3.5, 3.5)], false, line);
+        }
     }
+}
+
+/// A small flat button with `icon` (like a tab's close cross), `size` wide
+/// and tall. `label` is what screen readers announce.
+pub fn small_icon_button(ui: &mut Ui, icon: Icon, size: f32, label: &str, tip: &str) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(egui::Role::Button, true, label));
+    let visuals = ui.visuals();
+    let fill = if response.hovered() { visuals.widgets.hovered.weak_bg_fill } else { Color32::TRANSPARENT };
+    let color = if response.hovered() { visuals.strong_text_color() } else { visuals.weak_text_color() };
+    let painter = ui.painter();
+    painter.rect_filled(rect, visuals.widgets.inactive.corner_radius, fill);
+    let behind = if fill == Color32::TRANSPARENT { visuals.panel_fill } else { fill };
+    paint(painter, icon, rect.center(), Colors { line: color, accent: visuals.hyperlink_color, behind });
+    response.on_hover_text(tip)
 }
 
 /// Points along a quadratic curve from `start` to `end` bent toward `control`.

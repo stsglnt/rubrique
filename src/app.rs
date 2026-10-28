@@ -8,17 +8,19 @@ use eframe::egui::{self, Context, Key, KeyboardShortcut, Modifiers, RichText, Ui
 mod ask;
 mod naming;
 mod summary;
+mod tabs;
 
 use crate::ai::skills::{self, Skill};
 use crate::ai::{self, AiTool};
+use crate::document::media_view::{MediaEvent, image_pixels, show_image, show_video};
 use crate::document::merge::MergeSession;
 use crate::document::merge_view::{MergeAction, show_merge};
 use crate::document::preview_selection;
 use crate::document::text_file::{DiskState, Document, Opened, Unsupported};
 use crate::document::text_stats::TextStats;
 use crate::document::view::{
-    BlockEdit, PreviewEvent, editor_selection, focus_editor, handle_editor_shortcuts, set_editor_cursor, show_editor,
-    show_preview,
+    BlockEdit, EditorState, PreviewEvent, editor_selection, focus_editor, handle_editor_shortcuts, set_editor_cursor,
+    show_editor, show_preview,
 };
 use crate::explorer::paths::{absolute_path_text, name_text};
 use crate::explorer::tree::{FsNode, is_markdown_path};
@@ -30,6 +32,7 @@ use crate::markdown::blocks::{SourceBlock, parse_blocks, parse_source_blocks};
 use crate::markdown::html::{file_url, html_page, is_html_path, with_base};
 use crate::markdown::notes::{self, Note, find_notes, insert_note, remove_note, rewrite_note};
 use crate::markdown::render::CodeAction;
+use crate::media::{MediaKind, format_name, image_uri, media_kind, open_with_system, size_text};
 use crate::scratch::{create_scratch, rename_target};
 use crate::settings::view::{AiInfo, ScratchInfo, SettingsAction, show_settings};
 use crate::settings::{MarkdownView, Settings, default_scratch_folder, default_skills_folder, themes_folder};
@@ -73,8 +76,11 @@ const NEW_SCRATCH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, 
 const TOGGLE_SETTINGS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma);
 const ASK: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::K);
 const COPY_OPEN_PATH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::C);
+const CLOSE_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::W);
+const NEXT_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::Tab);
+const PREVIOUS_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::SHIFT), Key::Tab);
 
-/// What the right panel shows.
+/// What a tab shows (and, for the active tab, the right panel).
 #[derive(Debug)]
 enum OpenFile {
     Nothing,
@@ -84,6 +90,19 @@ enum OpenFile {
         preview: Option<Vec<SourceBlock>>,
         /// Shown when the file changed or vanished on disk.
         disk_notice: Option<DiskState>,
+        /// Cursor and undo history while the tab is hidden.
+        editor: Option<EditorState>,
+    },
+    /// An image (shown in the page) or a video (shown as a card).
+    Media {
+        path: PathBuf,
+        kind: MediaKind,
+        /// File size in bytes.
+        bytes: u64,
+        /// Modification time when read, to notice a new version.
+        modified: Option<std::time::SystemTime>,
+        /// An image at its own size (with scroll bars) instead of fitted to the page.
+        actual_size: bool,
     },
     Unsupported {
         path: PathBuf,
@@ -97,7 +116,16 @@ impl OpenFile {
         match self {
             OpenFile::Nothing => None,
             OpenFile::Text { document, .. } => Some(&document.path),
-            OpenFile::Unsupported { path, .. } => Some(path),
+            OpenFile::Media { path, .. } | OpenFile::Unsupported { path, .. } => Some(path),
+        }
+    }
+
+    /// Follow a rename of the file on disk.
+    fn set_path(&mut self, target: &Path) {
+        match self {
+            OpenFile::Nothing => {}
+            OpenFile::Text { document, .. } => document.path = target.to_path_buf(),
+            OpenFile::Media { path, .. } | OpenFile::Unsupported { path, .. } => *path = target.to_path_buf(),
         }
     }
 
@@ -107,12 +135,13 @@ impl OpenFile {
     }
 }
 
-/// An action that replaces or closes the open document, so it may need the
-/// "unsaved changes" question first.
+/// An action that closes files, so it may need the "unsaved changes"
+/// question first (once for each file with unsaved changes).
 #[derive(Debug)]
 enum GuardedAction {
-    OpenFile(PathBuf),
-    /// Take a root out of the explorer (closes the open file if it is inside).
+    /// Close the active tab.
+    CloseTab,
+    /// Take a root out of the explorer (closes the tabs inside it).
     RemoveRoot(PathBuf),
     Quit,
 }
@@ -131,7 +160,13 @@ pub struct RubriqueApp {
     settings: Settings,
     /// Explorer root folders, in the order they were added. Never empty.
     roots: Vec<FsNode>,
+    /// The active tab's file (see `tabs.rs`).
     open_file: OpenFile,
+    /// Every open tab, left to right; the active one's slot holds
+    /// `OpenFile::Nothing` while its file is in `open_file`.
+    tabs: Vec<OpenFile>,
+    /// Index of the active tab in `tabs`.
+    active_tab: usize,
     /// Action waiting for the user to answer the unsaved-changes dialog.
     pending: Option<GuardedAction>,
     /// Set once the user agreed to quit, so the next close is not blocked.
@@ -207,6 +242,8 @@ impl RubriqueApp {
             settings,
             roots: roots.into_iter().map(FsNode::new_root).collect(),
             open_file: OpenFile::Nothing,
+            tabs: Vec::new(),
+            active_tab: 0,
             pending: None,
             quit_confirmed: false,
             status_message: None,
@@ -227,49 +264,99 @@ impl RubriqueApp {
             note_draft: None,
         };
         preview_selection::install(ctx);
+        egui_extras::install_image_loaders(ctx);
         app.remember_roots();
+        // Reopen last session's tabs that are still there, then the file asked for.
+        let saved_tabs = std::mem::take(&mut app.settings.open_tabs);
+        for path in saved_tabs {
+            if path.is_file() && app.roots.iter().any(|root| path.starts_with(&root.path)) {
+                app.open_in_tab(path);
+            }
+        }
         if let Some(file) = file {
-            app.open_file_now(file);
+            app.open_in_tab(file);
         }
         app
     }
 
     // ---------- actions ----------
 
-    /// Run an action now, or ask about unsaved changes first.
+    /// Run an action, asking about unsaved changes first where it closes them.
     fn request(&mut self, action: GuardedAction) {
         self.finish_block_edit();
-        if self.open_file.is_dirty() {
-            self.pending = Some(action);
-        } else {
-            self.perform(action);
-        }
+        self.step(action);
     }
 
-    /// Run an action without asking (the user already answered, or nothing is unsaved).
-    fn perform(&mut self, action: GuardedAction) {
+    /// Run `action`, or, while a file it would close has unsaved changes,
+    /// show that file and ask about it. The answer runs `step` again, so
+    /// each unsaved file is asked about in turn.
+    fn step(&mut self, action: GuardedAction) {
         match action {
-            GuardedAction::OpenFile(path) => self.open_file_now(path),
-            GuardedAction::RemoveRoot(path) => self.remove_root_now(&path),
-            GuardedAction::Quit => self.quit_confirmed = true,
+            GuardedAction::CloseTab if self.open_file.is_dirty() => self.pending = Some(action),
+            GuardedAction::CloseTab => self.close_active_tab_now(),
+            GuardedAction::RemoveRoot(folder) => match self.dirty_tab(|path| path.starts_with(&folder)) {
+                Some(index) => {
+                    self.switch_to_tab(index);
+                    self.pending = Some(GuardedAction::RemoveRoot(folder));
+                }
+                None => self.remove_root_now(&folder),
+            },
+            GuardedAction::Quit => {
+                if let Some(index) = self.dirty_tab(|_| true) {
+                    self.switch_to_tab(index);
+                    self.pending = Some(GuardedAction::Quit);
+                } else {
+                    self.quit_confirmed = true;
+                    self.repaint.send_viewport_cmd(ViewportCommand::Close);
+                }
+            }
         }
     }
 
-    /// Show `path` in the right panel, or a status message when it cannot be read.
+    /// Read `path` for a tab: an image or video, a text file, or one that
+    /// cannot be shown. `None` (with a status message) when it cannot be read.
+    fn load_file(&mut self, path: PathBuf) -> Option<OpenFile> {
+        if let Some(kind) = media_kind(&path) {
+            return match std::fs::metadata(&path) {
+                Ok(metadata) => Some(OpenFile::Media {
+                    path,
+                    kind,
+                    bytes: metadata.len(),
+                    modified: metadata.modified().ok(),
+                    actual_size: false,
+                }),
+                Err(error) => {
+                    self.show_status(format!("Cannot open {}: {error}", path.display()));
+                    None
+                }
+            };
+        }
+        match Document::open(&path) {
+            Ok(Opened::Text(document)) => {
+                Some(OpenFile::Text { document, preview: None, disk_notice: None, editor: None })
+            }
+            Ok(Opened::Unsupported(reason)) => Some(OpenFile::Unsupported { path, reason }),
+            Err(error) => {
+                self.show_status(format!("Cannot open {}: {error}", path.display()));
+                None
+            }
+        }
+    }
+
+    /// Read `path` again into the active tab (dropping unsaved changes), or
+    /// open it in a tab when none is open.
     fn open_file_now(&mut self, path: PathBuf) {
+        if self.tabs.is_empty() {
+            self.open_in_tab(path);
+            return;
+        }
         self.stats = None;
         self.merging = None;
         self.block_edit = None;
         self.note_draft = None;
-        match Document::open(&path) {
-            Ok(Opened::Text(document)) => {
-                self.open_file = OpenFile::Text { document, preview: None, disk_notice: None };
-                self.settings.last_file = Some(path);
-            }
-            Ok(Opened::Unsupported(reason)) => {
-                self.open_file = OpenFile::Unsupported { path, reason };
-            }
-            Err(error) => self.show_status(format!("Cannot open {}: {error}", path.display())),
+        crate::document::view::restore_editor_state(&self.repaint, None);
+        if let Some(file) = self.load_file(path) {
+            self.open_file = file;
         }
     }
 
@@ -283,33 +370,22 @@ impl RubriqueApp {
         self.remember_roots();
     }
 
-    /// Ask to remove a root; only an unsaved file inside it needs the question.
+    /// Ask to remove a root; unsaved files inside it need the question.
     fn request_remove_root(&mut self, path: PathBuf) {
-        let file_inside = self.open_file.path().is_some_and(|file| file.starts_with(&path));
-        if file_inside {
+        if self.roots.len() > 1 {
             self.request(GuardedAction::RemoveRoot(path));
-        } else {
-            self.remove_root_now(&path);
         }
     }
 
-    /// Take a root out of the explorer, keeping at least one.
+    /// Take a root out of the explorer, keeping at least one, and close the
+    /// tabs inside it.
     fn remove_root_now(&mut self, path: &Path) {
         if self.roots.len() <= 1 {
             return;
         }
         self.roots.retain(|root| root.path != path);
-        if self.open_file.path().is_some_and(|file| file.starts_with(path)) {
-            self.close_file();
-        }
+        self.close_tabs_inside(path);
         self.remember_roots();
-    }
-
-    /// Show nothing in the right panel.
-    fn close_file(&mut self) {
-        self.open_file = OpenFile::Nothing;
-        self.stats = None;
-        self.settings.last_file = None;
     }
 
     /// Keep the settings' folder list in step with the explorer.
@@ -367,6 +443,19 @@ impl RubriqueApp {
 
     /// When the window regains focus, look for changes made by other programs.
     fn check_disk(&mut self) {
+        if let OpenFile::Media { path, kind, bytes, modified, .. } = &mut self.open_file {
+            // A new version of an image is shown at once; nothing is ever unsaved here.
+            let metadata = std::fs::metadata(&*path).ok();
+            let now = metadata.as_ref().and_then(|metadata| metadata.modified().ok());
+            if now.is_some() && now != *modified {
+                *modified = now;
+                *bytes = metadata.map_or(*bytes, |metadata| metadata.len());
+                if *kind == MediaKind::Image {
+                    self.repaint.forget_image(&image_uri(path));
+                }
+            }
+            return;
+        }
         let OpenFile::Text { document, disk_notice, .. } = &mut self.open_file else {
             return;
         };
@@ -396,7 +485,7 @@ impl RubriqueApp {
 
     /// Check for outside changes every few seconds while a file is open.
     fn poll_disk(&mut self, ctx: &Context) {
-        if !matches!(self.open_file, OpenFile::Text { .. }) || self.merging.is_some() {
+        if !matches!(self.open_file, OpenFile::Text { .. } | OpenFile::Media { .. }) || self.merging.is_some() {
             return;
         }
         let now = ctx.input(|input| input.time);
@@ -419,17 +508,20 @@ impl RubriqueApp {
 
         if ctx.input(|input| input.viewport().close_requested()) {
             self.finish_block_edit();
-            if self.quit_confirmed || !self.open_file.is_dirty() {
+            if self.quit_confirmed || self.dirty_tab(|_| true).is_none() {
                 self.save_settings(ctx);
             } else {
                 ctx.send_viewport_cmd(ViewportCommand::CancelClose);
-                self.pending = Some(GuardedAction::Quit);
+                if self.pending.is_none() {
+                    self.request(GuardedAction::Quit);
+                }
             }
         }
     }
 
     /// Global shortcuts; they run before the panels so widgets never see them.
     fn handle_shortcuts(&mut self, ctx: &Context) {
+        self.handle_tab_shortcuts(ctx);
         if ctx.input_mut(|input| input.consume_shortcut(&COPY_OPEN_PATH))
             && let Some(path) = self.open_file.path()
         {
@@ -479,12 +571,19 @@ impl RubriqueApp {
         }
     }
 
-    /// Remember the window size, then write the settings file.
+    /// Remember the window size and the open tabs, then write the settings file.
     fn save_settings(&mut self, ctx: &Context) {
         if let Some(rect) = ctx.input(|input| input.viewport().inner_rect) {
             self.settings.window_size = Some((rect.width(), rect.height()));
         }
+        self.remember_tabs();
         self.write_settings();
+    }
+
+    /// Keep the settings' tab list and active file in step with the tabs.
+    fn remember_tabs(&mut self) {
+        self.settings.open_tabs = self.tab_paths();
+        self.settings.last_file = self.open_file.path().map(Path::to_path_buf);
     }
 
     /// Write the settings file. A failure is only reported on stderr: the
@@ -761,7 +860,7 @@ impl RubriqueApp {
             self.add_folder(folder);
         }
         self.settings.markdown_view = MarkdownView::Edit;
-        self.request(GuardedAction::OpenFile(path));
+        self.open_in_tab(path);
         focus_editor(ctx);
     }
 
@@ -779,11 +878,13 @@ impl RubriqueApp {
             return Ok(());
         }
         std::fs::rename(path, &target).map_err(|error| format!("Cannot rename: {error}"))?;
-        match &mut self.open_file {
-            OpenFile::Text { document, .. } if document.path == path => document.path.clone_from(&target),
-            OpenFile::Unsupported { path: open, .. } if open == path => open.clone_from(&target),
-            _ => {}
+        let uri = image_uri(path);
+        for tab in self.all_tabs_mut() {
+            if tab.path() == Some(path) {
+                tab.set_path(&target);
+            }
         }
+        self.repaint.forget_image(&uri);
         if self.settings.last_file.as_deref() == Some(path) {
             self.settings.last_file = Some(target.clone());
         }
@@ -884,12 +985,8 @@ impl RubriqueApp {
         };
         let action = show_explorer(ui, &mut self.roots, &mut self.settings.markdown_only, &context);
         match action {
-            Some(ExplorerAction::OpenFile(path)) => {
-                // Clicking the file that is already open does nothing.
-                if self.open_file.path() != Some(path.as_path()) {
-                    self.request(GuardedAction::OpenFile(path));
-                }
-            }
+            // Opens a tab, or switches to the file's tab when it is open.
+            Some(ExplorerAction::OpenFile(path)) => self.open_in_tab(path),
             Some(ExplorerAction::Copy(text)) => self.copy_to_clipboard(ui.ctx(), text),
             Some(ExplorerAction::Refresh) => self.roots.iter_mut().for_each(FsNode::refresh),
             Some(ExplorerAction::RemoveRoot(path)) => self.request_remove_root(path),
@@ -900,17 +997,28 @@ impl RubriqueApp {
         }
     }
 
-    /// Right panel: editor, preview, or why the file cannot be shown.
+    /// Right panel: the tabs, then the editor, preview, image, video, or
+    /// why the file cannot be shown.
     fn document_area(&mut self, ui: &mut Ui) {
-        self.ask.page_rect = Some(ui.max_rect());
+        if !self.tabs.is_empty() {
+            self.tab_bar(ui);
+        }
+        self.ask.page_rect = Some(ui.available_rect_before_wrap());
         let showing_preview = self.showing_preview();
         let mut notice_choice = None;
         let mut name_choice = None;
         let mut merge_action = None;
         let mut preview_event = None;
+        let mut media_event = None;
         match &mut self.open_file {
             OpenFile::Nothing => {
                 ui.centered_and_justified(|ui| ui.label(RichText::new("Pick a file in the explorer").weak()));
+            }
+            OpenFile::Media { path, kind: MediaKind::Image, actual_size, .. } => {
+                media_event = show_image(ui, path, *actual_size);
+            }
+            OpenFile::Media { path, kind: MediaKind::Video, bytes, .. } => {
+                media_event = show_video(ui, path, *bytes);
             }
             OpenFile::Unsupported { path, reason } => {
                 egui::Frame::new().inner_margin(UNSUPPORTED_MARGIN).show(ui, |ui| {
@@ -918,7 +1026,7 @@ impl RubriqueApp {
                     ui.label(format!("Cannot display this file. {}", reason.describe()));
                 });
             }
-            OpenFile::Text { document, preview, disk_notice } => {
+            OpenFile::Text { document, preview, disk_notice, .. } => {
                 if let Some(session) = &mut self.merging {
                     merge_action = show_merge(ui, session, &name_text(&document.path));
                 } else if let Some(state) = disk_notice {
@@ -934,7 +1042,7 @@ impl RubriqueApp {
                     // The merge screen fills the page.
                 } else if showing_preview {
                     let blocks = preview.get_or_insert_with(|| parse_source_blocks(&document.text));
-                    preview_event = show_preview(ui, blocks, self.block_edit.as_mut());
+                    preview_event = show_preview(ui, &document.path, blocks, self.block_edit.as_mut());
                 } else {
                     let was_dirty = document.is_dirty();
                     let markdown = is_markdown_path(&document.path);
@@ -961,10 +1069,82 @@ impl RubriqueApp {
             Some(PreviewEvent::StartEdit(index)) => self.start_block_edit(index),
             Some(PreviewEvent::FinishEdit) => self.finish_block_edit(),
             Some(PreviewEvent::Code { index, action }) => self.code_block_action(ui.ctx(), index, action),
+            Some(PreviewEvent::PlayVideo(path)) => self.play_video(&path),
             None => {}
+        }
+        if let Some(event) = media_event {
+            self.media_action(ui.ctx(), event);
         }
         if showing_preview && self.block_edit.is_none() && self.note_draft.is_none() {
             self.add_note_button(ui.ctx());
+        }
+    }
+
+    // ---------- images and videos ----------
+
+    /// Act on a click on an image or video page.
+    fn media_action(&mut self, ctx: &Context, event: MediaEvent) {
+        let OpenFile::Media { path, actual_size, .. } = &mut self.open_file else {
+            return;
+        };
+        match event {
+            MediaEvent::ToggleSize => *actual_size = !*actual_size,
+            MediaEvent::PlayInPlayer => {
+                let path = path.clone();
+                self.play_video(&path);
+            }
+            MediaEvent::PlayInBrowser => {
+                let path = path.clone();
+                self.play_video_in_browser(ctx, &path);
+            }
+        }
+    }
+
+    /// Open a video in the system's video player.
+    fn play_video(&mut self, path: &Path) {
+        match open_with_system(path) {
+            Ok(()) => self.show_status(format!("Opened {} in your video player", name_text(path))),
+            Err(error) => self.show_status(error),
+        }
+    }
+
+    /// Open a video in the browser, from a small page that holds it.
+    fn play_video_in_browser(&mut self, ctx: &Context, path: &Path) {
+        let page = video_page(&name_text(path), &file_url(path));
+        match write_browser_copy(path, &page) {
+            Ok(copy) => {
+                ctx.open_url(egui::OpenUrl::new_tab(file_url(&copy)));
+                self.show_status(format!("Opened {} in the browser", name_text(path)));
+            }
+            Err(error) => self.show_status(format!("Cannot write the browser page: {error}")),
+        }
+    }
+
+    /// Status bar for an image or video: size, format, and Fit / Actual size.
+    fn media_status(&mut self, ui: &mut Ui) {
+        let OpenFile::Media { path, kind, bytes, actual_size, .. } = &mut self.open_file else {
+            return;
+        };
+        match kind {
+            MediaKind::Image => {
+                let label = if *actual_size { "Actual size" } else { "Fit" };
+                let tip = if *actual_size { "Fit the image to the page" } else { "Show the image at its own size" };
+                if ui.small_button(label).on_hover_text(tip).clicked() {
+                    *actual_size = !*actual_size;
+                }
+                let pixels = image_pixels(ui.ctx(), path)
+                    .map(|[width, height]| format!("{width} × {height} px   "))
+                    .unwrap_or_default();
+                ui.label(format!("{pixels}{}   {}   ", format_name(path), size_text(*bytes)));
+            }
+            MediaKind::Video => {
+                if ui.small_button("Play").on_hover_text("Open in your video player").clicked() {
+                    let path = path.clone();
+                    self.play_video(&path);
+                    return;
+                }
+                ui.label(format!("{} video   {}   ", format_name(path), size_text(*bytes)));
+            }
         }
     }
 
@@ -1312,7 +1492,7 @@ impl RubriqueApp {
             }
             return;
         }
-        if let OpenFile::Text { document, preview, disk_notice } = &mut self.open_file {
+        if let OpenFile::Text { document, preview, disk_notice, .. } = &mut self.open_file {
             document.apply_merge(result, session.disk_text);
             *preview = None;
             *disk_notice = None;
@@ -1366,6 +1546,7 @@ impl RubriqueApp {
         let is_html = self.open_file.path().is_some_and(is_html_path);
         // Right side first, so a long path is shortened instead of overlapping it.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            self.media_status(ui);
             let formattable = self.open_file.path().and_then(Language::from_path);
             if is_text
                 && let Some(language) = formattable
@@ -1435,16 +1616,19 @@ impl RubriqueApp {
         };
         let proceed = match choice {
             UnsavedChoice::Save => self.save(),
-            UnsavedChoice::Discard => true,
+            UnsavedChoice::Discard => {
+                // Back to the saved text, so the next step sees nothing unsaved here.
+                if let OpenFile::Text { document, preview, .. } = &mut self.open_file {
+                    document.text = document.base_text().to_string();
+                    document.on_text_changed();
+                    *preview = None;
+                }
+                true
+            }
             UnsavedChoice::Cancel => false,
         };
-        if !proceed {
-            return;
-        }
-        let is_quit = matches!(action, GuardedAction::Quit);
-        self.perform(action);
-        if is_quit {
-            ctx.send_viewport_cmd(ViewportCommand::Close);
+        if proceed {
+            self.step(action);
         }
     }
 }
@@ -1486,6 +1670,19 @@ fn write_browser_copy(source: &Path, page: &str) -> std::io::Result<PathBuf> {
     let copy = folder.join(format!("{stem}-{:08x}.html", hasher.finish() & 0xffff_ffff));
     std::fs::write(&copy, page)?;
     Ok(copy)
+}
+
+/// A page that plays one video, for the browser.
+fn video_page(title: &str, video_url: &str) -> String {
+    use crate::markdown::html::escape;
+    format!(
+        "<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>{}</title>\n\
+         <style>html,body{{margin:0;height:100%;background:#111;}}\
+         video{{display:block;width:100%;height:100%;object-fit:contain;}}</style></head>\n\
+         <body><video controls autoplay src=\"{}\"></video></body></html>\n",
+        escape(title),
+        escape(video_url)
+    )
 }
 
 /// Buttons on the "changed on disk" bar.
@@ -1623,6 +1820,7 @@ impl eframe::App for RubriqueApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.remember_tabs();
         self.write_settings();
     }
 }
