@@ -8,11 +8,42 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-28
+
+### Added
+
+- **Tabs**: every file opened from the explorer gets its own tab, right
+  after the active one; opening a file that has a tab switches to it. Each
+  tab keeps its unsaved changes, cursor, undo history and scroll position,
+  so switching never asks to save. A dot marks unsaved changes. Close with
+  the cross, a middle click or `Cmd/Ctrl+W` (unsaved changes ask first);
+  right-click for **Close others**, **Close to the right** and **Copy
+  path**; `Ctrl+Tab` / `Ctrl+Shift+Tab` move between tabs. Tabs reopen at
+  the next start.
+- **Images**: PNG, JPEG, GIF, WebP, BMP, ICO and TIFF files open in an image
+  view, fitted to the page or at actual size (click the image or use the
+  status bar button), with the size in pixels and the file size in the
+  status bar. Animated GIF and WebP play.
+- **Videos**: MP4, MOV, WebM, MKV, AVI and other video files show a card
+  with **Play in video player** (the system's default player) and **Play
+  in browser**.
+- Markdown images `![alt](path)` show in the preview (relative paths start
+  at the file's folder); a video path shows a card with **Play**. Open in
+  browser shows them as `<img>` and `<video>`. Web images are not loaded in
+  the preview.
+
 ### Changed
 
 - New explorer icons in the style of Apple's symbols: **Add folder** is a
   folder with a solid plus badge, **New scratch** is a square with a pencil
   whose tip uses the accent color.
+- Closing the window with unsaved changes in several tabs asks about each file in turn.
+- New dependencies `egui_extras` and `image`, only to decode images.
+
+### Fixed
+
+- Undo after opening another file could bring back text from the file
+  shown before; each file now has its own undo history.
 
 ## [0.4.0] - 2026-10-28
 
@@ -159,7 +190,8 @@ screen before it touches your text.
   plain-text editor with a rendered Markdown preview, atomic saves, unsaved
   changes prompt, reload on outside changes, and line shortcuts.
 
-[Unreleased]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.0...HEAD
+[Unreleased]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.1...HEAD
+[0.4.1]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.0...rubrique-v0.4.1
 [0.4.0]: https://github.com/witseko/rubrique/compare/rubrique-v0.3.0...rubrique-v0.4.0
 [0.3.0]: https://github.com/witseko/rubrique/compare/rubrique-v0.2.0...rubrique-v0.3.0
 [0.2.0]: https://github.com/witseko/rubrique/releases/tag/rubrique-v0.2.0

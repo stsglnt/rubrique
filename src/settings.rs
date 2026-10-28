@@ -33,8 +33,10 @@ impl MarkdownView {
 pub struct Settings {
     /// Explorer root folders of the last session, in order.
     pub folders: Vec<PathBuf>,
-    /// File open at the end of the last session.
+    /// File open at the end of the last session (the active tab).
     pub last_file: Option<PathBuf>,
+    /// Every tab open at the end of the last session, left to right.
+    pub open_tabs: Vec<PathBuf>,
     /// "Markdown only" checkbox in the explorer.
     pub markdown_only: bool,
     /// Last used mode for Markdown files.
@@ -93,6 +95,7 @@ impl Settings {
                 "folder" => settings.folders.extend(non_empty_path(value)),
                 "last_folder" => legacy_folder = non_empty_path(value),
                 "last_file" => settings.last_file = non_empty_path(value),
+                "tab" => settings.open_tabs.extend(non_empty_path(value)),
                 "markdown_only" => settings.markdown_only = value == "true",
                 // Stored as `preview_mode=true|false` so existing settings files keep working.
                 "preview_mode" => settings.markdown_view = preview_mode_view(value),
@@ -120,12 +123,16 @@ impl Settings {
             Some((width, height)) => format!("window_width={width}\nwindow_height={height}\n"),
             None => String::new(),
         };
-        let folder_lines: String = self.folders.iter().fold(String::new(), |mut lines, folder| {
-            let _ = writeln!(lines, "folder={}", folder.display());
-            lines
-        });
+        let path_lines = |key: &str, paths: &[PathBuf]| {
+            paths.iter().fold(String::new(), |mut lines, path| {
+                let _ = writeln!(lines, "{key}={}", path.display());
+                lines
+            })
+        };
+        let folder_lines = path_lines("folder", &self.folders);
+        let tab_lines = path_lines("tab", &self.open_tabs);
         format!(
-            "{folder_lines}last_file={}\nmarkdown_only={}\npreview_mode={}\ntheme={}\nscratch_folder={}\n{window_lines}{}",
+            "{folder_lines}{tab_lines}last_file={}\nmarkdown_only={}\npreview_mode={}\ntheme={}\nscratch_folder={}\n{window_lines}{}",
             path_text(&self.last_file),
             self.markdown_only,
             self.markdown_view == MarkdownView::Preview,
@@ -197,6 +204,7 @@ mod tests {
         let settings = Settings {
             folders: vec![PathBuf::from("/home/a/my notes"), PathBuf::from("/work/docs")],
             last_file: Some(PathBuf::from("/home/a/my notes/x=y.md")),
+            open_tabs: vec![PathBuf::from("/home/a/my notes/x=y.md"), PathBuf::from("/work/docs/photo.png")],
             markdown_only: true,
             markdown_view: MarkdownView::Preview,
             window_size: Some((1200.0, 800.5)),

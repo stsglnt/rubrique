@@ -111,6 +111,11 @@ impl AskState {
     pub(super) fn is_open(&self) -> bool {
         self.bar.is_some()
     }
+
+    /// Close the Ask bar (its text belongs to a tab that is being left).
+    pub(super) fn close_bar(&mut self) {
+        self.bar = None;
+    }
 }
 
 impl RubriqueApp {
