@@ -41,8 +41,11 @@ computer (whisper.cpp by default).
 
 - New dependency: `cpal`, for the microphone and speakers. Building on Linux
   now needs the ALSA development files (`libasound2-dev`).
-- macOS asks for the microphone the first time you record. rubrique is not
-  notarized, so it may ask again after an update.
+- macOS asks for the microphone the first time you record.
+- macOS: the app and the `.dmg` are signed with a Developer ID, use the
+  hardened runtime, and are notarized by Apple, so macOS opens them with no
+  "cannot be opened" or "damaged" warning. The release workflow refuses to
+  publish a macOS build that is not notarized.
 
 ## [0.4.1] - 2026-10-28
 
