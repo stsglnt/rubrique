@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=rubrique
-GenericName=Markdown Editor
-Comment=Fast, lightweight Markdown editor
+GenericName=AI Markdown Editor
+Comment=AI-assisted Markdown editor
 Exec=rubrique %F
 Icon=rubrique
 Terminal=false
 Categories=Utility;TextEditor;
 MimeType=text/markdown;text/x-markdown;text/plain;
-Keywords=markdown;notes;editor;
+Keywords=markdown;notes;editor;ai;writing;
