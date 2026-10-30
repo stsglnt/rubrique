@@ -8,6 +8,8 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-30
+
 rubrique is now described as what it has become: an AI-assisted Markdown
 editor. This version adds voice memos, transcribed on your computer.
 
@@ -241,7 +243,8 @@ screen before it touches your text.
   plain-text editor with a rendered Markdown preview, atomic saves, unsaved
   changes prompt, reload on outside changes, and line shortcuts.
 
-[Unreleased]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.1...HEAD
+[Unreleased]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.2...HEAD
+[0.4.2]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.1...rubrique-v0.4.2
 [0.4.1]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.0...rubrique-v0.4.1
 [0.4.0]: https://github.com/witseko/rubrique/compare/rubrique-v0.3.0...rubrique-v0.4.0
 [0.3.0]: https://github.com/witseko/rubrique/compare/rubrique-v0.2.0...rubrique-v0.3.0
