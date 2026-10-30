@@ -35,7 +35,7 @@ use crate::markdown::notes::{self, Note, find_notes, insert_note, remove_note, r
 use crate::markdown::render::CodeAction;
 use crate::media::{MediaKind, format_name, image_uri, media_kind, open_with_system, size_text};
 use crate::scratch::{create_scratch, rename_target};
-use crate::settings::view::{AiInfo, ScratchInfo, SettingsAction, VoiceInfo, show_settings};
+use crate::settings::view::{AiInfo, ScratchInfo, SettingsAction, SettingsGroup, VoiceInfo, show_settings};
 use crate::settings::{MarkdownView, Settings, default_scratch_folder, default_skills_folder, themes_folder};
 use crate::theme::catalog::Themes;
 use crate::theme::style::{apply_theme, page_fill};
@@ -45,7 +45,6 @@ use crate::voice::view::set_memo_states;
 const STATUS_MESSAGE_SECONDS: f64 = 4.0;
 const EXPLORER_DEFAULT_WIDTH: f32 = 260.0;
 /// Width of the settings panel.
-const SETTINGS_PANEL_WIDTH: f32 = 320.0;
 /// Starting height of the AI output panel.
 const AI_OUTPUT_HEIGHT: f32 = 230.0;
 /// Space around the "cannot display this file" message.
@@ -185,6 +184,8 @@ pub struct RubriqueApp {
     themes: Themes,
     /// The settings panel is shown on the right.
     settings_open: bool,
+    /// The group open in the settings window.
+    settings_group: SettingsGroup,
     /// Ask bar, AI run and its output panel.
     ask: ask::AskState,
     /// Skills from the skills folders, read when Settings or Ask opens.
@@ -256,6 +257,7 @@ impl RubriqueApp {
             window_title: String::new(),
             themes,
             settings_open: false,
+            settings_group: SettingsGroup::default(),
             ask: ask::AskState::default(),
             skills: Vec::new(),
             summaries: summary::SummaryState::default(),
@@ -639,7 +641,26 @@ impl RubriqueApp {
         self.ai_found = AiTool::ALL.map(|tool| ai::find_program(self.settings.ai.command(tool)));
     }
 
-    /// Right panel: settings. Theme picks apply at once.
+    /// The settings window over the dimmed app. A click outside closes it.
+    fn settings_window(&mut self, ctx: &Context) {
+        if !self.settings_open {
+            return;
+        }
+        let visuals = ctx.global_style().visuals.clone();
+        let frame = egui::Frame::new()
+            .fill(visuals.window_fill)
+            .corner_radius(12)
+            .shadow(visuals.window_shadow)
+            .stroke(visuals.window_stroke);
+        let response = egui::Modal::new(egui::Id::unique("settings-window")).frame(frame).show(ctx, |ui| {
+            self.settings_panel(ui);
+        });
+        if response.should_close() {
+            self.settings_open = false;
+        }
+    }
+
+    /// The settings window's content. Theme picks apply at once.
     fn settings_panel(&mut self, ui: &mut Ui) {
         let folder = themes_folder();
         let scratch_folder = self.settings.scratch_folder_or_default();
@@ -655,7 +676,16 @@ impl RubriqueApp {
             skills_folder: skills_folder.as_deref(),
         };
         let voice = VoiceInfo { settings: &mut self.settings.voice, found: self.voice.program_found.as_deref() };
-        let action = show_settings(ui, &self.themes, &self.settings.theme, folder.as_deref(), scratch, ai, voice);
+        let action = show_settings(
+            ui,
+            &mut self.settings_group,
+            &self.themes,
+            &self.settings.theme,
+            folder.as_deref(),
+            scratch,
+            ai,
+            voice,
+        );
         let Some(action) = action else {
             return;
         };
@@ -1823,14 +1853,6 @@ impl eframe::App for RubriqueApp {
             });
             self.explorer(ui);
         });
-        if self.settings_open {
-            let panel_frame = egui::Frame::side_top_panel(&style).inner_margin(0);
-            egui::Panel::right("settings")
-                .resizable(false)
-                .exact_size(SETTINGS_PANEL_WIDTH)
-                .frame(panel_frame)
-                .show(ui, |ui| self.settings_panel(ui));
-        }
         if self.shows_notes_panel() {
             egui::Panel::right("notes")
                 .resizable(true)
@@ -1850,6 +1872,7 @@ impl eframe::App for RubriqueApp {
 
         self.ask_dialogs(&ctx);
         self.hover_summary(&ctx);
+        self.settings_window(&ctx);
         self.unsaved_dialog(&ctx);
         self.note_dialog(&ctx);
         self.rename_dialog(&ctx);
