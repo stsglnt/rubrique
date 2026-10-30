@@ -3,7 +3,7 @@
 # and pack it as dist/rubrique-VERSION-macos-universal.dmg and .zip.
 # Usage: packaging/macos/bundle.sh VERSION
 #
-# Signing (see packaging/macos/README.md):
+# Signing:
 # - MACOS_SIGN_IDENTITY set, e.g. "Developer ID Application: Name (TEAMID)":
 #   signs with that identity and the hardened runtime.
 # - APPLE_ID, APPLE_TEAM_ID and APPLE_APP_PASSWORD also set: notarizes the

@@ -92,8 +92,7 @@ pub fn icon_text_button(ui: &mut Ui, icon: Icon, text: &str, tip: &str, active: 
     response.on_hover_text(tip)
 }
 
-/// Draw `icon` centered on `center` in rubrique's icon style (see
-/// `.claude/skills/rubrique-icons/SKILL.md`): a 14 × 14 box, heavy strokes with
+/// Draw `icon` centered on `center` in rubrique's icon style: a 14 × 14 box, heavy strokes with
 /// round ends and joins, softly rounded corners, and one detail in `accent`.
 /// The colors an icon is drawn with.
 #[derive(Clone, Copy)]

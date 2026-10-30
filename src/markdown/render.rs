@@ -390,7 +390,7 @@ fn render_span(ui: &mut Ui, text: String, style: &TextStyle) {
         Some(url) if is_openable_url(url) => {
             note_tip(ui.hyperlink_to(rich, url).on_hover_text(url));
         }
-        // Local or unknown targets are shown, not opened (see specs/03).
+        // Local or unknown targets are shown, not opened.
         Some(url) => {
             note_tip(
                 ui.label(rich.underline()).on_hover_text(format!("{url} (not opened: only web and mail links open)")),

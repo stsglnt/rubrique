@@ -95,7 +95,8 @@ jobs:
         run: |
           cargo build --release --locked --target aarch64-apple-darwin
           cargo build --release --locked --target x86_64-apple-darwin
-      # Signing and notarization need the secrets from packaging/macos/README.md.
+      # Signing and notarization need the secrets MACOS_CERTIFICATE,
+      # MACOS_CERTIFICATE_PASSWORD, APPLE_ID, APPLE_TEAM_ID and APPLE_APP_PASSWORD.
       # Without them (forks, or before setup) the app is ad-hoc signed, and a
       # release is refused, because macOS would block the downloaded app.
       - name: Import the Developer ID certificate
@@ -106,7 +107,7 @@ jobs:
         run: |
           if [ -z "$MACOS_CERTIFICATE" ]; then
             if [ "$RELEASE" = "true" ]; then
-              echo "::error::A release needs the MACOS_CERTIFICATE secret, see packaging/macos/README.md"
+              echo "::error::A release needs the MACOS_CERTIFICATE and MACOS_CERTIFICATE_PASSWORD secrets"
               exit 1
             fi
             echo "::warning::No MACOS_CERTIFICATE secret: the app is ad-hoc signed and macOS will block it"
@@ -138,7 +139,7 @@ jobs:
           RELEASE: ${{ needs.plan.outputs.release }}
         run: |
           if [ "$RELEASE" = "true" ] && { [ -z "$APPLE_ID" ] || [ -z "$APPLE_TEAM_ID" ] || [ -z "$APPLE_APP_PASSWORD" ]; }; then
-            echo "::error::A release needs APPLE_ID, APPLE_TEAM_ID and APPLE_APP_PASSWORD, see packaging/macos/README.md"
+            echo "::error::A release needs the APPLE_ID, APPLE_TEAM_ID and APPLE_APP_PASSWORD secrets"
             exit 1
           fi
           sh packaging/macos/bundle.sh "${{ needs.plan.outputs.version }}"
