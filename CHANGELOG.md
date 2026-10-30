@@ -36,6 +36,9 @@ editor. This version adds voice memos, transcribed on your computer.
   `ollama pull`) and shows the command first. Install scripts piped to a
   shell, and tools without a known command, get **Copy install command**
   and **Open install page** instead.
+- **Settings → Accessibility**: text size for the whole window (also
+  `Cmd/Ctrl` + `+`, `-`, `0`), editor font size, **Reduce motion** and a
+  **Stronger focus outline**.
 
 ### Changed
 

@@ -11,6 +11,7 @@ use crate::ai::skills::Skill;
 use crate::ai::{AiSettings, AiTool, CommandProblem, check_command};
 use crate::install::view::{InstallAction, install_prompt};
 use crate::install::{InstallStatus, Recipe};
+use crate::settings::accessibility::{AccessibilitySettings, EDITOR_FONT_SIZES, TextSize};
 use crate::theme::catalog::{ThemeChoice, Themes};
 use crate::theme::palette::{Base, Palette, Rgb, Theme};
 use crate::voice::VoiceSettings;
@@ -20,6 +21,8 @@ use crate::voice::VoiceSettings;
 pub enum SettingsAction {
     PickTheme(ThemeChoice),
     ReloadThemes,
+    /// Text size, editor font, motion or focus outline changed.
+    AccessibilityChanged,
     /// Pick another folder for scratch files.
     ChooseScratchFolder,
     /// Go back to the default scratch folder.
@@ -112,6 +115,7 @@ enum BarKind {
 pub enum SettingsGroup {
     #[default]
     Appearance,
+    Accessibility,
     Files,
     Ai,
     Skills,
@@ -119,11 +123,13 @@ pub enum SettingsGroup {
 }
 
 impl SettingsGroup {
-    pub const ALL: [SettingsGroup; 5] = [Self::Appearance, Self::Files, Self::Ai, Self::Skills, Self::VoiceMemos];
+    pub const ALL: [SettingsGroup; 6] =
+        [Self::Appearance, Self::Accessibility, Self::Files, Self::Ai, Self::Skills, Self::VoiceMemos];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Appearance => "Appearance",
+            Self::Accessibility => "Accessibility",
             Self::Files => "Files",
             Self::Ai => "AI",
             Self::Skills => "Skills",
@@ -134,6 +140,15 @@ impl SettingsGroup {
 
 /// Size of the settings window.
 pub const WINDOW_SIZE: egui::Vec2 = vec2(780.0, 540.0);
+/// Space kept between the settings window and the app window's edges.
+const WINDOW_MARGIN: f32 = 40.0;
+
+/// [`WINDOW_SIZE`], made smaller when the app window is (or large text makes it so).
+fn window_size(ctx: &egui::Context) -> egui::Vec2 {
+    let room = ctx.content_rect().size() - vec2(WINDOW_MARGIN, WINDOW_MARGIN);
+    WINDOW_SIZE.min(room).max(vec2(NAV_WIDTH * 2.0, HEADER_HEIGHT * 4.0))
+}
+
 /// Width of the group list on the left.
 const NAV_WIDTH: f32 = 180.0;
 const NAV_ITEM_HEIGHT: f32 = 30.0;
@@ -150,12 +165,13 @@ pub fn show_settings(
     themes: &Themes,
     current: &ThemeChoice,
     themes_folder: Option<&Path>,
+    accessibility: &mut AccessibilitySettings,
     scratch: ScratchInfo,
     ai: AiInfo,
     voice: VoiceInfo,
 ) -> Option<SettingsAction> {
     let mut action = None;
-    let (outer, _) = ui.allocate_exact_size(WINDOW_SIZE, Sense::hover());
+    let (outer, _) = ui.allocate_exact_size(window_size(ui.ctx()), Sense::hover());
     let header = Rect::from_min_size(outer.min, vec2(outer.width(), HEADER_HEIGHT));
     let nav = Rect::from_min_max(pos2(outer.left(), header.bottom()), pos2(outer.left() + NAV_WIDTH, outer.bottom()));
     let content = Rect::from_min_max(pos2(nav.right(), header.bottom()), outer.max);
@@ -192,6 +208,7 @@ pub fn show_settings(
                 ui.spacing_mut().item_spacing.y = 8.0;
                 let picked = match *group {
                     SettingsGroup::Appearance => appearance_section(ui, themes, current, themes_folder),
+                    SettingsGroup::Accessibility => accessibility_section(ui, accessibility),
                     SettingsGroup::Files => files_section(ui, scratch),
                     SettingsGroup::Ai => ai_section(ui, ai),
                     SettingsGroup::Skills => {
@@ -250,6 +267,37 @@ fn appearance_section(
         action = Some(SettingsAction::ReloadThemes);
     }
     action
+}
+
+/// Accessibility: text size, editor font size, motion and focus outlines.
+fn accessibility_section(ui: &mut Ui, settings: &mut AccessibilitySettings) -> Option<SettingsAction> {
+    let mut changed = false;
+    ui.label(RichText::new("Text size").strong());
+    ui.label(RichText::new("Scales the whole window. Cmd/Ctrl + plus, minus and 0 change it too.").weak());
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        for size in TextSize::ALL {
+            let percent = format!("{}%", (size.scale() * 100.0).round());
+            changed |= ui.selectable_value(&mut settings.text_size, size, size.name()).on_hover_text(percent).changed();
+        }
+    });
+
+    ui.add_space(6.0);
+    ui.separator();
+    ui.label(RichText::new("Editor font size").strong());
+    ui.label(RichText::new("The Markdown editor and other monospace text, before the text size.").weak());
+    let slider = egui::Slider::new(&mut settings.editor_font_size, EDITOR_FONT_SIZES).suffix(" pt");
+    changed |= ui.add(slider).changed();
+
+    ui.add_space(6.0);
+    ui.separator();
+    ui.label(RichText::new("Motion and focus").strong());
+    changed |= ui.checkbox(&mut settings.reduce_motion, "Reduce motion").on_hover_text("Turn off animations").changed();
+    changed |= ui
+        .checkbox(&mut settings.strong_focus, "Stronger focus outline")
+        .on_hover_text("A thicker outline on the focused button or text field")
+        .changed();
+    changed.then_some(SettingsAction::AccessibilityChanged)
 }
 
 /// Files: where scratch files go.

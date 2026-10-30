@@ -37,10 +37,11 @@ use crate::markdown::notes::{self, Note, find_notes, insert_note, remove_note, r
 use crate::markdown::render::CodeAction;
 use crate::media::{MediaKind, format_name, image_uri, media_kind, open_with_system, size_text};
 use crate::scratch::{create_scratch, rename_target};
+use crate::settings::accessibility::TextSize;
 use crate::settings::view::{AiInfo, ScratchInfo, SettingsAction, SettingsGroup, VoiceInfo, show_settings};
 use crate::settings::{MarkdownView, Settings, default_scratch_folder, default_skills_folder, themes_folder};
 use crate::theme::catalog::Themes;
-use crate::theme::style::{apply_theme, page_fill};
+use crate::theme::style::{apply_accessibility, apply_theme, page_fill};
 use crate::voice::view::set_memo_states;
 
 /// How long a status message ("Copied ...") stays visible.
@@ -83,6 +84,10 @@ const COPY_OPEN_PATH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAN
 const CLOSE_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::W);
 const NEXT_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::Tab);
 const PREVIOUS_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::SHIFT), Key::Tab);
+const TEXT_LARGER: [KeyboardShortcut; 2] =
+    [KeyboardShortcut::new(Modifiers::COMMAND, Key::Plus), KeyboardShortcut::new(Modifiers::COMMAND, Key::Equals)];
+const TEXT_SMALLER: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Minus);
+const TEXT_DEFAULT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Num0);
 
 /// What a tab shows (and, for the active tab, the right panel).
 #[derive(Debug)]
@@ -248,6 +253,9 @@ impl RubriqueApp {
     pub fn new(ctx: &Context, settings: Settings, roots: Vec<PathBuf>, file: Option<PathBuf>) -> Self {
         let themes = Themes::load(themes_folder().as_deref());
         apply_theme(ctx, &themes, &settings.theme);
+        apply_accessibility(ctx, &settings.accessibility);
+        // rubrique steps through its own text sizes instead (see `handle_text_size_keys`).
+        ctx.options_mut(|options| options.zoom_with_keyboard = false);
         let mut app = RubriqueApp {
             settings,
             roots: roots.into_iter().map(FsNode::new_root).collect(),
@@ -536,6 +544,7 @@ impl RubriqueApp {
     /// Global shortcuts; they run before the panels so widgets never see them.
     fn handle_shortcuts(&mut self, ctx: &Context) {
         self.handle_tab_shortcuts(ctx);
+        self.handle_text_size_keys(ctx);
         if ctx.input_mut(|input| input.consume_shortcut(&COPY_OPEN_PATH))
             && let Some(path) = self.open_file.path()
         {
@@ -588,10 +597,37 @@ impl RubriqueApp {
         }
     }
 
+    /// Cmd/Ctrl + plus, minus and 0: the next text size, the one before, the default.
+    fn handle_text_size_keys(&mut self, ctx: &Context) {
+        let current = self.settings.accessibility.text_size;
+        let size = if ctx.input_mut(|input| input.consume_shortcut(&TEXT_DEFAULT)) {
+            TextSize::Default
+        } else if ctx.input_mut(|input| TEXT_LARGER.iter().any(|keys| input.consume_shortcut(keys))) {
+            current.larger()
+        } else if ctx.input_mut(|input| input.consume_shortcut(&TEXT_SMALLER)) {
+            current.smaller()
+        } else {
+            return;
+        };
+        if size != current {
+            self.settings.accessibility.text_size = size;
+            apply_accessibility(ctx, &self.settings.accessibility);
+            self.show_status(format!("Text size: {} ({}%)", size.name(), (size.scale() * 100.0).round()));
+        }
+    }
+
+    /// The theme, then the accessibility settings on top of it.
+    fn apply_look(&self, ctx: &Context) {
+        apply_theme(ctx, &self.themes, &self.settings.theme);
+        apply_accessibility(ctx, &self.settings.accessibility);
+    }
+
     /// Remember the window size and the open tabs, then write the settings file.
     fn save_settings(&mut self, ctx: &Context) {
         if let Some(rect) = ctx.input(|input| input.viewport().inner_rect) {
-            self.settings.window_size = Some((rect.width(), rect.height()));
+            // In points of the native scale, as the window was opened with, not zoomed ones.
+            let zoom = ctx.zoom_factor();
+            self.settings.window_size = Some((rect.width() * zoom, rect.height() * zoom));
         }
         self.remember_tabs();
         self.write_settings();
@@ -698,6 +734,7 @@ impl RubriqueApp {
             &self.themes,
             &self.settings.theme,
             folder.as_deref(),
+            &mut self.settings.accessibility,
             scratch,
             ai,
             voice,
@@ -707,12 +744,13 @@ impl RubriqueApp {
         };
         match action {
             SettingsAction::PickTheme(choice) => {
-                apply_theme(ui.ctx(), &self.themes, &choice);
                 self.settings.theme = choice;
+                self.apply_look(ui.ctx());
             }
+            SettingsAction::AccessibilityChanged => self.apply_look(ui.ctx()),
             SettingsAction::ReloadThemes => {
                 self.themes = Themes::load(folder.as_deref());
-                apply_theme(ui.ctx(), &self.themes, &self.settings.theme);
+                self.apply_look(ui.ctx());
                 let count = self.themes.list.len();
                 self.show_status(format!("Loaded {count} themes"));
             }

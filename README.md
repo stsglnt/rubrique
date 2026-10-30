@@ -64,7 +64,8 @@ Cloud tools run only in folders you allowed.
 <img src="docs/screenshots/themes.png" alt="One rubrique window shown in five themes: Light, Dark, Sepia, Midnight and High contrast" width="880">
 
 Five built-in themes: Light, Dark, Sepia, Midnight, High contrast. Or follow
-the system, or add your own.
+the system, or add your own. Settings → Accessibility sets the text size, the
+editor font size, reduced motion and a stronger focus outline.
 
 ## Shortcuts
 
@@ -87,6 +88,7 @@ the system, or add your own.
 | Cmd+W | Close tab |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Cmd+, | Settings |
+| Cmd++ / Cmd+- / Cmd+0 | Larger / smaller / default text size |
 | Cmd+Shift+B | Open in browser |
 | Cmd+Shift+F | Format JSON, SQL or XML |
 | Cmd+Shift+C | Copy the open file's path |
