@@ -16,6 +16,7 @@ use crate::ai::summary::{
 use crate::ai::{self, AiTool};
 use crate::explorer::view::{HoveredFile, hovered_file};
 use crate::icons::{Icon, icon_label};
+use crate::markdown::render::render_inline_text;
 use crate::settings::summary_cache_folder;
 
 /// Seconds the pointer rests on a file before its summary shows.
@@ -201,7 +202,7 @@ fn show_card(ctx: &Context, file: &HoveredFile, body: &CardBody, footer: Option<
             ui.label(RichText::new(name).strong());
             match body {
                 CardBody::Summary(summary) => {
-                    ui.label(summary);
+                    render_inline_text(ui, summary);
                 }
                 CardBody::Working(text) => {
                     ui.horizontal(|ui| {

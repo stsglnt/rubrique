@@ -43,6 +43,9 @@ editor. This version adds voice memos, transcribed on your computer.
 - macOS: release builds are signed with a Developer ID and notarized by
   Apple once the signing secrets are set. Until then the release notes say
   how to open the app the first time.
+- AI answers are shown formatted: headings, lists, code blocks and links,
+  with **Copy** for the raw text. Code blocks in an answer have their own
+  **Copy**. Hover summaries show bold, italic and code.
 - macOS asks for the microphone the first time you record.
 - New dependency `cpal` for the microphone and speakers. Building on Linux
   needs `libasound2-dev`.
@@ -53,6 +56,8 @@ editor. This version adds voice memos, transcribed on your computer.
   asks to save, discard or cancel.
 - Clicking **+ Add note** after selecting text in the preview opened the
   paragraph for editing instead of the note dialog.
+- A block right after a code block inside a list or quote was drawn on top
+  of the code block's header.
 
 ## [0.4.1] - 2026-10-28
 

@@ -612,6 +612,28 @@ mod tests {
     }
 
     #[test]
+    fn partial_answer_still_parses() {
+        // An AI answer cut off while it streams: open fence, list, link, bold.
+        let text = "## Steps\n\n1. Run [it](https://e\n2. **Che\n\n```rust\nfn main() {\n    let x";
+        assert_eq!(
+            parse_blocks(text),
+            vec![
+                heading(2, "Steps"),
+                Block::List(List {
+                    start: Some(1),
+                    items: vec![item(vec![paragraph("Run [it](https://e")]), item(vec![paragraph("**Che")])],
+                }),
+                code("rust", "fn main() {\n    let x"),
+            ]
+        );
+        for end in 0..=text.len() {
+            if text.is_char_boundary(end) {
+                parse_blocks(&text[..end]);
+            }
+        }
+    }
+
+    #[test]
     fn source_blocks_know_their_text() {
         let text = "# Title\r\n\nFirst line\nsecond line\n\n- a\n- b\n\n```\ncode\n```\n";
         let blocks = parse_source_blocks(text);
