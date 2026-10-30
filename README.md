@@ -43,6 +43,8 @@ Cloud tools run only in folders you allowed.
 
 - **Voice memos** (`Cmd/Ctrl+Shift+R`): record into the note, then
   **Transcribe** it with whisper.cpp on your computer.
+- **Drop images and audio** on the page: they are copied next to the note
+  and linked where the cursor is.
 - **Notes**: select text in the preview and add a note. AI can resolve one
   note or all of them.
 - **Edit in the preview**: click a block to edit just that block.
