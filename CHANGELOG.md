@@ -29,6 +29,9 @@ editor. This version adds voice memos, transcribed on your computer.
 
 ### Changed
 
+- AI answers are shown formatted: headings, lists, code blocks and links,
+  with **Copy** for the raw text. Code blocks in an answer have their own
+  **Copy**. Hover summaries show bold, italic and code.
 - macOS: the app and the `.dmg` are signed with a Developer ID and notarized
   by Apple, so they open with no warning.
 - macOS asks for the microphone the first time you record.

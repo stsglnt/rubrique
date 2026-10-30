@@ -258,6 +258,7 @@ impl RubriqueApp {
             return;
         };
         let mut views = Vec::new();
+        let formatted = job.pending.kind == AskKind::Answer;
         for tool_run in &mut job.runs {
             let seconds = tool_run.run.elapsed_seconds();
             let state = match tool_run.run.poll() {
@@ -272,6 +273,7 @@ impl RubriqueApp {
                 output: tool_run.run.output_text(),
                 errors: tool_run.run.error_text(),
                 state,
+                formatted,
             });
         }
         if job.is_running() {
@@ -289,6 +291,7 @@ impl RubriqueApp {
                     self.copy_to_clipboard(ui.ctx(), text);
                 }
             }
+            Some(OutputAction::CopyCode(code)) => self.copy_to_clipboard(ui.ctx(), code),
             Some(OutputAction::Close) => self.ask.job = None,
             Some(OutputAction::Review) => self.review_answer(),
             None => {}
