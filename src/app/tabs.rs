@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, Color32, CornerRadius, Sense, Ui, pos2, vec2};
 
-use super::{GuardedAction, RubriqueApp, OpenFile};
+use super::{GuardedAction, OpenFile, RubriqueApp};
 use crate::document::preview_selection;
 use crate::document::view::{restore_editor_state, take_editor_state};
 use crate::explorer::paths::{absolute_path_text, name_text};

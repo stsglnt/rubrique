@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use eframe::egui::{self, Context, Ui};
 
-use super::{RubriqueApp, OpenFile, char_to_byte};
+use super::{OpenFile, RubriqueApp, char_to_byte};
 use crate::ai::format_elapsed;
 use crate::ai::run::{AiRun, RunEnd};
 use crate::document::merge::MergeSession;

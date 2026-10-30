@@ -7,7 +7,7 @@ use eframe::egui::{self, Color32, Painter, Pos2, Response, Sense, Stroke, Ui, Ve
 
 /// Size of an icon button.
 const BUTTON_SIZE: Vec2 = vec2(28.0, 24.0);
-/// Line width of every icon: bold like the app icon's monogram, but thin
+/// Line width of every icon: bold like the app icon's "r", but thin
 /// enough to stay sharp at 14 px.
 const LINE: f32 = 1.5;
 
@@ -130,7 +130,7 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
         }
         Icon::NewScratch => {
             // A square open at the top right with a pencil writing into it; the
-            // pencil tip is the accent, like the marker tip of the app icon.
+            // pencil tip is the accent, like the red ball of the app icon.
             let square = [at(0.0, -5.5), at(-6.5, -5.5), at(-6.5, 6.5), at(5.5, 6.5), at(5.5, 0.0)];
             stroke_path(painter, &round_corners(&square, CORNER, false), false, line);
             let along = vec2(1.0, -1.0).normalized();

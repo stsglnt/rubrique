@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use eframe::egui::{self, Context, Ui, pos2};
 
-use super::{RubriqueApp, OpenFile, char_to_byte};
+use super::{OpenFile, RubriqueApp, char_to_byte};
 use crate::ai::run::{AiRun, RunEnd};
 use crate::ai::skills::Skill;
 use crate::ai::view::{

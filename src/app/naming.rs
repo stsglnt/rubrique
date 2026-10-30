@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, RichText, Ui};
 
-use super::{RubriqueApp, OpenFile};
+use super::{OpenFile, RubriqueApp};
 use crate::ai::naming::{name_prompt, name_slug, suggested_file_name};
 use crate::ai::run::{AiRun, RunEnd};
 use crate::ai::{self, AiTool};
