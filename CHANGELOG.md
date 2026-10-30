@@ -41,6 +41,8 @@ editor. This version adds voice memos, transcribed on your computer.
 
 - Clicking the close cross of a tab with unsaved changes did nothing. It now
   asks to save, discard or cancel.
+- Clicking **+ Add note** after selecting text in the preview opened the
+  paragraph for editing instead of the note dialog.
 
 ## [0.4.1] - 2026-10-28
 

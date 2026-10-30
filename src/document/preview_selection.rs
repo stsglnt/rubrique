@@ -34,8 +34,28 @@ pub fn clear(ctx: &Context) {
     ctx.plugin::<egui::text_selection::LabelSelectionState>().lock().clear_selection();
 }
 
+/// Where the "Add note" button was drawn this frame.
+pub fn set_button_rect(ctx: &Context, rect: egui::Rect) {
+    ctx.data_mut(|data| data.insert_temp(button_id(), rect));
+}
+
 fn selection_id() -> Id {
     Id::unique("rubrique-preview-selection")
+}
+
+fn button_id() -> Id {
+    Id::unique("rubrique-add-note-button")
+}
+
+/// A click that started on the "Add note" button is still going on. Pressing
+/// the mouse clears egui's selection, so without this the button would vanish
+/// before the release, and the release would land on the text below it.
+fn clicking_button(ctx: &Context, press_origin: Option<Pos2>) -> bool {
+    let Some(rect) = ctx.data(|data| data.get_temp::<egui::Rect>(button_id())) else {
+        return false;
+    };
+    let pressing = ctx.input(|input| input.pointer.any_down() || input.pointer.any_released());
+    pressing && press_origin.is_some_and(|origin| rect.contains(origin))
 }
 
 #[derive(Default)]
@@ -65,7 +85,12 @@ impl egui::Plugin for SelectionTracker {
         });
         let has_selection = ctx.plugin::<egui::text_selection::LabelSelectionState>().lock().has_selection();
         if !has_selection {
-            ctx.data_mut(|data| data.remove::<PreviewSelection>(selection_id()));
+            if !clicking_button(&ctx, self.press_origin) {
+                ctx.data_mut(|data| {
+                    data.remove::<PreviewSelection>(selection_id());
+                    data.remove::<egui::Rect>(button_id());
+                });
+            }
             return;
         }
         if let Some(text) = settled.filter(|text| !text.trim().is_empty()) {
