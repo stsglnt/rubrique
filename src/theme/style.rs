@@ -1,9 +1,11 @@
 //! Turn a theme into egui styles and install it.
 
-use eframe::egui::{self, Color32, Context, CornerRadius, Stroke, Style, ThemePreference, Visuals};
+use eframe::egui::style::ScrollAnimation;
+use eframe::egui::{self, Color32, Context, CornerRadius, FontId, Stroke, Style, TextStyle, ThemePreference, Visuals};
 
 use super::catalog::{ThemeChoice, Themes};
 use super::palette::{Base, Palette, Rgb, Theme};
+use crate::settings::accessibility::AccessibilitySettings;
 
 /// Corner rounding of buttons, fields and rows.
 const WIDGET_RADIUS: u8 = 5;
@@ -11,6 +13,8 @@ const WIDGET_RADIUS: u8 = 5;
 const WINDOW_RADIUS: u8 = 8;
 /// Width of the text cursor.
 const CURSOR_WIDTH: f32 = 2.0;
+/// Width of the outline around the focused control with strong focus on.
+const STRONG_FOCUS_WIDTH: f32 = 2.5;
 
 /// Install the chosen theme. "System" fills egui's light and dark slots with
 /// the Light and Dark themes and lets the OS pick; a named theme fills the
@@ -29,6 +33,28 @@ pub fn apply_theme(ctx: &Context, themes: &Themes, choice: &ThemeChoice) {
             ctx.set_theme(egui_theme(theme.base));
         }
         None => ctx.set_theme(ThemePreference::System),
+    }
+}
+
+/// Install the text size and adjust the light and dark styles. Call after
+/// [`apply_theme`], which replaces the styles.
+pub fn apply_accessibility(ctx: &Context, settings: &AccessibilitySettings) {
+    ctx.set_zoom_factor(settings.text_size.scale());
+    ctx.all_styles_mut(|style| adjust_style(style, settings));
+}
+
+/// The editor font size, no animations, and thicker focus outlines.
+fn adjust_style(style: &mut Style, settings: &AccessibilitySettings) {
+    style.text_styles.insert(TextStyle::Monospace, FontId::monospace(f32::from(settings.editor_font_size)));
+    if settings.reduce_motion {
+        style.animation_time = 0.0;
+        style.scroll_animation = ScrollAnimation::none();
+    }
+    if settings.strong_focus {
+        let visuals = &mut style.visuals;
+        // Focused buttons use the active look; focused text fields the selection stroke.
+        visuals.widgets.active.bg_stroke.width = STRONG_FOCUS_WIDTH;
+        visuals.selection.stroke.width = STRONG_FOCUS_WIDTH;
     }
 }
 
@@ -130,6 +156,28 @@ mod tests {
         let dark = Theme::builtin(Base::Dark);
         assert!(!style(&light).visuals.dark_mode);
         assert!(style(&dark).visuals.dark_mode);
+    }
+
+    #[test]
+    fn accessibility_adjusts_fonts_motion_and_focus() {
+        let mut adjusted = style(&Theme::builtin(Base::Light));
+        let settings = AccessibilitySettings {
+            editor_font_size: 18,
+            reduce_motion: true,
+            strong_focus: true,
+            ..Default::default()
+        };
+        adjust_style(&mut adjusted, &settings);
+        assert_eq!(adjusted.text_styles[&TextStyle::Monospace], FontId::monospace(18.0));
+        assert!(adjusted.animation_time.abs() < f32::EPSILON);
+        let unchanged = style(&Theme::builtin(Base::Light)).visuals;
+        let focus = Stroke::new(STRONG_FOCUS_WIDTH, unchanged.selection.stroke.color);
+        assert_eq!(adjusted.visuals.selection.stroke, focus);
+
+        // The defaults change nothing (egui's monospace font is already 13 points).
+        let mut plain = style(&Theme::builtin(Base::Light));
+        adjust_style(&mut plain, &AccessibilitySettings::default());
+        assert_eq!(format!("{plain:?}"), format!("{:?}", style(&Theme::builtin(Base::Light))));
     }
 
     #[test]

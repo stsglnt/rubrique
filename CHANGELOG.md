@@ -26,6 +26,9 @@ editor. This version adds voice memos, transcribed on your computer.
   works.
 - **Settings → Voice memos**: memos folder, copy or link dropped files, the
   transcription command, and **Transcribe after recording**.
+- **Settings → Accessibility**: text size for the whole window (also
+  `Cmd/Ctrl` + `+`, `-`, `0`), editor font size, **Reduce motion** and a
+  **Stronger focus outline**.
 
 ### Changed
 
