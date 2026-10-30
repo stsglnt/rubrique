@@ -97,19 +97,14 @@ jobs:
           cargo build --release --locked --target x86_64-apple-darwin
       # Signing and notarization need the secrets MACOS_CERTIFICATE,
       # MACOS_CERTIFICATE_PASSWORD, APPLE_ID, APPLE_TEAM_ID and APPLE_APP_PASSWORD.
-      # Without them (forks, or before setup) the app is ad-hoc signed, and a
-      # release is refused, because macOS would block the downloaded app.
+      # Without them (forks, or before setup) the app is ad-hoc signed: macOS
+      # blocks it on first open, and the release notes say how to open it.
       - name: Import the Developer ID certificate
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          RELEASE: ${{ needs.plan.outputs.release }}
         run: |
           if [ -z "$MACOS_CERTIFICATE" ]; then
-            if [ "$RELEASE" = "true" ]; then
-              echo "::error::A release needs the MACOS_CERTIFICATE and MACOS_CERTIFICATE_PASSWORD secrets"
-              exit 1
-            fi
             echo "::warning::No MACOS_CERTIFICATE secret: the app is ad-hoc signed and macOS will block it"
             exit 0
           fi
@@ -136,12 +131,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-          RELEASE: ${{ needs.plan.outputs.release }}
         run: |
-          if [ "$RELEASE" = "true" ] && { [ -z "$APPLE_ID" ] || [ -z "$APPLE_TEAM_ID" ] || [ -z "$APPLE_APP_PASSWORD" ]; }; then
-            echo "::error::A release needs the APPLE_ID, APPLE_TEAM_ID and APPLE_APP_PASSWORD secrets"
-            exit 1
-          fi
           sh packaging/macos/bundle.sh "${{ needs.plan.outputs.version }}"
       - name: Remove the signing keychain
         if: always()
@@ -170,6 +160,7 @@ jobs:
       - name: Release notes from CHANGELOG
         env:
           VERSION: ${{ needs.plan.outputs.version }}
+          SIGNED: ${{ secrets.APPLE_APP_PASSWORD != '' }}
         run: |
           awk -v heading="## [$VERSION]" '
             index($0, heading) == 1 { found = 1; next }
@@ -180,7 +171,11 @@ jobs:
             echo
             echo "### Install"
             echo
-            echo "- **macOS**: open the .dmg and drag rubrique to Applications. The app is signed and notarized by Apple."
+            if [ "$SIGNED" = "true" ]; then
+              echo "- **macOS**: open the .dmg and drag rubrique to Applications. The app is signed and notarized by Apple."
+            else
+              echo "- **macOS**: open the .dmg and drag rubrique to Applications. This version is not notarized yet: the first time, run \`xattr -dr com.apple.quarantine /Applications/rubrique.app\` in Terminal, or open it and click **Open Anyway** in System Settings → Privacy & Security."
+            fi
             echo "- **Debian / Ubuntu**: \`sudo apt install ./rubrique_*.deb\`"
             echo "- **Other Linux**: unpack the .tar.gz and run \`./install.sh\` (installs to ~/.local)."
           } >> notes.md

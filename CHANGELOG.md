@@ -34,8 +34,9 @@ editor. This version adds voice memos, transcribed on your computer.
 - **Settings** is now a window over the app, with groups on the left:
   Appearance, Files, AI, Skills and Voice memos. A click outside or Esc
   closes it.
-- macOS: the app and the `.dmg` are signed with a Developer ID and notarized
-  by Apple, so they open with no warning.
+- macOS: release builds are signed with a Developer ID and notarized by
+  Apple once the signing secrets are set. Until then the release notes say
+  how to open the app the first time.
 - macOS asks for the microphone the first time you record.
 - New dependency `cpal` for the microphone and speakers. Building on Linux
   needs `libasound2-dev`.
