@@ -6,6 +6,7 @@ use std::time::Duration;
 use eframe::egui::{self, Context, Key, KeyboardShortcut, Modifiers, RichText, Ui, ViewportCommand};
 
 mod ask;
+mod images;
 mod naming;
 mod summary;
 mod tabs;

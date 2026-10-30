@@ -33,6 +33,11 @@ pub fn media_kind(path: &Path) -> Option<MediaKind> {
     }
 }
 
+/// Has an image extension rubrique shows.
+pub fn is_image_path(path: &Path) -> bool {
+    media_kind(path) == Some(MediaKind::Image)
+}
+
 /// Media kind of a link target in Markdown (`![alt](clip.mp4)`), ignoring
 /// any `?query` or `#fragment`.
 pub fn media_kind_of_url(url: &str) -> Option<MediaKind> {
@@ -93,6 +98,8 @@ mod tests {
         assert_eq!(media_kind(Path::new("notes.md")), None);
         assert_eq!(media_kind(Path::new("logo.svg")), None);
         assert_eq!(media_kind(Path::new("png")), None);
+        assert!(is_image_path(Path::new("a/photo.JPG")));
+        assert!(!is_image_path(Path::new("clip.mp4")));
     }
 
     #[test]

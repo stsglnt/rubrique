@@ -26,6 +26,8 @@ editor. This version adds voice memos, transcribed on your computer.
   works.
 - **Settings → Voice memos**: memos folder, copy or link dropped files, the
   transcription command, and **Transcribe after recording**.
+- **Drop images** on the page: they are copied into an `images` folder next
+  to the note and linked where the cursor is.
 
 ### Changed
 
