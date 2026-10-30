@@ -1234,12 +1234,11 @@ impl RubriqueApp {
         let area = egui::Area::new(egui::Id::unique("add-note-button"))
             .order(egui::Order::Foreground)
             .fixed_pos(selection.pointer + egui::vec2(10.0, 14.0));
-        let clicked = area
-            .show(ctx, |ui| {
-                ui.button("+ Add note").on_hover_text("Add a note about the selected text (Cmd+Shift+M)").clicked()
-            })
-            .inner;
-        if clicked {
+        let shown = area.show(ctx, |ui| {
+            ui.button("+ Add note").on_hover_text("Add a note about the selected text (Cmd+Shift+M)").clicked()
+        });
+        preview_selection::set_button_rect(ctx, shown.response.rect);
+        if shown.inner {
             self.start_note(ctx);
         }
     }

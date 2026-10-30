@@ -35,6 +35,11 @@ editor. This version adds voice memos, transcribed on your computer.
 - New dependency `cpal` for the microphone and speakers. Building on Linux
   needs `libasound2-dev`.
 
+### Fixed
+
+- Clicking **+ Add note** after selecting text in the preview opened the
+  paragraph for editing instead of the note dialog.
+
 ## [0.4.1] - 2026-10-28
 
 ### Added
