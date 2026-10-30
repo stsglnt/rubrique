@@ -58,7 +58,8 @@ Cloud tools run only in folders you allowed.
 - **Tabs**: each tab keeps its unsaved changes, cursor and undo history.
 - **Images and videos** open in their own view.
 - **Safe saves**: rubrique never reformats your file. If another program
-  changes it, you get a side-by-side merge.
+  changes it, you get a side-by-side merge. Quitting keeps unsaved edits
+  for the next start without touching the file.
 - **Open in browser** (`Cmd/Ctrl+Shift+B`): the note as a web page.
 
 <img src="docs/screenshots/themes.png" alt="One rubrique window shown in five themes: Light, Dark, Sepia, Midnight and High contrast" width="880">

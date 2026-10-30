@@ -5,6 +5,7 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 const BYTES_PER_MEGABYTE: u64 = 1024 * 1024;
@@ -14,6 +15,9 @@ pub const MAX_FILE_BYTES: u64 = 20 * BYTES_PER_MEGABYTE;
 
 /// How many leading bytes are checked for NUL to spot binary files.
 const BINARY_SNIFF_BYTES: usize = 8 * 1024;
+
+/// Source of [`Document::revision`] numbers, unique across all documents.
+static NEXT_REVISION: AtomicU64 = AtomicU64::new(1);
 
 /// Why a file cannot be shown in the editor.
 #[derive(Debug, PartialEq, Eq)]
@@ -77,6 +81,9 @@ pub struct Document {
     /// The text as last read from or written to disk: the common starting
     /// point when the file and the buffer both changed (for merging).
     base_text: String,
+    /// Changes on every edit and is never shared with another document, so
+    /// a draft written at one revision is known to be up to date.
+    revision: u64,
 }
 
 impl Document {
@@ -102,7 +109,46 @@ impl Document {
             text,
             dirty: false,
             disk_modified: metadata.modified().ok(),
+            revision: next_revision(),
         }))
+    }
+
+    /// A buffer for a file that no longer exists: `text` with unsaved
+    /// changes over `base_text`. Saving creates the file again.
+    pub fn missing(path: &Path, text: String, base_text: String) -> Self {
+        Document {
+            path: path.to_path_buf(),
+            text,
+            saved_hash: None,
+            dirty: true,
+            disk_modified: None,
+            base_text,
+            revision: next_revision(),
+        }
+    }
+
+    /// Put back edits kept from an earlier session: `text` in the buffer,
+    /// `base_text` as the text they started from. The file stays the
+    /// saved state, so the buffer is dirty when it differs from the file.
+    pub fn restore_edits(&mut self, text: String, base_text: String) {
+        self.text = text;
+        self.base_text = base_text;
+        self.on_text_changed();
+    }
+
+    /// Drop the unsaved changes: back to the file as it is on disk now (or
+    /// the last known text when it cannot be read). Always clean afterwards.
+    pub fn discard_changes(&mut self) {
+        self.text = self.read_disk_text().unwrap_or_else(|_| self.base_text.clone());
+        self.saved_hash = Some(hash_text(&self.text));
+        self.base_text.clone_from(&self.text);
+        self.disk_modified = modified_time(&self.path);
+        self.on_text_changed();
+    }
+
+    /// Number that changes on every edit (see the field).
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// True when the buffer has unsaved changes.
@@ -114,6 +160,7 @@ impl Document {
     /// so undoing back to the saved text makes the document clean again.
     pub fn on_text_changed(&mut self) {
         self.dirty = Some(hash_text(&self.text)) != self.saved_hash;
+        self.revision = next_revision();
     }
 
     /// Write the buffer atomically: temp file in the same folder, flush, rename.
@@ -205,6 +252,11 @@ fn hash_text(text: &str) -> u64 {
     hasher.finish()
 }
 
+/// A revision number no document has used yet.
+fn next_revision() -> u64 {
+    NEXT_REVISION.fetch_add(1, Ordering::Relaxed)
+}
+
 /// The file's modification time, `None` when it is missing or unknown.
 fn modified_time(path: &Path) -> Option<SystemTime> {
     fs::metadata(path).and_then(|metadata| metadata.modified()).ok()
@@ -212,7 +264,7 @@ fn modified_time(path: &Path) -> Option<SystemTime> {
 
 /// Replace `target` with `contents` so that a crash leaves either the old or
 /// the new file, never a truncated one. Keeps the original permissions.
-fn write_atomically(target: &Path, contents: &[u8]) -> io::Result<()> {
+pub fn write_atomically(target: &Path, contents: &[u8]) -> io::Result<()> {
     let folder = target.parent().unwrap_or(Path::new("."));
     let file_name = target.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
     let temp_path = folder.join(format!(".{file_name}.rubrique-{}.tmp", std::process::id()));
@@ -376,5 +428,36 @@ mod tests {
         assert_eq!(document.base_text(), "theirs\none\n");
         document.accept_disk_text("theirs\none\nmine\n".to_string());
         assert!(!document.is_dirty());
+    }
+
+    #[test]
+    fn restored_edits_are_dirty_and_discard_returns_to_disk() {
+        let temp = TempFolder::new();
+        let path = temp.write("a.md", "theirs\n");
+        let mut document = open_text(&path);
+        let before = document.revision();
+        document.restore_edits("mine\n".to_string(), "old\n".to_string());
+        assert!(document.is_dirty());
+        assert_ne!(document.revision(), before);
+        assert_eq!(document.base_text(), "old\n");
+
+        document.discard_changes();
+        assert!(!document.is_dirty());
+        assert_eq!(document.text, "theirs\n");
+        assert_eq!(document.base_text(), "theirs\n");
+    }
+
+    #[test]
+    fn missing_document_is_dirty_until_saved_or_discarded() {
+        let temp = TempFolder::new();
+        let path = temp.path().join("gone.md");
+        let mut document = Document::missing(&path, "mine".to_string(), "old".to_string());
+        assert!(document.is_dirty());
+        assert_eq!(document.disk_state(), DiskState::Unchanged, "already known to be missing");
+
+        document.discard_changes();
+        assert!(!document.is_dirty());
+        assert_eq!(document.text, "old");
+        assert!(!path.exists(), "discarding never writes the file");
     }
 }

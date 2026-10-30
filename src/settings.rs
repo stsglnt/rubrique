@@ -187,6 +187,11 @@ pub fn default_skills_folder() -> Option<PathBuf> {
     config_folder().map(|folder| folder.join("skills"))
 }
 
+/// Folder for unsaved edits kept between runs (`drafts` in the config folder).
+pub fn drafts_folder() -> Option<PathBuf> {
+    config_folder().map(|folder| folder.join("drafts"))
+}
+
 /// Folder for the user's own `*.theme` files (`themes` in the config folder).
 pub fn themes_folder() -> Option<PathBuf> {
     config_folder().map(|folder| folder.join("themes"))

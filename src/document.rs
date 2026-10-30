@@ -1,5 +1,6 @@
 //! The open document: file contents, saving, dirty state, line editing.
 
+pub mod draft;
 pub mod highlighting;
 pub mod line_ops;
 pub mod media_view;
