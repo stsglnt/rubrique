@@ -35,6 +35,11 @@ editor. This version adds voice memos, transcribed on your computer.
 - New dependency `cpal` for the microphone and speakers. Building on Linux
   needs `libasound2-dev`.
 
+### Fixed
+
+- Clicking the close cross of a tab with unsaved changes did nothing. It now
+  asks to save, discard or cancel.
+
 ## [0.4.1] - 2026-10-28
 
 ### Added
