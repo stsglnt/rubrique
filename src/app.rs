@@ -7,6 +7,7 @@ use eframe::egui::{self, Context, Key, KeyboardShortcut, Modifiers, RichText, Ui
 
 mod ask;
 mod images;
+mod install;
 mod naming;
 mod summary;
 mod tabs;
@@ -212,6 +213,8 @@ pub struct RubriqueApp {
     note_draft: Option<NoteDraft>,
     /// Voice memos: recording, playback, transcription.
     voice: voice::VoiceState,
+    /// Installing missing tools.
+    install: install::InstallState,
 }
 
 /// A note in the making (new, or an existing one being edited).
@@ -271,6 +274,7 @@ impl RubriqueApp {
             block_edit: None,
             note_draft: None,
             voice: voice::VoiceState::default(),
+            install: install::InstallState::default(),
         };
         preview_selection::install(ctx);
         egui_extras::install_image_loaders(ctx);
@@ -628,7 +632,7 @@ impl RubriqueApp {
         if self.settings_open {
             self.check_ai_tools();
             self.load_skills();
-            self.voice.program_found = self.settings.voice.find_program();
+            self.check_voice_tool();
         }
     }
 
@@ -640,6 +644,7 @@ impl RubriqueApp {
     /// Look for each AI tool's program on `PATH`.
     fn check_ai_tools(&mut self) {
         self.ai_found = AiTool::ALL.map(|tool| ai::find_program(self.settings.ai.command(tool)));
+        self.find_ai_recipes();
     }
 
     /// The settings window over the dimmed app. A click outside closes it.
@@ -670,13 +675,23 @@ impl RubriqueApp {
             is_default: self.settings.scratch_folder.is_none() || scratch_folder == default_scratch_folder(),
         };
         let skills_folder = self.settings.ai.skills_folder.clone().or_else(default_skills_folder);
+        let install = self.install_status();
         let ai = AiInfo {
             settings: &mut self.settings.ai,
             found: &self.ai_found,
             skills: &self.skills,
             skills_folder: skills_folder.as_deref(),
+            recipes: &self.install.ai,
+            local_model: self.install.local_model.as_ref(),
+            install: &install,
         };
-        let voice = VoiceInfo { settings: &mut self.settings.voice, found: self.voice.program_found.as_deref() };
+        let voice = VoiceInfo {
+            settings: &mut self.settings.voice,
+            found: self.voice.program_found.as_deref(),
+            recipe: self.install.voice.as_ref(),
+            model_recipe: self.install.voice_model.as_ref(),
+            install: &install,
+        };
         let action = show_settings(
             ui,
             &mut self.settings_group,
@@ -743,11 +758,12 @@ impl RubriqueApp {
                 Some(Err(error)) => self.show_status(format!("Cannot create the example skill: {error}")),
                 None => {}
             },
-            SettingsAction::VoiceCommandChanged => self.voice.program_found = self.settings.voice.find_program(),
+            SettingsAction::VoiceCommandChanged => self.check_voice_tool(),
             SettingsAction::Copy(text) => {
                 ui.ctx().copy_text(text);
                 self.show_status("Copied the command; paste it into a terminal".to_string());
             }
+            SettingsAction::Install(action) => self.install_action(ui.ctx(), action),
             SettingsAction::Close => self.settings_open = false,
         }
     }
@@ -1831,6 +1847,7 @@ impl eframe::App for RubriqueApp {
         self.poll_disk(&ctx);
         self.poll_naming();
         self.poll_voice(&ctx);
+        self.poll_install(&ctx);
 
         let style = ctx.global_style();
         let bar_frame =
@@ -1871,6 +1888,7 @@ impl eframe::App for RubriqueApp {
         self.handle_dropped_files(&ctx);
 
         self.ask_dialogs(&ctx);
+        self.install_dialog(&ctx);
         self.hover_summary(&ctx);
         self.settings_window(&ctx);
         self.unsaved_dialog(&ctx);

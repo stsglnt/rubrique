@@ -76,7 +76,7 @@ impl RubriqueApp {
         }
         let command = self.settings.ai.command(tool).to_string();
         if ai::find_program(&command).is_none() {
-            return Err(format!("{} was not found; set it in Settings → AI", tool.name()));
+            return Err(format!("{} is not installed; install it in Settings → AI", tool.name()));
         }
         let (program, args) = ai::command_args(&command, &name_prompt(text)).ok_or("The command is empty")?;
         let repaint = self.repaint.clone();

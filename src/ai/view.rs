@@ -157,7 +157,10 @@ fn compare_picker(ui: &mut Ui, bar: &mut AskBar, installed: [bool; 4]) {
                 }
                 ui.add_enabled_ui(found, |ui| ui.selectable_value(&mut bar.compare, Some(choice), choice.name()))
                     .response
-                    .on_disabled_hover_text(format!("{} was not found. Set its command in Settings.", choice.name()));
+                    .on_disabled_hover_text(format!(
+                        "{} is not installed. Install it in Settings → AI.",
+                        choice.name()
+                    ));
             }
         })
         .response
@@ -170,7 +173,7 @@ fn tool_picker(ui: &mut Ui, tool: &mut AiTool, installed: [bool; 4]) {
         for (choice, found) in AiTool::ALL.into_iter().zip(installed) {
             ui.add_enabled_ui(found, |ui| ui.selectable_value(tool, choice, choice.name()))
                 .response
-                .on_disabled_hover_text(format!("{} was not found. Set its command in Settings.", choice.name()));
+                .on_disabled_hover_text(format!("{} is not installed. Install it in Settings → AI.", choice.name()));
         }
     });
 }

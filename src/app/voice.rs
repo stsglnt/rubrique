@@ -445,14 +445,8 @@ impl RubriqueApp {
         let Some((program, args)) = voice.command_args(&audio) else {
             return;
         };
-        if voice.find_program().is_none() {
-            self.show_status(format!(
-                "{program} was not found. Install whisper.cpp, or set the command in Settings → Voice memos."
-            ));
-            return;
-        }
-        if let Some(model) = voice.model_path().filter(|_| voice.model_missing()) {
-            self.show_status(format!("Model not found: {}. See Settings → Voice memos.", model.display()));
+        if voice.find_program().is_none() || voice.model_missing() {
+            self.offer_transcription_install(&program);
             return;
         }
         let repaint = self.repaint.clone();
@@ -465,6 +459,32 @@ impl RubriqueApp {
                 }
             }
             Err(error) => self.show_status(format!("Cannot start {program}: {error}")),
+        }
+    }
+
+    /// The transcription program or its model is missing: offer to install
+    /// it, or say where to set it up.
+    fn offer_transcription_install(&mut self, program: &str) {
+        self.check_voice_tool();
+        if self.voice.program_found.is_none() {
+            match self.install.voice.clone() {
+                Some(recipe) => {
+                    self.offer_install(format!("{} is not installed, or not on PATH.", recipe.name), recipe);
+                }
+                None => {
+                    self.show_status(format!("{program} was not found. Set the command in Settings → Voice memos."));
+                }
+            }
+            return;
+        }
+        let model = self.settings.voice.model_path().unwrap_or_default();
+        match self.install.voice_model.clone() {
+            Some(recipe) => {
+                let message =
+                    format!("Transcribing needs the model file {}.", crate::settings::view::home_relative(&model));
+                self.offer_install(message, recipe);
+            }
+            None => self.show_status(format!("Model not found: {}. See Settings → Voice memos.", model.display())),
         }
     }
 

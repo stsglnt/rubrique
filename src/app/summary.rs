@@ -150,7 +150,7 @@ impl RubriqueApp {
         folder: &Path,
     ) -> Result<(), String> {
         if ai::find_program(command).is_none() {
-            return Err(format!("{} was not found. Set it in Settings → AI.", tool.name()));
+            return Err(format!("{} is not installed. Install it in Settings → AI.", tool.name()));
         }
         let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
         let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();

@@ -210,6 +210,9 @@ impl RubriqueApp {
 
     /// Ask for permission the first time in a folder, then run.
     fn begin_run(&mut self, ctx: &Context, pending: PendingRun) {
+        if self.offer_missing_ai_tool(pending.tool) {
+            return;
+        }
         let folder = run_folder(&pending.target.path);
         if self.settings.ai.is_allowed(&folder) {
             self.start_run(ctx, pending);
@@ -236,6 +239,9 @@ impl RubriqueApp {
             let command = self.settings.ai.command(tool).to_string();
             if let Some(problem) = ai::check_command(&command) {
                 self.show_status(format!("{} command: {} (Settings → AI)", tool.name(), problem.message()));
+                continue;
+            }
+            if self.offer_missing_ai_tool(tool) {
                 continue;
             }
             let Some((program, args)) = ai::command_args(&command, &prompt) else {

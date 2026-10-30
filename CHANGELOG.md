@@ -28,6 +28,12 @@ editor. This version adds voice memos, transcribed on your computer.
   transcription command, and **Transcribe after recording**.
 - **Drop images** on the page: they are copied into an `images` folder next
   to the note and linked where the cursor is.
+- **Install** a missing tool with one click: when whisper.cpp, its model,
+  Claude Code, Codex or Ollama is not found (on Transcribe, Ask, or in
+  Settings), rubrique offers its install command (`brew`, `npm`, `curl` or
+  `ollama pull`) and shows the command first. Install scripts piped to a
+  shell, and tools without a known command, get **Copy install command**
+  and **Open install page** instead.
 
 ### Changed
 

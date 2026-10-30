@@ -7,6 +7,7 @@ mod document;
 mod explorer;
 mod format;
 mod icons;
+mod install;
 mod markdown;
 mod media;
 mod scratch;
