@@ -4,24 +4,54 @@ use eframe::egui::{self, Align, Color32, Layout, Margin, RichText, Sense, Stroke
 
 use std::path::{Path, PathBuf};
 
-use super::blocks::{Block, List};
-use super::inlines::{Inline, is_openable_url};
+use super::blocks::{Block, List, parse_blocks};
+use super::inlines::{Inline, is_openable_url, parse_inlines};
 use crate::media::{MediaKind, image_uri, media_kind_of_url};
 
-/// Heading font sizes for levels 1 to 6.
-const HEADING_SIZES: [f32; 6] = [30.0, 24.0, 19.0, 16.0, 15.0, 14.0];
-/// Space above a heading (levels 1 to 6), larger than below so it groups with its text.
-const HEADING_GAPS: [f32; 6] = [28.0, 24.0, 18.0, 14.0, 14.0, 14.0];
+/// Sizes and spacing for one place Markdown is drawn.
+struct Look {
+    /// Heading font sizes for levels 1 to 6.
+    heading_sizes: [f32; 6],
+    /// Space above a heading (levels 1 to 6), larger than below so it groups with its text.
+    heading_gaps: [f32; 6],
+    /// Headings up to this level get a thin line underneath.
+    ruled_level: u8,
+    /// Space between a heading and its line.
+    rule_gap: f32,
+    body_size: f32,
+    body_line_height: f32,
+    /// Vertical gap between blocks.
+    block_gap: f32,
+    /// Offer Prettify on code, and memo rows: both act on the open file.
+    file_tools: bool,
+}
+
+/// The preview of the open file.
+const PAGE: Look = Look {
+    heading_sizes: [30.0, 24.0, 19.0, 16.0, 15.0, 14.0],
+    heading_gaps: [28.0, 24.0, 18.0, 14.0, 14.0, 14.0],
+    ruled_level: 2,
+    rule_gap: 8.0,
+    body_size: 15.0,
+    body_line_height: 24.0,
+    block_gap: 12.0,
+    file_tools: true,
+};
+
+/// Smaller and tighter, for AI answers.
+const COMPACT: Look = Look {
+    heading_sizes: [19.0, 17.0, 15.5, 14.5, 14.0, 14.0],
+    heading_gaps: [14.0, 12.0, 10.0, 8.0, 8.0, 8.0],
+    ruled_level: 1,
+    rule_gap: 4.0,
+    body_size: 14.0,
+    body_line_height: 20.0,
+    block_gap: 8.0,
+    file_tools: false,
+};
+
 /// Line height as a multiple of the font size, for headings.
 const HEADING_LINE_FACTOR: f32 = 1.3;
-/// Headings up to this level get a thin line underneath.
-const RULED_HEADING_LEVEL: u8 = 2;
-/// Space between a heading and its line.
-const HEADING_RULE_GAP: f32 = 8.0;
-const BODY_SIZE: f32 = 15.0;
-const BODY_LINE_HEIGHT: f32 = 24.0;
-/// Vertical gap between blocks.
-const BLOCK_GAP: f32 = 12.0;
 /// Vertical gap between list items.
 const LIST_ITEM_GAP: f32 = 4.0;
 /// Width of the column for bullets, numbers and checkboxes.
@@ -64,29 +94,47 @@ const RULE_SPACING: f32 = 20.0;
 
 /// Render blocks inside `depth` lists (bullets change shape with depth),
 /// `gap` apart. List items use a smaller gap so nested lists stay tight.
-fn render_blocks_at(ui: &mut Ui, blocks: &[Block], depth: usize, gap: f32) {
+fn render_blocks_at(ui: &mut Ui, look: &Look, blocks: &[Block], depth: usize, gap: f32) {
     for (index, block) in blocks.iter().enumerate() {
         if index > 0 {
-            ui.add_space(gap_before(block, gap));
+            ui.add_space(gap_before(look, block, gap));
         }
-        render_block(ui, block, depth);
+        render_block(ui, look, block, depth);
     }
 }
 
 /// Draw one top-level block (for the clickable preview).
 pub fn render_top_block(ui: &mut Ui, block: &Block) {
-    render_block(ui, block, 0);
+    render_block(ui, &PAGE, block, 0);
 }
 
 /// Space above a top-level block that follows another one.
 pub fn top_gap(block: &Block) -> f32 {
-    gap_before(block, BLOCK_GAP)
+    gap_before(&PAGE, block, PAGE.block_gap)
+}
+
+/// Draw Markdown from an AI tool, smaller than the page and without the
+/// buttons that change the file. Code blocks still offer Copy (see
+/// `take_code_action`). Partial text, still arriving, is fine.
+pub fn render_answer(ui: &mut Ui, markdown: &str) {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        render_blocks_at(ui, &COMPACT, &parse_blocks(markdown), 0, COMPACT.block_gap);
+    });
+}
+
+/// Draw inline Markdown (bold, italic, code, links) at the default text
+/// size, wrapped.
+pub fn render_inline_text(ui: &mut Ui, markdown: &str) {
+    let size = egui::TextStyle::Body.resolve(ui.style()).size;
+    let style = TextStyle { size, line_height: size * HEADING_LINE_FACTOR, ..TextStyle::body(&COMPACT) };
+    render_inlines(ui, &parse_inlines(markdown), &style);
 }
 
 /// Space above a block: headings get more, so they sit close to their own text.
-fn gap_before(block: &Block, gap: f32) -> f32 {
+fn gap_before(look: &Look, block: &Block, gap: f32) -> f32 {
     match block {
-        Block::Heading { level, .. } => HEADING_GAPS[heading_index(*level)],
+        Block::Heading { level, .. } => look.heading_gaps[heading_index(*level)],
         _ => gap,
     }
 }
@@ -97,18 +145,18 @@ fn heading_index(level: u8) -> usize {
 }
 
 /// Render one block with the widgets for its kind.
-fn render_block(ui: &mut Ui, block: &Block, depth: usize) {
+fn render_block(ui: &mut Ui, look: &Look, block: &Block, depth: usize) {
     match block {
-        Block::Heading { level, content } => render_heading(ui, *level, content),
+        Block::Heading { level, content } => render_heading(ui, look, *level, content),
         // A paragraph that is only hidden comments takes no room.
         Block::Paragraph(content) if content.iter().all(|inline| matches!(inline, Inline::Note { .. })) => {}
-        Block::Paragraph(content) => match crate::voice::memo_link(content) {
+        Block::Paragraph(content) => match crate::voice::memo_link(content).filter(|_| look.file_tools) {
             Some(link) => crate::voice::view::memo_row(ui, &link),
-            None => render_inlines(ui, content, &TextStyle::default()),
+            None => render_inlines(ui, content, &TextStyle::body(look)),
         },
-        Block::Code { info, code } => render_code(ui, info, code),
-        Block::Quote(blocks) => render_quote(ui, blocks, depth),
-        Block::List(list) => render_list(ui, list, depth),
+        Block::Code { info, code } => render_code(ui, look, info, code),
+        Block::Quote(blocks) => render_quote(ui, look, blocks, depth),
+        Block::List(list) => render_list(ui, look, list, depth),
         Block::ThematicBreak => {
             ui.add(egui::Separator::default().spacing(RULE_SPACING));
         }
@@ -116,12 +164,12 @@ fn render_block(ui: &mut Ui, block: &Block, depth: usize) {
 }
 
 /// Heading text; levels 1 and 2 get a thin line underneath.
-fn render_heading(ui: &mut Ui, level: u8, content: &[Inline]) {
-    let size = HEADING_SIZES[heading_index(level)];
-    let style = TextStyle { size, line_height: size * HEADING_LINE_FACTOR, strong: true, ..TextStyle::default() };
+fn render_heading(ui: &mut Ui, look: &Look, level: u8, content: &[Inline]) {
+    let size = look.heading_sizes[heading_index(level)];
+    let style = TextStyle { size, line_height: size * HEADING_LINE_FACTOR, strong: true, ..TextStyle::body(look) };
     render_inlines(ui, content, &style);
-    if level <= RULED_HEADING_LEVEL {
-        ui.add_space(HEADING_RULE_GAP);
+    if level <= look.ruled_level {
+        ui.add_space(look.rule_gap);
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
         let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
         ui.painter().hline(rect.x_range(), rect.center().y, stroke);
@@ -153,7 +201,7 @@ fn code_action_id() -> egui::Id {
 /// Code block in an outlined box, with its info string as a small label at
 /// the top right. Under the mouse, Copy (and Prettify for JSON, SQL and
 /// XML) show there too.
-fn render_code(ui: &mut Ui, info: &str, code: &str) {
+fn render_code(ui: &mut Ui, look: &Look, info: &str, code: &str) {
     let visuals = ui.visuals();
     let frame = egui::Frame::new()
         .fill(visuals.code_bg_color)
@@ -173,47 +221,48 @@ fn render_code(ui: &mut Ui, info: &str, code: &str) {
         egui::pos2(response.response.rect.left() + f32::from(CODE_MARGIN.0), header.top()),
         egui::pos2(response.response.rect.right() - CODE_BUTTON_INSET, header.bottom()),
     );
-    code_header(ui, header, info, code, ui.rect_contains_pointer(response.response.rect));
+    let hovered = ui.rect_contains_pointer(response.response.rect);
+    code_header(ui, header, info, code, hovered, look.file_tools);
 }
 
-/// The language at the right of the header; under the mouse, Copy (and
-/// Prettify for JSON, SQL and XML) after it.
-fn code_header(ui: &mut Ui, header: egui::Rect, info: &str, code: &str, hovered: bool) {
+/// The language at the right of the header; under the mouse, Copy (and,
+/// with `prettify`, Prettify for JSON, SQL and XML) after it.
+fn code_header(ui: &mut Ui, header: egui::Rect, info: &str, code: &str, hovered: bool, prettify: bool) {
     let layout = egui::Layout::right_to_left(egui::Align::Center);
-    ui.scope_builder(egui::UiBuilder::new().max_rect(header).layout(layout), |ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let mut action = None;
-        if hovered {
-            let fill = ui.visuals().widgets.inactive.weak_bg_fill;
-            let button =
-                |text: &str| egui::Button::new(RichText::new(text).size(CODE_LABEL_SIZE + 1.0)).fill(fill).small();
-            if ui.add(button("Copy")).on_hover_text("Copy the code").clicked() {
-                action = Some(CodeAction::Copy(code.to_string()));
+    // A child that takes no room in `ui`, so the blocks after the code
+    // still start below it (the header sits inside the code box).
+    let ui = &mut ui.new_child(egui::UiBuilder::new().max_rect(header).layout(layout));
+    ui.spacing_mut().item_spacing.x = 4.0;
+    let mut action = None;
+    if hovered {
+        let fill = ui.visuals().widgets.inactive.weak_bg_fill;
+        let button = |text: &str| egui::Button::new(RichText::new(text).size(CODE_LABEL_SIZE + 1.0)).fill(fill).small();
+        if ui.add(button("Copy")).on_hover_text("Copy the code").clicked() {
+            action = Some(CodeAction::Copy(code.to_string()));
+        }
+        if let Some(language) = crate::format::Language::from_code_info(info).filter(|_| prettify) {
+            let tip = format!("Pretty-print this {} in the file", language.name());
+            if ui.add(button("Prettify")).on_hover_text(tip).clicked() {
+                action = Some(CodeAction::Prettify { info: info.to_string(), code: code.to_string() });
             }
-            if let Some(language) = crate::format::Language::from_code_info(info) {
-                let tip = format!("Pretty-print this {} in the file", language.name());
-                if ui.add(button("Prettify")).on_hover_text(tip).clicked() {
-                    action = Some(CodeAction::Prettify { info: info.to_string(), code: code.to_string() });
-                }
-            }
         }
-        if !info.is_empty() {
-            ui.label(RichText::new(info).size(CODE_LABEL_SIZE).weak());
-        }
-        if let Some(action) = action {
-            ui.ctx().data_mut(|data| data.insert_temp(code_action_id(), action));
-        }
-    });
+    }
+    if !info.is_empty() {
+        ui.label(RichText::new(info).size(CODE_LABEL_SIZE).weak());
+    }
+    if let Some(action) = action {
+        ui.ctx().data_mut(|data| data.insert_temp(code_action_id(), action));
+    }
 }
 
 /// Quoted blocks in softer text, with a bar in the accent color on the left.
-fn render_quote(ui: &mut Ui, blocks: &[Block], depth: usize) {
+fn render_quote(ui: &mut Ui, look: &Look, blocks: &[Block], depth: usize) {
     let weak_color = ui.visuals().weak_text_color();
     let bar_color = ui.visuals().hyperlink_color.gamma_multiply(QUOTE_BAR_TINT);
     let frame = egui::Frame::new().inner_margin(Margin { left: QUOTE_PADDING, ..Margin::ZERO });
     let response = frame.show(ui, |ui| {
         ui.visuals_mut().override_text_color = Some(weak_color);
-        render_blocks_at(ui, blocks, depth, BLOCK_GAP);
+        render_blocks_at(ui, look, blocks, depth, look.block_gap);
     });
     let rect = response.response.rect;
     let x = rect.left() + QUOTE_BAR_WIDTH / 2.0;
@@ -222,22 +271,22 @@ fn render_quote(ui: &mut Ui, blocks: &[Block], depth: usize) {
 
 /// List items with a bullet, number, or checkbox in a column before each.
 /// Done tasks are dimmed.
-fn render_list(ui: &mut Ui, list: &List, depth: usize) {
+fn render_list(ui: &mut Ui, look: &Look, list: &List, depth: usize) {
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = LIST_ITEM_GAP;
         for (index, item) in list.items.iter().enumerate() {
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = MARKER_GAP;
                 match (item.task, list.start) {
-                    (Some(checked), _) => paint_checkbox(ui, checked),
-                    (None, Some(start)) => number_marker(ui, start + index as u64),
-                    (None, None) => paint_bullet(ui, depth),
+                    (Some(checked), _) => paint_checkbox(ui, look, checked),
+                    (None, Some(start)) => number_marker(ui, look, start + index as u64),
+                    (None, None) => paint_bullet(ui, look, depth),
                 }
                 ui.vertical(|ui| {
                     if item.task == Some(true) {
                         ui.visuals_mut().override_text_color = Some(ui.visuals().weak_text_color());
                     }
-                    render_blocks_at(ui, &item.blocks, depth + 1, LIST_ITEM_GAP);
+                    render_blocks_at(ui, look, &item.blocks, depth + 1, LIST_ITEM_GAP);
                 });
             });
         }
@@ -245,13 +294,13 @@ fn render_list(ui: &mut Ui, list: &List, depth: usize) {
 }
 
 /// Room for a list marker, one text line tall.
-fn marker_rect(ui: &mut Ui) -> egui::Rect {
-    ui.allocate_exact_size(vec2(MARKER_WIDTH, BODY_LINE_HEIGHT), Sense::hover()).0
+fn marker_rect(ui: &mut Ui, look: &Look) -> egui::Rect {
+    ui.allocate_exact_size(vec2(MARKER_WIDTH, look.body_line_height), Sense::hover()).0
 }
 
 /// Filled dot, then hollow dot, then square, repeating with nesting depth.
-fn paint_bullet(ui: &mut Ui, depth: usize) {
-    let center = marker_rect(ui).center();
+fn paint_bullet(ui: &mut Ui, look: &Look, depth: usize) {
+    let center = marker_rect(ui, look).center();
     let color = ui.visuals().weak_text_color();
     let painter = ui.painter();
     match depth % 3 {
@@ -268,16 +317,17 @@ fn paint_bullet(ui: &mut Ui, depth: usize) {
 }
 
 /// "3." in soft text, right-aligned in the marker column.
-fn number_marker(ui: &mut Ui, number: u64) {
+fn number_marker(ui: &mut Ui, look: &Look, number: u64) {
     let color = ui.visuals().weak_text_color();
-    ui.allocate_ui_with_layout(vec2(MARKER_WIDTH, BODY_LINE_HEIGHT), Layout::right_to_left(Align::Center), |ui| {
-        ui.label(RichText::new(format!("{number}.")).size(BODY_SIZE).color(color));
+    let size = vec2(MARKER_WIDTH, look.body_line_height);
+    ui.allocate_ui_with_layout(size, Layout::right_to_left(Align::Center), |ui| {
+        ui.label(RichText::new(format!("{number}.")).size(look.body_size).color(color));
     });
 }
 
 /// Read-only task checkbox: an outline, or filled with the accent and a check mark.
-fn paint_checkbox(ui: &mut Ui, checked: bool) {
-    let rect = marker_rect(ui);
+fn paint_checkbox(ui: &mut Ui, look: &Look, checked: bool) {
+    let rect = marker_rect(ui, look);
     let center = pos2(rect.left() + CHECKBOX_SIZE / 2.0, rect.center().y);
     let square = egui::Rect::from_center_size(center, vec2(CHECKBOX_SIZE, CHECKBOX_SIZE));
     let visuals = ui.visuals();
@@ -315,11 +365,12 @@ struct TextStyle {
     note: Option<String>,
 }
 
-impl Default for TextStyle {
-    fn default() -> Self {
+impl TextStyle {
+    /// Plain body text.
+    fn body(look: &Look) -> Self {
         TextStyle {
-            size: BODY_SIZE,
-            line_height: BODY_LINE_HEIGHT,
+            size: look.body_size,
+            line_height: look.body_line_height,
             strong: false,
             italic: false,
             strikethrough: false,
@@ -490,7 +541,7 @@ fn render_image(ui: &mut Ui, alt: &str, url: &str, link: Option<&str>) {
 /// "[image: alt]" in soft text, for an image that cannot be shown.
 fn image_fallback(ui: &mut Ui, alt: &str, why: &str) {
     let name = if alt.is_empty() { "image" } else { alt };
-    let text = RichText::new(format!("[{name}]")).size(BODY_SIZE).line_height(Some(BODY_LINE_HEIGHT)).weak();
+    let text = RichText::new(format!("[{name}]")).size(PAGE.body_size).line_height(Some(PAGE.body_line_height)).weak();
     ui.label(text).on_hover_text(why);
 }
 
@@ -509,7 +560,7 @@ fn video_card(ui: &mut Ui, alt: &str, path: &Path) {
             crate::icons::icon_label(ui, crate::icons::Icon::Play);
             let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
             let title = if alt.is_empty() { name } else { format!("{alt} ({name})") };
-            ui.label(RichText::new(title).size(BODY_SIZE));
+            ui.label(RichText::new(title).size(PAGE.body_size));
             if ui.button("Play").on_hover_text("Open in your video player").clicked() {
                 ui.ctx().data_mut(|data| data.insert_temp(play_request_id(), path.to_path_buf()));
             }

@@ -8,6 +8,8 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-30
+
 rubrique is now described as what it has become: an AI-assisted Markdown
 editor. This version adds voice memos, transcribed on your computer.
 
@@ -26,14 +28,41 @@ editor. This version adds voice memos, transcribed on your computer.
   works.
 - **Settings → Voice memos**: memos folder, copy or link dropped files, the
   transcription command, and **Transcribe after recording**.
+- **Drop images** on the page: they are copied into an `images` folder next
+  to the note and linked where the cursor is.
+- **Install** a missing tool with one click: when whisper.cpp, its model,
+  Claude Code, Codex or Ollama is not found (on Transcribe, Ask, or in
+  Settings), rubrique offers its install command (`brew`, `npm`, `curl` or
+  `ollama pull`) and shows the command first. Install scripts piped to a
+  shell, and tools without a known command, get **Copy install command**
+  and **Open install page** instead.
+- **Settings → Accessibility**: text size for the whole window (also
+  `Cmd/Ctrl` + `+`, `-`, `0`), editor font size, **Reduce motion** and a
+  **Stronger focus outline**.
 
 ### Changed
 
-- macOS: the app and the `.dmg` are signed with a Developer ID and notarized
-  by Apple, so they open with no warning.
+- **Settings** is now a window over the app, with groups on the left:
+  Appearance, Files, AI, Skills and Voice memos. A click outside or Esc
+  closes it.
+- macOS: release builds are signed with a Developer ID and notarized by
+  Apple once the signing secrets are set. Until then the release notes say
+  how to open the app the first time.
+- AI answers are shown formatted: headings, lists, code blocks and links,
+  with **Copy** for the raw text. Code blocks in an answer have their own
+  **Copy**. Hover summaries show bold, italic and code.
 - macOS asks for the microphone the first time you record.
 - New dependency `cpal` for the microphone and speakers. Building on Linux
   needs `libasound2-dev`.
+
+### Fixed
+
+- Clicking the close cross of a tab with unsaved changes did nothing. It now
+  asks to save, discard or cancel.
+- Clicking **+ Add note** after selecting text in the preview opened the
+  paragraph for editing instead of the note dialog.
+- A block right after a code block inside a list or quote was drawn on top
+  of the code block's header.
 
 ## [0.4.1] - 2026-10-28
 
@@ -217,7 +246,8 @@ screen before it touches your text.
   plain-text editor with a rendered Markdown preview, atomic saves, unsaved
   changes prompt, reload on outside changes, and line shortcuts.
 
-[Unreleased]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.1...HEAD
+[Unreleased]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.2...HEAD
+[0.4.2]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.1...rubrique-v0.4.2
 [0.4.1]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.0...rubrique-v0.4.1
 [0.4.0]: https://github.com/witseko/rubrique/compare/rubrique-v0.3.0...rubrique-v0.4.0
 [0.3.0]: https://github.com/witseko/rubrique/compare/rubrique-v0.2.0...rubrique-v0.3.0

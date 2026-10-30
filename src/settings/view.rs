@@ -1,4 +1,4 @@
-//! The settings panel and the gear button that opens it.
+//! The settings window: groups on the left, the open group on the right.
 
 use std::path::{Path, PathBuf};
 
@@ -9,6 +9,9 @@ use eframe::egui::{
 
 use crate::ai::skills::Skill;
 use crate::ai::{AiSettings, AiTool, CommandProblem, check_command};
+use crate::install::view::{InstallAction, install_prompt};
+use crate::install::{InstallStatus, Recipe};
+use crate::settings::accessibility::{AccessibilitySettings, EDITOR_FONT_SIZES, TextSize};
 use crate::theme::catalog::{ThemeChoice, Themes};
 use crate::theme::palette::{Base, Palette, Rgb, Theme};
 use crate::voice::VoiceSettings;
@@ -18,6 +21,8 @@ use crate::voice::VoiceSettings;
 pub enum SettingsAction {
     PickTheme(ThemeChoice),
     ReloadThemes,
+    /// Text size, editor font, motion or focus outline changed.
+    AccessibilityChanged,
     /// Pick another folder for scratch files.
     ChooseScratchFolder,
     /// Go back to the default scratch folder.
@@ -38,6 +43,8 @@ pub enum SettingsAction {
     VoiceCommandChanged,
     /// Put this text on the clipboard.
     Copy(String),
+    /// A click in an install prompt.
+    Install(InstallAction),
     Close,
 }
 
@@ -46,6 +53,11 @@ pub enum SettingsAction {
 pub struct VoiceInfo<'a> {
     pub settings: &'a mut VoiceSettings,
     pub found: Option<&'a Path>,
+    /// How to install the transcription program, when it is missing.
+    pub recipe: Option<&'a Recipe>,
+    /// How to download the model, when it is missing.
+    pub model_recipe: Option<&'a Recipe>,
+    pub install: &'a InstallStatus,
 }
 
 /// AI settings to edit, and which tools were found (in [`AiTool::ALL`] order).
@@ -58,6 +70,11 @@ pub struct AiInfo<'a> {
     pub skills: &'a [Skill],
     /// rubrique's skills folder (the chosen one or the default).
     pub skills_folder: Option<&'a Path>,
+    /// How to install each missing tool, in [`AiTool::ALL`] order.
+    pub recipes: &'a [Option<Recipe>; 4],
+    /// How to download the local model, when Ollama is there but the model is not.
+    pub local_model: Option<&'a Recipe>,
+    pub install: &'a InstallStatus,
 }
 
 /// Where scratch files go, for the Scratches section.
@@ -68,10 +85,7 @@ pub struct ScratchInfo<'a> {
     pub is_default: bool,
 }
 
-/// Space around the panel's content.
-const PANEL_MARGIN: i8 = 14;
 const TITLE_SIZE: f32 = 16.0;
-const SECTION_SIZE: f32 = 11.5;
 /// Space between theme cards.
 const CARD_GAP: f32 = 10.0;
 const CARD_PADDING: f32 = 6.0;
@@ -96,73 +110,211 @@ enum BarKind {
     Weak,
 }
 
-/// Draw the settings panel's content. Returns what the user clicked.
+/// A group in the settings window's side list.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum SettingsGroup {
+    #[default]
+    Appearance,
+    Accessibility,
+    Files,
+    Ai,
+    Skills,
+    VoiceMemos,
+}
+
+impl SettingsGroup {
+    pub const ALL: [SettingsGroup; 6] =
+        [Self::Appearance, Self::Accessibility, Self::Files, Self::Ai, Self::Skills, Self::VoiceMemos];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Appearance => "Appearance",
+            Self::Accessibility => "Accessibility",
+            Self::Files => "Files",
+            Self::Ai => "AI",
+            Self::Skills => "Skills",
+            Self::VoiceMemos => "Voice memos",
+        }
+    }
+}
+
+/// Size of the settings window.
+pub const WINDOW_SIZE: egui::Vec2 = vec2(780.0, 540.0);
+/// Space kept between the settings window and the app window's edges.
+const WINDOW_MARGIN: f32 = 40.0;
+
+/// [`WINDOW_SIZE`], made smaller when the app window is (or large text makes it so).
+fn window_size(ctx: &egui::Context) -> egui::Vec2 {
+    let room = ctx.content_rect().size() - vec2(WINDOW_MARGIN, WINDOW_MARGIN);
+    WINDOW_SIZE.min(room).max(vec2(NAV_WIDTH * 2.0, HEADER_HEIGHT * 4.0))
+}
+
+/// Width of the group list on the left.
+const NAV_WIDTH: f32 = 180.0;
+const NAV_ITEM_HEIGHT: f32 = 30.0;
+const HEADER_HEIGHT: f32 = 46.0;
+/// Space around the content of a group.
+const CONTENT_MARGIN: i8 = 22;
+
+/// Draw the settings window's content: a title, the groups on the left and
+/// the open group on the right. Returns what the user clicked.
+#[expect(clippy::too_many_arguments, reason = "one borrowed view of each part of the settings")]
 pub fn show_settings(
     ui: &mut Ui,
+    group: &mut SettingsGroup,
     themes: &Themes,
     current: &ThemeChoice,
     themes_folder: Option<&Path>,
+    accessibility: &mut AccessibilitySettings,
     scratch: ScratchInfo,
     ai: AiInfo,
     voice: VoiceInfo,
 ) -> Option<SettingsAction> {
     let mut action = None;
-    egui::Frame::new().inner_margin(egui::Margin::symmetric(PANEL_MARGIN, 10)).show(ui, |ui| {
-        ui.horizontal(|ui| {
+    let (outer, _) = ui.allocate_exact_size(window_size(ui.ctx()), Sense::hover());
+    let header = Rect::from_min_size(outer.min, vec2(outer.width(), HEADER_HEIGHT));
+    let nav = Rect::from_min_max(pos2(outer.left(), header.bottom()), pos2(outer.left() + NAV_WIDTH, outer.bottom()));
+    let content = Rect::from_min_max(pos2(nav.right(), header.bottom()), outer.max);
+    let visuals = ui.visuals().clone();
+    let line = visuals.widgets.noninteractive.bg_stroke;
+    let painter = ui.painter();
+    painter.rect_filled(nav, egui::CornerRadius { sw: 12, ..Default::default() }, visuals.panel_fill);
+    painter.hline(outer.x_range(), header.bottom(), line);
+    painter.vline(nav.right(), nav.y_range(), line);
+
+    let header_inner = header.shrink2(vec2(20.0, 0.0)).with_max_x(header.right() - 10.0);
+    ui.scope_builder(
+        egui::UiBuilder::new().max_rect(header_inner).layout(Layout::left_to_right(Align::Center)),
+        |ui| {
             ui.label(RichText::new("Settings").size(TITLE_SIZE).strong());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui.button("×").on_hover_text("Close (Esc)").clicked() {
                     action = Some(SettingsAction::Close);
                 }
             });
-        });
+        },
+    );
+    ui.scope_builder(egui::UiBuilder::new().max_rect(nav.shrink2(vec2(8.0, 10.0))), |ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        for each in SettingsGroup::ALL {
+            if nav_item(ui, each.name(), *group == each).clicked() {
+                *group = each;
+            }
+        }
     });
-    ui.separator();
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        egui::Frame::new().inner_margin(PANEL_MARGIN).show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 8.0;
-            ui.label(RichText::new("APPEARANCE").size(SECTION_SIZE).weak());
-            ui.label(RichText::new("Theme").strong());
-            if let Some(choice) = theme_cards(ui, themes, current) {
-                action = Some(SettingsAction::PickTheme(choice));
-            }
-            ui.add_space(6.0);
-            ui.separator();
-            ui.label(RichText::new("Your themes").strong());
-            ui.label(RichText::new("Add .theme files to this folder, then reload.").weak());
-            if let Some(folder) = themes_folder {
-                path_box(ui, folder);
-            }
-            if ui.button("Reload themes").clicked() {
-                action = Some(SettingsAction::ReloadThemes);
-            }
-
-            ui.add_space(10.0);
-            ui.label(RichText::new("FILES").size(SECTION_SIZE).weak());
-            ui.label(RichText::new("Scratches").strong());
-            ui.label(RichText::new("New scratch files (Cmd+N) go to this folder.").weak());
-            if let Some(folder) = scratch.folder {
-                path_box(ui, folder);
-            }
-            ui.horizontal(|ui| {
-                if ui.button("Change…").clicked() {
-                    action = Some(SettingsAction::ChooseScratchFolder);
-                }
-                if ui.add_enabled(!scratch.is_default, egui::Button::new("Use default")).clicked() {
-                    action = Some(SettingsAction::ResetScratchFolder);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+        egui::ScrollArea::vertical().id_salt(("settings-group", *group)).auto_shrink([false, false]).show(ui, |ui| {
+            egui::Frame::new().inner_margin(CONTENT_MARGIN).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 8.0;
+                let picked = match *group {
+                    SettingsGroup::Appearance => appearance_section(ui, themes, current, themes_folder),
+                    SettingsGroup::Accessibility => accessibility_section(ui, accessibility),
+                    SettingsGroup::Files => files_section(ui, scratch),
+                    SettingsGroup::Ai => ai_section(ui, ai),
+                    SettingsGroup::Skills => {
+                        let AiInfo { settings, skills, skills_folder, .. } = ai;
+                        skills_section(ui, settings, skills, skills_folder)
+                    }
+                    SettingsGroup::VoiceMemos => voice_section(ui, voice),
+                };
+                if picked.is_some() {
+                    action = picked;
                 }
             });
-
-            ui.add_space(10.0);
-            if let Some(voice_action) = voice_section(ui, voice) {
-                action = Some(voice_action);
-            }
-
-            ui.add_space(10.0);
-            if let Some(ai_action) = ai_section(ui, ai) {
-                action = Some(ai_action);
-            }
         });
+    });
+    action
+}
+
+/// One group in the side list: full width, filled when it is the open one.
+fn nav_item(ui: &mut Ui, name: &str, selected: bool) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), NAV_ITEM_HEIGHT), Sense::click());
+    let visuals = ui.visuals().clone();
+    let fill = if selected {
+        visuals.selection.bg_fill
+    } else if response.hovered() {
+        visuals.widgets.hovered.weak_bg_fill
+    } else {
+        Color32::TRANSPARENT
+    };
+    ui.painter().rect_filled(rect, 7, fill);
+    let color = if selected { visuals.strong_text_color() } else { visuals.text_color() };
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    ui.painter().text(pos2(rect.left() + 10.0, rect.center().y), Align2::LEFT_CENTER, name, font, color);
+    response.widget_info(|| WidgetInfo::selected(egui::Role::Tab, true, selected, name));
+    response
+}
+
+/// Appearance: the theme cards and the user's own themes.
+fn appearance_section(
+    ui: &mut Ui,
+    themes: &Themes,
+    current: &ThemeChoice,
+    themes_folder: Option<&Path>,
+) -> Option<SettingsAction> {
+    let mut action = None;
+    ui.label(RichText::new("Theme").strong());
+    if let Some(choice) = theme_cards(ui, themes, current) {
+        action = Some(SettingsAction::PickTheme(choice));
+    }
+    ui.add_space(10.0);
+    ui.label(RichText::new("Your themes").strong());
+    ui.label(RichText::new("Add .theme files to this folder, then reload.").weak());
+    if let Some(folder) = themes_folder {
+        path_box(ui, folder);
+    }
+    if ui.button("Reload themes").clicked() {
+        action = Some(SettingsAction::ReloadThemes);
+    }
+    action
+}
+
+/// Accessibility: text size, editor font size, motion and focus outlines.
+fn accessibility_section(ui: &mut Ui, settings: &mut AccessibilitySettings) -> Option<SettingsAction> {
+    let mut changed = false;
+    ui.label(RichText::new("Text size").strong());
+    ui.label(RichText::new("Scales the whole window. Cmd/Ctrl + plus, minus and 0 change it too.").weak());
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        for size in TextSize::ALL {
+            let percent = format!("{}%", (size.scale() * 100.0).round());
+            changed |= ui.selectable_value(&mut settings.text_size, size, size.name()).on_hover_text(percent).changed();
+        }
+    });
+
+    ui.add_space(6.0);
+    ui.separator();
+    ui.label(RichText::new("Editor font size").strong());
+    ui.label(RichText::new("The Markdown editor and other monospace text, before the text size.").weak());
+    let slider = egui::Slider::new(&mut settings.editor_font_size, EDITOR_FONT_SIZES).suffix(" pt");
+    changed |= ui.add(slider).changed();
+
+    ui.add_space(6.0);
+    ui.separator();
+    ui.label(RichText::new("Motion and focus").strong());
+    changed |= ui.checkbox(&mut settings.reduce_motion, "Reduce motion").on_hover_text("Turn off animations").changed();
+    changed |= ui
+        .checkbox(&mut settings.strong_focus, "Stronger focus outline")
+        .on_hover_text("A thicker outline on the focused button or text field")
+        .changed();
+    changed.then_some(SettingsAction::AccessibilityChanged)
+}
+
+/// Files: where scratch files go.
+fn files_section(ui: &mut Ui, scratch: ScratchInfo) -> Option<SettingsAction> {
+    let mut action = None;
+    ui.label(RichText::new("Scratches").strong());
+    ui.label(RichText::new("New scratch files (Cmd+N) go to this folder.").weak());
+    if let Some(folder) = scratch.folder {
+        path_box(ui, folder);
+    }
+    ui.horizontal(|ui| {
+        if ui.button("Change…").clicked() {
+            action = Some(SettingsAction::ChooseScratchFolder);
+        }
+        if ui.add_enabled(!scratch.is_default, egui::Button::new("Use default")).clicked() {
+            action = Some(SettingsAction::ResetScratchFolder);
+        }
     });
     action
 }
@@ -176,10 +328,9 @@ const STATUS_SIZE: f32 = 12.0;
 
 /// The AI section: default tool, each tool's command, summaries, skills and safety.
 fn ai_section(ui: &mut Ui, ai: AiInfo) -> Option<SettingsAction> {
-    let AiInfo { settings, found, skills, skills_folder } = ai;
+    let AiInfo { settings, found, recipes, local_model, install, .. } = ai;
     let is_found = |tool: AiTool| found[tool_index(tool)].is_some();
     let mut action = None;
-    ui.label(RichText::new("AI").size(SECTION_SIZE).weak());
 
     ui.label(RichText::new("Default tool").strong());
     ui.label(RichText::new("Used by Ask (Cmd+K) and Resolve notes.").weak());
@@ -199,8 +350,22 @@ fn ai_section(ui: &mut Ui, ai: AiInfo) -> Option<SettingsAction> {
     ui.label(RichText::new("rubrique starts these programs. {prompt} becomes your request.").weak());
     for tool in AiTool::ALL {
         ui.add_space(2.0);
-        if command_row(ui, settings, tool, found[tool_index(tool)].as_deref()) {
+        let index = tool_index(tool);
+        let recipe = recipes[index].as_ref().filter(|_| found[index].is_none());
+        let (changed, clicked) = command_row(ui, settings, tool, found[index].as_deref(), recipe, install);
+        if changed {
             action = Some(SettingsAction::AiCommandChanged);
+        }
+        if let Some(clicked) = clicked {
+            action = Some(SettingsAction::Install(clicked));
+        }
+        if tool == AiTool::Local
+            && let Some(recipe) = local_model
+        {
+            let message = format!("Model {} is not downloaded yet. Ollama gets it on first use, or now:", recipe.name);
+            if let Some(clicked) = prompt(ui, &message, recipe, install) {
+                action = Some(SettingsAction::Install(clicked));
+            }
         }
     }
 
@@ -209,12 +374,6 @@ fn ai_section(ui: &mut Ui, ai: AiInfo) -> Option<SettingsAction> {
     ui.label(RichText::new("Summaries use").strong());
     ui.label(RichText::new("Hover summaries in the explorer and scratch names.").weak());
     summary_picker(ui, &mut settings.summary_tool, &is_found);
-
-    ui.add_space(6.0);
-    ui.separator();
-    if let Some(skills_action) = skills_section(ui, settings, skills, skills_folder) {
-        action = Some(skills_action);
-    }
 
     ui.add_space(6.0);
     ui.separator();
@@ -312,10 +471,24 @@ fn summary_picker(ui: &mut Ui, choice: &mut Option<AiTool>, is_found: &dyn Fn(Ai
     );
 }
 
+/// The install prompt for `recipe`, with how its install went.
+fn prompt(ui: &mut Ui, message: &str, recipe: &Recipe, install: &InstallStatus) -> Option<InstallAction> {
+    install_prompt(ui, message, recipe, install.of(recipe), install.busy)
+}
+
 /// One tool: name, Reset (when changed), Installed or Not found, the
-/// command field, and a help line when one is needed.
-fn command_row(ui: &mut Ui, settings: &mut AiSettings, tool: AiTool, found: Option<&Path>) -> bool {
+/// command field, and a help line or an install prompt when needed.
+/// Returns whether the command changed, and an install click.
+fn command_row(
+    ui: &mut Ui,
+    settings: &mut AiSettings,
+    tool: AiTool,
+    found: Option<&Path>,
+    recipe: Option<&Recipe>,
+    install: &InstallStatus,
+) -> (bool, Option<InstallAction>) {
     let mut changed = false;
+    let mut clicked = None;
     let visuals = ui.visuals().clone();
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 4.0;
@@ -356,12 +529,20 @@ fn command_row(ui: &mut Ui, settings: &mut AiSettings, tool: AiTool, found: Opti
                     .desired_width(f32::INFINITY);
                 changed |= ui.add(edit).changed();
             });
-        if let Some(help) = command_help(tool, problem, found.is_some()) {
-            let color = if problem.is_some() { visuals.warn_fg_color } else { visuals.weak_text_color() };
-            ui.label(RichText::new(help).size(SMALL_SIZE).color(color));
+        match recipe.filter(|_| problem.is_none()) {
+            Some(recipe) => {
+                let message = format!("{} is not installed, or not on PATH.", recipe.name);
+                clicked = prompt(ui, &message, recipe, install);
+            }
+            None => {
+                if let Some(help) = command_help(tool, problem, found.is_some()) {
+                    let color = if problem.is_some() { visuals.warn_fg_color } else { visuals.weak_text_color() };
+                    ui.label(RichText::new(help).size(SMALL_SIZE).color(color));
+                }
+            }
         }
     });
-    changed
+    (changed, clicked)
 }
 
 /// The line under a command, only when there is something to say.
@@ -384,10 +565,9 @@ fn command_help(tool: AiTool, problem: Option<CommandProblem>, found: bool) -> O
 
 /// Voice memos: where they go, dropped files, and transcription.
 fn voice_section(ui: &mut Ui, voice: VoiceInfo) -> Option<SettingsAction> {
-    let VoiceInfo { settings, found } = voice;
+    let VoiceInfo { settings, found, recipe, model_recipe, install } = voice;
     let visuals = ui.visuals().clone();
     let mut action = None;
-    ui.label(RichText::new("VOICE MEMOS").size(SECTION_SIZE).weak());
     ui.label(RichText::new("Memos folder").strong());
     ui.label(RichText::new("Recordings and dropped audio go here: a folder next to the note, or a full path.").weak());
     field_box(ui, &visuals, false, |ui| {
@@ -443,6 +623,11 @@ fn voice_section(ui: &mut Ui, voice: VoiceInfo) -> Option<SettingsAction> {
     };
     if let Some(problem) = problem {
         ui.label(small(problem.message().to_string(), true));
+    } else if let Some(recipe) = recipe.filter(|_| found.is_none()) {
+        let message = format!("{} is not installed, or not on PATH.", recipe.name);
+        if let Some(clicked) = prompt(ui, &message, recipe, install) {
+            action = Some(SettingsAction::Install(clicked));
+        }
     } else if found.is_none() {
         ui.label(small(
             "Install whisper.cpp (brew install whisper-cpp, or the whisper.cpp package on Linux), \
@@ -451,7 +636,13 @@ fn voice_section(ui: &mut Ui, voice: VoiceInfo) -> Option<SettingsAction> {
             false,
         ));
     }
-    if settings.model_missing()
+    if let Some(recipe) = model_recipe {
+        let model = settings.model_path().map(|model| home_relative(&model)).unwrap_or_default();
+        let message = format!("Model not found: {model}");
+        if let Some(clicked) = prompt(ui, &message, recipe, install) {
+            action = Some(SettingsAction::Install(clicked));
+        }
+    } else if settings.model_missing()
         && let Some(model) = settings.model_path()
     {
         ui.label(small(format!("Model not found: {}", home_relative(&model)), true));

@@ -6,9 +6,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::ai::AiSettings;
+use crate::settings::accessibility::AccessibilitySettings;
 use crate::theme::catalog::ThemeChoice;
 use crate::voice::VoiceSettings;
 
+pub mod accessibility;
 pub mod view;
 
 /// How a Markdown file is shown: as editable text or as the rendered preview.
@@ -46,6 +48,8 @@ pub struct Settings {
     pub window_size: Option<(f32, f32)>,
     /// Color theme, or "system" to follow the OS.
     pub theme: ThemeChoice,
+    /// Text size, editor font size, reduced motion and focus outlines.
+    pub accessibility: AccessibilitySettings,
     /// Where new scratch files go; `None` means the default folder.
     pub scratch_folder: Option<PathBuf>,
     /// AI tools and their commands.
@@ -91,7 +95,10 @@ impl Settings {
                 continue;
             };
             let value = value.trim();
-            if settings.ai.parse_line(key.trim(), value) || settings.voice.parse_line(key.trim(), value) {
+            if settings.ai.parse_line(key.trim(), value)
+                || settings.voice.parse_line(key.trim(), value)
+                || settings.accessibility.parse_line(key.trim(), value)
+            {
                 continue;
             }
             match key.trim() {
@@ -135,12 +142,13 @@ impl Settings {
         let folder_lines = path_lines("folder", &self.folders);
         let tab_lines = path_lines("tab", &self.open_tabs);
         format!(
-            "{folder_lines}{tab_lines}last_file={}\nmarkdown_only={}\npreview_mode={}\ntheme={}\nscratch_folder={}\n{window_lines}{}{}",
+            "{folder_lines}{tab_lines}last_file={}\nmarkdown_only={}\npreview_mode={}\ntheme={}\nscratch_folder={}\n{window_lines}{}{}{}",
             path_text(&self.last_file),
             self.markdown_only,
             self.markdown_view == MarkdownView::Preview,
             self.theme.id(),
             path_text(&self.scratch_folder),
+            self.accessibility.to_lines(),
             self.ai.to_lines(),
             self.voice.to_lines(),
         )
@@ -213,6 +221,12 @@ mod tests {
             markdown_view: MarkdownView::Preview,
             window_size: Some((1200.0, 800.5)),
             theme: ThemeChoice::Named("dark".to_string()),
+            accessibility: AccessibilitySettings {
+                text_size: accessibility::TextSize::Larger,
+                editor_font_size: 15,
+                reduce_motion: true,
+                strong_focus: true,
+            },
             scratch_folder: Some(PathBuf::from("/home/a/scratch")),
             ai: {
                 let mut ai = AiSettings::default();

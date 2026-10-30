@@ -8,6 +8,7 @@ use eframe::egui::{self, Align, Context, Key, Layout, Pos2, RichText, Ui};
 use super::skills::Skill;
 use super::{AiTool, AskKind, QuickAction, format_elapsed};
 use crate::icons::{Icon, icon_label, icon_text_button};
+use crate::markdown::render::{CodeAction, render_answer, take_code_action};
 use crate::settings::view::path_box;
 
 /// Width of the Ask bar.
@@ -20,6 +21,8 @@ const COMPARE_PICKER_WIDTH: f32 = 80.0;
 const CONSENT_WIDTH: f32 = 500.0;
 /// Longest request shown in the output panel's header.
 const HEADER_REQUEST_CHARS: usize = 60;
+/// Space between the command line, the output and any errors.
+const OUTPUT_ITEM_GAP: f32 = 8.0;
 
 /// The open Ask bar.
 #[derive(Debug)]
@@ -157,7 +160,10 @@ fn compare_picker(ui: &mut Ui, bar: &mut AskBar, installed: [bool; 4]) {
                 }
                 ui.add_enabled_ui(found, |ui| ui.selectable_value(&mut bar.compare, Some(choice), choice.name()))
                     .response
-                    .on_disabled_hover_text(format!("{} was not found. Set its command in Settings.", choice.name()));
+                    .on_disabled_hover_text(format!(
+                        "{} is not installed. Install it in Settings → AI.",
+                        choice.name()
+                    ));
             }
         })
         .response
@@ -170,7 +176,7 @@ fn tool_picker(ui: &mut Ui, tool: &mut AiTool, installed: [bool; 4]) {
         for (choice, found) in AiTool::ALL.into_iter().zip(installed) {
             ui.add_enabled_ui(found, |ui| ui.selectable_value(tool, choice, choice.name()))
                 .response
-                .on_disabled_hover_text(format!("{} was not found. Set its command in Settings.", choice.name()));
+                .on_disabled_hover_text(format!("{} is not installed. Install it in Settings → AI.", choice.name()));
         }
     });
 }
@@ -193,6 +199,9 @@ pub struct RunView {
     pub output: String,
     pub errors: String,
     pub state: OutputState,
+    /// The output is an answer to read, drawn as Markdown; otherwise it is
+    /// new text for the file, shown as it is.
+    pub formatted: bool,
 }
 
 /// What the output panel shows: one run, or two when comparing tools.
@@ -206,10 +215,12 @@ pub struct OutputInfo<'a> {
 }
 
 /// What the user clicked in the output panel.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutputAction {
     Stop,
     Copy,
+    /// Copy one code block of a formatted answer.
+    CopyCode(String),
     Review,
     Close,
 }
@@ -264,6 +275,7 @@ pub fn show_output(ui: &mut Ui, info: &OutputInfo) -> Option<OutputAction> {
         |ui| {
             egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 6)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = OUTPUT_ITEM_GAP;
                 if let [only] = info.runs.as_slice() {
                     run_output(ui, only, false);
                 } else {
@@ -276,6 +288,9 @@ pub fn show_output(ui: &mut Ui, info: &OutputInfo) -> Option<OutputAction> {
             });
         },
     );
+    if let Some(CodeAction::Copy(code)) = take_code_action(ui.ctx()) {
+        action = Some(OutputAction::CopyCode(code));
+    }
     action
 }
 
@@ -305,7 +320,9 @@ fn run_output(ui: &mut Ui, run: &RunView, titled: bool) {
         ui.label(RichText::new(run.tool.name()).strong());
     }
     ui.label(RichText::new(format!("$ {}", run.command)).monospace().weak());
-    if !run.output.is_empty() {
+    if run.formatted && !run.output.trim().is_empty() {
+        render_answer(ui, &run.output);
+    } else if !run.output.is_empty() {
         ui.add(egui::Label::new(RichText::new(&run.output).monospace()).selectable(true));
     }
     let failed = matches!(run.state, OutputState::Failed { .. });

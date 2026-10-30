@@ -43,6 +43,8 @@ Cloud tools run only in folders you allowed.
 
 - **Voice memos** (`Cmd/Ctrl+Shift+R`): record into the note, then
   **Transcribe** it with whisper.cpp on your computer.
+- **Drop images and audio** on the page: they are copied next to the note
+  and linked where the cursor is.
 - **Notes**: select text in the preview and add a note. AI can resolve one
   note or all of them.
 - **Edit in the preview**: click a block to edit just that block.
@@ -62,7 +64,8 @@ Cloud tools run only in folders you allowed.
 <img src="docs/screenshots/themes.png" alt="One rubrique window shown in five themes: Light, Dark, Sepia, Midnight and High contrast" width="880">
 
 Five built-in themes: Light, Dark, Sepia, Midnight, High contrast. Or follow
-the system, or add your own.
+the system, or add your own. Settings → Accessibility sets the text size, the
+editor font size, reduced motion and a stronger focus outline.
 
 ## Shortcuts
 
@@ -85,6 +88,7 @@ the system, or add your own.
 | Cmd+W | Close tab |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Cmd+, | Settings |
+| Cmd++ / Cmd+- / Cmd+0 | Larger / smaller / default text size |
 | Cmd+Shift+B | Open in browser |
 | Cmd+Shift+F | Format JSON, SQL or XML |
 | Cmd+Shift+C | Copy the open file's path |

@@ -6,6 +6,8 @@ use std::time::Duration;
 use eframe::egui::{self, Context, Key, KeyboardShortcut, Modifiers, RichText, Ui, ViewportCommand};
 
 mod ask;
+mod images;
+mod install;
 mod naming;
 mod summary;
 mod tabs;
@@ -35,17 +37,17 @@ use crate::markdown::notes::{self, Note, find_notes, insert_note, remove_note, r
 use crate::markdown::render::CodeAction;
 use crate::media::{MediaKind, format_name, image_uri, media_kind, open_with_system, size_text};
 use crate::scratch::{create_scratch, rename_target};
-use crate::settings::view::{AiInfo, ScratchInfo, SettingsAction, VoiceInfo, show_settings};
+use crate::settings::accessibility::TextSize;
+use crate::settings::view::{AiInfo, ScratchInfo, SettingsAction, SettingsGroup, VoiceInfo, show_settings};
 use crate::settings::{MarkdownView, Settings, default_scratch_folder, default_skills_folder, themes_folder};
 use crate::theme::catalog::Themes;
-use crate::theme::style::{apply_theme, page_fill};
+use crate::theme::style::{apply_accessibility, apply_theme, page_fill};
 use crate::voice::view::set_memo_states;
 
 /// How long a status message ("Copied ...") stays visible.
 const STATUS_MESSAGE_SECONDS: f64 = 4.0;
 const EXPLORER_DEFAULT_WIDTH: f32 = 260.0;
 /// Width of the settings panel.
-const SETTINGS_PANEL_WIDTH: f32 = 320.0;
 /// Starting height of the AI output panel.
 const AI_OUTPUT_HEIGHT: f32 = 230.0;
 /// Space around the "cannot display this file" message.
@@ -82,6 +84,10 @@ const COPY_OPEN_PATH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAN
 const CLOSE_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::W);
 const NEXT_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::Tab);
 const PREVIOUS_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::SHIFT), Key::Tab);
+const TEXT_LARGER: [KeyboardShortcut; 2] =
+    [KeyboardShortcut::new(Modifiers::COMMAND, Key::Plus), KeyboardShortcut::new(Modifiers::COMMAND, Key::Equals)];
+const TEXT_SMALLER: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Minus);
+const TEXT_DEFAULT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Num0);
 
 /// What a tab shows (and, for the active tab, the right panel).
 #[derive(Debug)]
@@ -185,6 +191,8 @@ pub struct RubriqueApp {
     themes: Themes,
     /// The settings panel is shown on the right.
     settings_open: bool,
+    /// The group open in the settings window.
+    settings_group: SettingsGroup,
     /// Ask bar, AI run and its output panel.
     ask: ask::AskState,
     /// Skills from the skills folders, read when Settings or Ask opens.
@@ -210,6 +218,8 @@ pub struct RubriqueApp {
     note_draft: Option<NoteDraft>,
     /// Voice memos: recording, playback, transcription.
     voice: voice::VoiceState,
+    /// Installing missing tools.
+    install: install::InstallState,
 }
 
 /// A note in the making (new, or an existing one being edited).
@@ -243,6 +253,9 @@ impl RubriqueApp {
     pub fn new(ctx: &Context, settings: Settings, roots: Vec<PathBuf>, file: Option<PathBuf>) -> Self {
         let themes = Themes::load(themes_folder().as_deref());
         apply_theme(ctx, &themes, &settings.theme);
+        apply_accessibility(ctx, &settings.accessibility);
+        // rubrique steps through its own text sizes instead (see `handle_text_size_keys`).
+        ctx.options_mut(|options| options.zoom_with_keyboard = false);
         let mut app = RubriqueApp {
             settings,
             roots: roots.into_iter().map(FsNode::new_root).collect(),
@@ -256,6 +269,7 @@ impl RubriqueApp {
             window_title: String::new(),
             themes,
             settings_open: false,
+            settings_group: SettingsGroup::default(),
             ask: ask::AskState::default(),
             skills: Vec::new(),
             summaries: summary::SummaryState::default(),
@@ -268,6 +282,7 @@ impl RubriqueApp {
             block_edit: None,
             note_draft: None,
             voice: voice::VoiceState::default(),
+            install: install::InstallState::default(),
         };
         preview_selection::install(ctx);
         egui_extras::install_image_loaders(ctx);
@@ -529,6 +544,7 @@ impl RubriqueApp {
     /// Global shortcuts; they run before the panels so widgets never see them.
     fn handle_shortcuts(&mut self, ctx: &Context) {
         self.handle_tab_shortcuts(ctx);
+        self.handle_text_size_keys(ctx);
         if ctx.input_mut(|input| input.consume_shortcut(&COPY_OPEN_PATH))
             && let Some(path) = self.open_file.path()
         {
@@ -581,10 +597,37 @@ impl RubriqueApp {
         }
     }
 
+    /// Cmd/Ctrl + plus, minus and 0: the next text size, the one before, the default.
+    fn handle_text_size_keys(&mut self, ctx: &Context) {
+        let current = self.settings.accessibility.text_size;
+        let size = if ctx.input_mut(|input| input.consume_shortcut(&TEXT_DEFAULT)) {
+            TextSize::Default
+        } else if ctx.input_mut(|input| TEXT_LARGER.iter().any(|keys| input.consume_shortcut(keys))) {
+            current.larger()
+        } else if ctx.input_mut(|input| input.consume_shortcut(&TEXT_SMALLER)) {
+            current.smaller()
+        } else {
+            return;
+        };
+        if size != current {
+            self.settings.accessibility.text_size = size;
+            apply_accessibility(ctx, &self.settings.accessibility);
+            self.show_status(format!("Text size: {} ({}%)", size.name(), (size.scale() * 100.0).round()));
+        }
+    }
+
+    /// The theme, then the accessibility settings on top of it.
+    fn apply_look(&self, ctx: &Context) {
+        apply_theme(ctx, &self.themes, &self.settings.theme);
+        apply_accessibility(ctx, &self.settings.accessibility);
+    }
+
     /// Remember the window size and the open tabs, then write the settings file.
     fn save_settings(&mut self, ctx: &Context) {
         if let Some(rect) = ctx.input(|input| input.viewport().inner_rect) {
-            self.settings.window_size = Some((rect.width(), rect.height()));
+            // In points of the native scale, as the window was opened with, not zoomed ones.
+            let zoom = ctx.zoom_factor();
+            self.settings.window_size = Some((rect.width() * zoom, rect.height() * zoom));
         }
         self.remember_tabs();
         self.write_settings();
@@ -625,7 +668,7 @@ impl RubriqueApp {
         if self.settings_open {
             self.check_ai_tools();
             self.load_skills();
-            self.voice.program_found = self.settings.voice.find_program();
+            self.check_voice_tool();
         }
     }
 
@@ -637,9 +680,29 @@ impl RubriqueApp {
     /// Look for each AI tool's program on `PATH`.
     fn check_ai_tools(&mut self) {
         self.ai_found = AiTool::ALL.map(|tool| ai::find_program(self.settings.ai.command(tool)));
+        self.find_ai_recipes();
     }
 
-    /// Right panel: settings. Theme picks apply at once.
+    /// The settings window over the dimmed app. A click outside closes it.
+    fn settings_window(&mut self, ctx: &Context) {
+        if !self.settings_open {
+            return;
+        }
+        let visuals = ctx.global_style().visuals.clone();
+        let frame = egui::Frame::new()
+            .fill(visuals.window_fill)
+            .corner_radius(12)
+            .shadow(visuals.window_shadow)
+            .stroke(visuals.window_stroke);
+        let response = egui::Modal::new(egui::Id::unique("settings-window")).frame(frame).show(ctx, |ui| {
+            self.settings_panel(ui);
+        });
+        if response.should_close() {
+            self.settings_open = false;
+        }
+    }
+
+    /// The settings window's content. Theme picks apply at once.
     fn settings_panel(&mut self, ui: &mut Ui) {
         let folder = themes_folder();
         let scratch_folder = self.settings.scratch_folder_or_default();
@@ -648,25 +711,46 @@ impl RubriqueApp {
             is_default: self.settings.scratch_folder.is_none() || scratch_folder == default_scratch_folder(),
         };
         let skills_folder = self.settings.ai.skills_folder.clone().or_else(default_skills_folder);
+        let install = self.install_status();
         let ai = AiInfo {
             settings: &mut self.settings.ai,
             found: &self.ai_found,
             skills: &self.skills,
             skills_folder: skills_folder.as_deref(),
+            recipes: &self.install.ai,
+            local_model: self.install.local_model.as_ref(),
+            install: &install,
         };
-        let voice = VoiceInfo { settings: &mut self.settings.voice, found: self.voice.program_found.as_deref() };
-        let action = show_settings(ui, &self.themes, &self.settings.theme, folder.as_deref(), scratch, ai, voice);
+        let voice = VoiceInfo {
+            settings: &mut self.settings.voice,
+            found: self.voice.program_found.as_deref(),
+            recipe: self.install.voice.as_ref(),
+            model_recipe: self.install.voice_model.as_ref(),
+            install: &install,
+        };
+        let action = show_settings(
+            ui,
+            &mut self.settings_group,
+            &self.themes,
+            &self.settings.theme,
+            folder.as_deref(),
+            &mut self.settings.accessibility,
+            scratch,
+            ai,
+            voice,
+        );
         let Some(action) = action else {
             return;
         };
         match action {
             SettingsAction::PickTheme(choice) => {
-                apply_theme(ui.ctx(), &self.themes, &choice);
                 self.settings.theme = choice;
+                self.apply_look(ui.ctx());
             }
+            SettingsAction::AccessibilityChanged => self.apply_look(ui.ctx()),
             SettingsAction::ReloadThemes => {
                 self.themes = Themes::load(folder.as_deref());
-                apply_theme(ui.ctx(), &self.themes, &self.settings.theme);
+                self.apply_look(ui.ctx());
                 let count = self.themes.list.len();
                 self.show_status(format!("Loaded {count} themes"));
             }
@@ -712,11 +796,12 @@ impl RubriqueApp {
                 Some(Err(error)) => self.show_status(format!("Cannot create the example skill: {error}")),
                 None => {}
             },
-            SettingsAction::VoiceCommandChanged => self.voice.program_found = self.settings.voice.find_program(),
+            SettingsAction::VoiceCommandChanged => self.check_voice_tool(),
             SettingsAction::Copy(text) => {
                 ui.ctx().copy_text(text);
                 self.show_status("Copied the command; paste it into a terminal".to_string());
             }
+            SettingsAction::Install(action) => self.install_action(ui.ctx(), action),
             SettingsAction::Close => self.settings_open = false,
         }
     }
@@ -1234,12 +1319,11 @@ impl RubriqueApp {
         let area = egui::Area::new(egui::Id::unique("add-note-button"))
             .order(egui::Order::Foreground)
             .fixed_pos(selection.pointer + egui::vec2(10.0, 14.0));
-        let clicked = area
-            .show(ctx, |ui| {
-                ui.button("+ Add note").on_hover_text("Add a note about the selected text (Cmd+Shift+M)").clicked()
-            })
-            .inner;
-        if clicked {
+        let shown = area.show(ctx, |ui| {
+            ui.button("+ Add note").on_hover_text("Add a note about the selected text (Cmd+Shift+M)").clicked()
+        });
+        preview_selection::set_button_rect(ctx, shown.response.rect);
+        if shown.inner {
             self.start_note(ctx);
         }
     }
@@ -1801,6 +1885,7 @@ impl eframe::App for RubriqueApp {
         self.poll_disk(&ctx);
         self.poll_naming();
         self.poll_voice(&ctx);
+        self.poll_install(&ctx);
 
         let style = ctx.global_style();
         let bar_frame =
@@ -1823,14 +1908,6 @@ impl eframe::App for RubriqueApp {
             });
             self.explorer(ui);
         });
-        if self.settings_open {
-            let panel_frame = egui::Frame::side_top_panel(&style).inner_margin(0);
-            egui::Panel::right("settings")
-                .resizable(false)
-                .exact_size(SETTINGS_PANEL_WIDTH)
-                .frame(panel_frame)
-                .show(ui, |ui| self.settings_panel(ui));
-        }
         if self.shows_notes_panel() {
             egui::Panel::right("notes")
                 .resizable(true)
@@ -1849,7 +1926,9 @@ impl eframe::App for RubriqueApp {
         self.handle_dropped_files(&ctx);
 
         self.ask_dialogs(&ctx);
+        self.install_dialog(&ctx);
         self.hover_summary(&ctx);
+        self.settings_window(&ctx);
         self.unsaved_dialog(&ctx);
         self.note_dialog(&ctx);
         self.rename_dialog(&ctx);

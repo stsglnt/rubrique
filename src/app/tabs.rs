@@ -313,7 +313,10 @@ fn show_tab(ui: &mut Ui, tab: &TabView, index: usize, count: usize) -> Option<Ta
     let galley = ui.painter().layout_job(job);
     let width = TAB_PADDING * 2.0 + galley.size().x + CLOSE_SIZE;
     let (rect, response) = ui.allocate_exact_size(vec2(width, TAB_HEIGHT), Sense::click());
-    let hovered = response.hovered();
+    // Pointer anywhere on the tab, the close cross included. `hovered()` turns
+    // false over the cross (a widget on top), which swapped the cross back to
+    // the unsaved dot and lost the click.
+    let hovered = response.contains_pointer();
 
     let fill = if tab.active {
         page_fill(&visuals)

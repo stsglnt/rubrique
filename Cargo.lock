@@ -2326,7 +2326,7 @@ dependencies = [
 
 [[package]]
 name = "rubrique"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "cpal",
  "eframe",

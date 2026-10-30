@@ -16,6 +16,7 @@ use crate::ai::summary::{
 use crate::ai::{self, AiTool};
 use crate::explorer::view::{HoveredFile, hovered_file};
 use crate::icons::{Icon, icon_label};
+use crate::markdown::render::render_inline_text;
 use crate::settings::summary_cache_folder;
 
 /// Seconds the pointer rests on a file before its summary shows.
@@ -150,7 +151,7 @@ impl RubriqueApp {
         folder: &Path,
     ) -> Result<(), String> {
         if ai::find_program(command).is_none() {
-            return Err(format!("{} was not found. Set it in Settings → AI.", tool.name()));
+            return Err(format!("{} is not installed. Install it in Settings → AI.", tool.name()));
         }
         let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
         let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
@@ -201,7 +202,7 @@ fn show_card(ctx: &Context, file: &HoveredFile, body: &CardBody, footer: Option<
             ui.label(RichText::new(name).strong());
             match body {
                 CardBody::Summary(summary) => {
-                    ui.label(summary);
+                    render_inline_text(ui, summary);
                 }
                 CardBody::Working(text) => {
                     ui.horizontal(|ui| {

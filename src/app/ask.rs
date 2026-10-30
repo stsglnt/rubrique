@@ -210,6 +210,9 @@ impl RubriqueApp {
 
     /// Ask for permission the first time in a folder, then run.
     fn begin_run(&mut self, ctx: &Context, pending: PendingRun) {
+        if self.offer_missing_ai_tool(pending.tool) {
+            return;
+        }
         let folder = run_folder(&pending.target.path);
         if self.settings.ai.is_allowed(&folder) {
             self.start_run(ctx, pending);
@@ -238,6 +241,9 @@ impl RubriqueApp {
                 self.show_status(format!("{} command: {} (Settings → AI)", tool.name(), problem.message()));
                 continue;
             }
+            if self.offer_missing_ai_tool(tool) {
+                continue;
+            }
             let Some((program, args)) = ai::command_args(&command, &prompt) else {
                 continue;
             };
@@ -258,6 +264,7 @@ impl RubriqueApp {
             return;
         };
         let mut views = Vec::new();
+        let formatted = job.pending.kind == AskKind::Answer;
         for tool_run in &mut job.runs {
             let seconds = tool_run.run.elapsed_seconds();
             let state = match tool_run.run.poll() {
@@ -272,6 +279,7 @@ impl RubriqueApp {
                 output: tool_run.run.output_text(),
                 errors: tool_run.run.error_text(),
                 state,
+                formatted,
             });
         }
         if job.is_running() {
@@ -289,6 +297,7 @@ impl RubriqueApp {
                     self.copy_to_clipboard(ui.ctx(), text);
                 }
             }
+            Some(OutputAction::CopyCode(code)) => self.copy_to_clipboard(ui.ctx(), code),
             Some(OutputAction::Close) => self.ask.job = None,
             Some(OutputAction::Review) => self.review_answer(),
             None => {}

@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use eframe::egui::{self, Context, Ui};
 
+use super::images::copy_into;
 use super::{OpenFile, RubriqueApp, char_to_byte};
 use crate::ai::format_elapsed;
 use crate::ai::run::{AiRun, RunEnd};
@@ -15,6 +16,7 @@ use crate::document::view::{editor_cursor, set_editor_cursor};
 use crate::explorer::paths::name_text;
 use crate::explorer::tree::FsNode;
 use crate::markdown::blocks::{Block, SourceBlock};
+use crate::media::is_image_path;
 use crate::voice::audio::{Player, Recorder};
 use crate::voice::view::{MemoAction, MemoState, MemoStates, RecordingChoice, RecordingInfo, recording_bar};
 use crate::voice::{
@@ -112,8 +114,8 @@ struct Transcribing {
 }
 
 impl RubriqueApp {
-    /// The open note and its kind, when it can hold memos.
-    fn memo_note(&self) -> Option<(PathBuf, NoteKind)> {
+    /// The open note and its kind, when it can hold memos and images.
+    pub(super) fn memo_note(&self) -> Option<(PathBuf, NoteKind)> {
         let OpenFile::Text { document, .. } = &self.open_file else {
             return None;
         };
@@ -173,7 +175,7 @@ impl RubriqueApp {
             self.show_status(format!("Saved {}. Open {} to add it.", path.display(), name_text(&note)));
             return;
         }
-        let Some(url) = self.insert_memo(ctx, &path, &label) else {
+        let Some(url) = self.insert_link(ctx, &path, |kind, url| reference(kind, url, &label)) else {
             return;
         };
         if self.settings.voice.auto_transcribe && self.settings.voice.find_program().is_some() {
@@ -190,9 +192,15 @@ impl RubriqueApp {
         }
     }
 
-    /// Link `audio` into the open note where the cursor (or the drop) is.
+    /// Link `file` into the open note where the cursor (or the drop) is, as
+    /// the block `block` builds from the note kind and link target.
     /// Returns the link target as written.
-    fn insert_memo(&mut self, ctx: &Context, audio: &Path, label: &str) -> Option<String> {
+    pub(super) fn insert_link(
+        &mut self,
+        ctx: &Context,
+        file: &Path,
+        block: impl FnOnce(NoteKind, &str) -> String,
+    ) -> Option<String> {
         self.finish_block_edit();
         let showing_preview = self.showing_preview();
         let hovered = self.voice.preview_hover;
@@ -201,7 +209,7 @@ impl RubriqueApp {
         };
         let kind = NoteKind::of(&document.path)?;
         let folder = document.path.parent().unwrap_or(Path::new("/"));
-        let url = relative_url(folder, audio);
+        let url = relative_url(folder, file);
         let block_end = |blocks: &Vec<SourceBlock>| hovered.and_then(|index| blocks.get(index)).map(|b| b.range.end);
         let at = if showing_preview {
             preview.as_ref().and_then(block_end)
@@ -209,7 +217,7 @@ impl RubriqueApp {
             editor_cursor(ctx).map(|cursor| char_to_byte(&document.text, cursor))
         };
         let at = at.unwrap_or(document.text.len());
-        let (text, cursor) = crate::voice::insert_block(&document.text, at, &reference(kind, &url, label), kind);
+        let (text, cursor) = crate::voice::insert_block(&document.text, at, &block(kind, &url), kind);
         document.text = text;
         document.on_text_changed();
         *preview = None;
@@ -232,7 +240,7 @@ impl RubriqueApp {
         let target = if audio.starts_with(&note_folder) || !self.settings.voice.copy_dropped {
             audio.to_path_buf()
         } else {
-            match self.copy_into_memos(&note_folder, audio) {
+            match copy_into(&self.settings.voice.memos_folder(&note_folder), audio) {
                 Ok(target) => target,
                 Err(error) => {
                     self.show_status(format!("Cannot copy {}: {error}", name_text(audio)));
@@ -241,24 +249,10 @@ impl RubriqueApp {
             }
         };
         let label = audio.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
-        if self.insert_memo(ctx, &target, &label).is_some() {
+        if self.insert_link(ctx, &target, |kind, url| reference(kind, url, &label)).is_some() {
             self.refresh_explorer();
             self.show_status(format!("Added {} (save to keep the link)", name_text(&target)));
         }
-    }
-
-    /// Copy `audio` into the memos folder, reusing a copy that is already there.
-    fn copy_into_memos(&self, note_folder: &Path, audio: &Path) -> std::io::Result<PathBuf> {
-        let folder = self.settings.voice.memos_folder(note_folder);
-        std::fs::create_dir_all(&folder)?;
-        let name = name_text(audio);
-        let same = folder.join(&name);
-        if same.is_file() && std::fs::read(&same)? == std::fs::read(audio)? {
-            return Ok(same);
-        }
-        let target = free_path(&folder, &name, Path::exists);
-        std::fs::copy(audio, &target)?;
-        Ok(target)
     }
 
     /// Pick an audio file in the system dialog and add it.
@@ -278,19 +272,25 @@ impl RubriqueApp {
         }
     }
 
-    /// Add audio files dropped on the window.
+    /// Add the images and audio files dropped on the window, in drop order.
     pub(super) fn handle_dropped_files(&mut self, ctx: &Context) {
         let dropped: Vec<PathBuf> =
             ctx.input(|input| input.raw.dropped_files.iter().map(|file| file.path().to_path_buf()).collect());
-        if dropped.is_empty() {
-            return;
+        let mut added = false;
+        for path in &dropped {
+            if is_audio_path(path) {
+                self.add_audio_file(ctx, path);
+            } else if is_image_path(path) {
+                self.add_image_file(ctx, path);
+            } else {
+                continue;
+            }
+            added = true;
         }
-        let (audio, other): (Vec<PathBuf>, Vec<PathBuf>) = dropped.into_iter().partition(|path| is_audio_path(path));
-        for path in &audio {
-            self.add_audio_file(ctx, path);
-        }
-        if audio.is_empty() && !other.is_empty() {
-            self.show_status("Drop audio files (WAV, M4A, MP3, OGG, FLAC…) to add a voice memo".to_string());
+        if !dropped.is_empty() && !added {
+            self.show_status(
+                "Drop images (PNG, JPEG, GIF…) or audio (WAV, M4A, MP3…) to add them to the note".to_string(),
+            );
         }
     }
 
@@ -300,9 +300,9 @@ impl RubriqueApp {
             return;
         }
         let text = if self.memo_note().is_some() {
-            "Drop audio to add a voice memo here"
+            "Drop images or audio to add them here"
         } else {
-            "Open a Markdown or HTML file to add audio"
+            "Open a Markdown or HTML file to add images or audio"
         };
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("drop-hint")));
         let visuals = ctx.global_style().visuals.clone();
@@ -318,7 +318,7 @@ impl RubriqueApp {
         painter.text(at, egui::Align2::CENTER_CENTER, text, font, visuals.strong_text_color());
     }
 
-    fn refresh_explorer(&mut self) {
+    pub(super) fn refresh_explorer(&mut self) {
         self.roots.iter_mut().for_each(FsNode::refresh);
     }
 
@@ -445,14 +445,8 @@ impl RubriqueApp {
         let Some((program, args)) = voice.command_args(&audio) else {
             return;
         };
-        if voice.find_program().is_none() {
-            self.show_status(format!(
-                "{program} was not found. Install whisper.cpp, or set the command in Settings → Voice memos."
-            ));
-            return;
-        }
-        if let Some(model) = voice.model_path().filter(|_| voice.model_missing()) {
-            self.show_status(format!("Model not found: {}. See Settings → Voice memos.", model.display()));
+        if voice.find_program().is_none() || voice.model_missing() {
+            self.offer_transcription_install(&program);
             return;
         }
         let repaint = self.repaint.clone();
@@ -465,6 +459,32 @@ impl RubriqueApp {
                 }
             }
             Err(error) => self.show_status(format!("Cannot start {program}: {error}")),
+        }
+    }
+
+    /// The transcription program or its model is missing: offer to install
+    /// it, or say where to set it up.
+    fn offer_transcription_install(&mut self, program: &str) {
+        self.check_voice_tool();
+        if self.voice.program_found.is_none() {
+            match self.install.voice.clone() {
+                Some(recipe) => {
+                    self.offer_install(format!("{} is not installed, or not on PATH.", recipe.name), recipe);
+                }
+                None => {
+                    self.show_status(format!("{program} was not found. Set the command in Settings → Voice memos."));
+                }
+            }
+            return;
+        }
+        let model = self.settings.voice.model_path().unwrap_or_default();
+        match self.install.voice_model.clone() {
+            Some(recipe) => {
+                let message =
+                    format!("Transcribing needs the model file {}.", crate::settings::view::home_relative(&model));
+                self.offer_install(message, recipe);
+            }
+            None => self.show_status(format!("Model not found: {}. See Settings → Voice memos.", model.display())),
         }
     }
 
