@@ -26,6 +26,12 @@ editor. This version adds voice memos, transcribed on your computer.
   works.
 - **Settings → Voice memos**: memos folder, copy or link dropped files, the
   transcription command, and **Transcribe after recording**.
+- **Install** a missing tool with one click: when whisper.cpp, its model,
+  Claude Code, Codex or Ollama is not found (on Transcribe, Ask, or in
+  Settings), rubrique offers its install command (`brew`, `npm`, `curl` or
+  `ollama pull`) and shows the command first. Install scripts piped to a
+  shell, and tools without a known command, get **Copy install command**
+  and **Open install page** instead.
 
 ### Changed
 

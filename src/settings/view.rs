@@ -9,6 +9,8 @@ use eframe::egui::{
 
 use crate::ai::skills::Skill;
 use crate::ai::{AiSettings, AiTool, CommandProblem, check_command};
+use crate::install::view::{InstallAction, install_prompt};
+use crate::install::{InstallStatus, Recipe};
 use crate::theme::catalog::{ThemeChoice, Themes};
 use crate::theme::palette::{Base, Palette, Rgb, Theme};
 use crate::voice::VoiceSettings;
@@ -38,6 +40,8 @@ pub enum SettingsAction {
     VoiceCommandChanged,
     /// Put this text on the clipboard.
     Copy(String),
+    /// A click in an install prompt.
+    Install(InstallAction),
     Close,
 }
 
@@ -46,6 +50,11 @@ pub enum SettingsAction {
 pub struct VoiceInfo<'a> {
     pub settings: &'a mut VoiceSettings,
     pub found: Option<&'a Path>,
+    /// How to install the transcription program, when it is missing.
+    pub recipe: Option<&'a Recipe>,
+    /// How to download the model, when it is missing.
+    pub model_recipe: Option<&'a Recipe>,
+    pub install: &'a InstallStatus,
 }
 
 /// AI settings to edit, and which tools were found (in [`AiTool::ALL`] order).
@@ -58,6 +67,11 @@ pub struct AiInfo<'a> {
     pub skills: &'a [Skill],
     /// rubrique's skills folder (the chosen one or the default).
     pub skills_folder: Option<&'a Path>,
+    /// How to install each missing tool, in [`AiTool::ALL`] order.
+    pub recipes: &'a [Option<Recipe>; 4],
+    /// How to download the local model, when Ollama is there but the model is not.
+    pub local_model: Option<&'a Recipe>,
+    pub install: &'a InstallStatus,
 }
 
 /// Where scratch files go, for the Scratches section.
@@ -176,7 +190,7 @@ const STATUS_SIZE: f32 = 12.0;
 
 /// The AI section: default tool, each tool's command, summaries, skills and safety.
 fn ai_section(ui: &mut Ui, ai: AiInfo) -> Option<SettingsAction> {
-    let AiInfo { settings, found, skills, skills_folder } = ai;
+    let AiInfo { settings, found, skills, skills_folder, recipes, local_model, install } = ai;
     let is_found = |tool: AiTool| found[tool_index(tool)].is_some();
     let mut action = None;
     ui.label(RichText::new("AI").size(SECTION_SIZE).weak());
@@ -199,8 +213,22 @@ fn ai_section(ui: &mut Ui, ai: AiInfo) -> Option<SettingsAction> {
     ui.label(RichText::new("rubrique starts these programs. {prompt} becomes your request.").weak());
     for tool in AiTool::ALL {
         ui.add_space(2.0);
-        if command_row(ui, settings, tool, found[tool_index(tool)].as_deref()) {
+        let index = tool_index(tool);
+        let recipe = recipes[index].as_ref().filter(|_| found[index].is_none());
+        let (changed, clicked) = command_row(ui, settings, tool, found[index].as_deref(), recipe, install);
+        if changed {
             action = Some(SettingsAction::AiCommandChanged);
+        }
+        if let Some(clicked) = clicked {
+            action = Some(SettingsAction::Install(clicked));
+        }
+        if tool == AiTool::Local
+            && let Some(recipe) = local_model
+        {
+            let message = format!("Model {} is not downloaded yet. Ollama gets it on first use, or now:", recipe.name);
+            if let Some(clicked) = prompt(ui, &message, recipe, install) {
+                action = Some(SettingsAction::Install(clicked));
+            }
         }
     }
 
@@ -312,10 +340,24 @@ fn summary_picker(ui: &mut Ui, choice: &mut Option<AiTool>, is_found: &dyn Fn(Ai
     );
 }
 
+/// The install prompt for `recipe`, with how its install went.
+fn prompt(ui: &mut Ui, message: &str, recipe: &Recipe, install: &InstallStatus) -> Option<InstallAction> {
+    install_prompt(ui, message, recipe, install.of(recipe), install.busy)
+}
+
 /// One tool: name, Reset (when changed), Installed or Not found, the
-/// command field, and a help line when one is needed.
-fn command_row(ui: &mut Ui, settings: &mut AiSettings, tool: AiTool, found: Option<&Path>) -> bool {
+/// command field, and a help line or an install prompt when needed.
+/// Returns whether the command changed, and an install click.
+fn command_row(
+    ui: &mut Ui,
+    settings: &mut AiSettings,
+    tool: AiTool,
+    found: Option<&Path>,
+    recipe: Option<&Recipe>,
+    install: &InstallStatus,
+) -> (bool, Option<InstallAction>) {
     let mut changed = false;
+    let mut clicked = None;
     let visuals = ui.visuals().clone();
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 4.0;
@@ -356,12 +398,20 @@ fn command_row(ui: &mut Ui, settings: &mut AiSettings, tool: AiTool, found: Opti
                     .desired_width(f32::INFINITY);
                 changed |= ui.add(edit).changed();
             });
-        if let Some(help) = command_help(tool, problem, found.is_some()) {
-            let color = if problem.is_some() { visuals.warn_fg_color } else { visuals.weak_text_color() };
-            ui.label(RichText::new(help).size(SMALL_SIZE).color(color));
+        match recipe.filter(|_| problem.is_none()) {
+            Some(recipe) => {
+                let message = format!("{} is not installed, or not on PATH.", recipe.name);
+                clicked = prompt(ui, &message, recipe, install);
+            }
+            None => {
+                if let Some(help) = command_help(tool, problem, found.is_some()) {
+                    let color = if problem.is_some() { visuals.warn_fg_color } else { visuals.weak_text_color() };
+                    ui.label(RichText::new(help).size(SMALL_SIZE).color(color));
+                }
+            }
         }
     });
-    changed
+    (changed, clicked)
 }
 
 /// The line under a command, only when there is something to say.
@@ -384,7 +434,7 @@ fn command_help(tool: AiTool, problem: Option<CommandProblem>, found: bool) -> O
 
 /// Voice memos: where they go, dropped files, and transcription.
 fn voice_section(ui: &mut Ui, voice: VoiceInfo) -> Option<SettingsAction> {
-    let VoiceInfo { settings, found } = voice;
+    let VoiceInfo { settings, found, recipe, model_recipe, install } = voice;
     let visuals = ui.visuals().clone();
     let mut action = None;
     ui.label(RichText::new("VOICE MEMOS").size(SECTION_SIZE).weak());
@@ -443,6 +493,11 @@ fn voice_section(ui: &mut Ui, voice: VoiceInfo) -> Option<SettingsAction> {
     };
     if let Some(problem) = problem {
         ui.label(small(problem.message().to_string(), true));
+    } else if let Some(recipe) = recipe.filter(|_| found.is_none()) {
+        let message = format!("{} is not installed, or not on PATH.", recipe.name);
+        if let Some(clicked) = prompt(ui, &message, recipe, install) {
+            action = Some(SettingsAction::Install(clicked));
+        }
     } else if found.is_none() {
         ui.label(small(
             "Install whisper.cpp (brew install whisper-cpp, or the whisper.cpp package on Linux), \
@@ -451,7 +506,13 @@ fn voice_section(ui: &mut Ui, voice: VoiceInfo) -> Option<SettingsAction> {
             false,
         ));
     }
-    if settings.model_missing()
+    if let Some(recipe) = model_recipe {
+        let model = settings.model_path().map(|model| home_relative(&model)).unwrap_or_default();
+        let message = format!("Model not found: {model}");
+        if let Some(clicked) = prompt(ui, &message, recipe, install) {
+            action = Some(SettingsAction::Install(clicked));
+        }
+    } else if settings.model_missing()
         && let Some(model) = settings.model_path()
     {
         ui.label(small(format!("Model not found: {}", home_relative(&model)), true));
