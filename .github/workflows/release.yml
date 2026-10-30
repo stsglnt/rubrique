@@ -95,8 +95,56 @@ jobs:
         run: |
           cargo build --release --locked --target aarch64-apple-darwin
           cargo build --release --locked --target x86_64-apple-darwin
-      - name: Bundle
-        run: sh packaging/macos/bundle.sh "${{ needs.plan.outputs.version }}"
+      # Signing and notarization need the secrets from packaging/macos/README.md.
+      # Without them (forks, or before setup) the app is ad-hoc signed, and a
+      # release is refused, because macOS would block the downloaded app.
+      - name: Import the Developer ID certificate
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          RELEASE: ${{ needs.plan.outputs.release }}
+        run: |
+          if [ -z "$MACOS_CERTIFICATE" ]; then
+            if [ "$RELEASE" = "true" ]; then
+              echo "::error::A release needs the MACOS_CERTIFICATE secret, see packaging/macos/README.md"
+              exit 1
+            fi
+            echo "::warning::No MACOS_CERTIFICATE secret: the app is ad-hoc signed and macOS will block it"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password=$(openssl rand -hex 24)
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/certificate.p12"
+          identity=$(security find-identity -v -p codesigning "$keychain" \
+            | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -n 1)
+          if [ -z "$identity" ]; then
+            echo "::error::MACOS_CERTIFICATE holds no Developer ID Application identity"
+            exit 1
+          fi
+          echo "MACOS_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+      - name: Bundle, sign and notarize
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          RELEASE: ${{ needs.plan.outputs.release }}
+        run: |
+          if [ "$RELEASE" = "true" ] && { [ -z "$APPLE_ID" ] || [ -z "$APPLE_TEAM_ID" ] || [ -z "$APPLE_APP_PASSWORD" ]; }; then
+            echo "::error::A release needs APPLE_ID, APPLE_TEAM_ID and APPLE_APP_PASSWORD, see packaging/macos/README.md"
+            exit 1
+          fi
+          sh packaging/macos/bundle.sh "${{ needs.plan.outputs.version }}"
+      - name: Remove the signing keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
       - uses: actions/upload-artifact@v7
         with:
           name: rubrique-macos
@@ -131,8 +179,7 @@ jobs:
             echo
             echo "### Install"
             echo
-            echo "- **macOS**: open the .dmg and drag rubrique to Applications. The app is not notarized yet:"
-            echo "  the first time, right-click rubrique and choose Open."
+            echo "- **macOS**: open the .dmg and drag rubrique to Applications. The app is signed and notarized by Apple."
             echo "- **Debian / Ubuntu**: \`sudo apt install ./rubrique_*.deb\`"
             echo "- **Other Linux**: unpack the .tar.gz and run \`./install.sh\` (installs to ~/.local)."
           } >> notes.md
