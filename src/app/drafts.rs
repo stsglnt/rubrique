@@ -90,6 +90,7 @@ impl RubriqueApp {
                 preview: None,
                 disk_notice: Some(DiskState::Deleted),
                 editor: None,
+                source: false,
             });
             return Some(Restored::Missing(path));
         }
