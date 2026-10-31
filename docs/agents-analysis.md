@@ -2,18 +2,26 @@
 
 Status: proposal, nothing built yet.
 
+Decided:
+
+- Agents answer with a **reply in the note** by default. A button on the
+  reply moves it into the text, through the merge screen.
+- Mentions always use the **`@ai-` prefix** (`@ai-john`), so they never clash
+  with real people named in shared notes.
+
 ## The idea
 
 In Settings you set up named agents. Each one has a personality, a set of
-skills and an AI tool it runs on. In a note you write `@John`, and John does
+skills and an AI tool it runs on. In a note you write `@ai-john`, and John does
 the job the note asks for, in his own way.
 
 ```markdown
-We ship on the first Monday<!-- note on "the first Monday": @John check this against the release plan -->
+We ship on the first Monday<!-- note on "the first Monday": @ai-john check this against the release plan -->
 ```
 
-John reads the note, the text it is about and the file, and comes back with a
-change you review in the merge screen, or with a reply to the note.
+John reads the note, the text it is about and the file, and replies under the
+note. If you like his answer, one click moves it into the text, and you review
+that change in the merge screen.
 
 ## What rubrique already has
 
@@ -23,9 +31,9 @@ Most of the pieces exist. Agents are mostly a new way to combine them.
 | --- | --- | --- |
 | AI tools as command templates (`claude`, `codex`, `grok`, `ollama`) | `src/ai.rs` (`AiTool`, `AiSettings`, `command_args`) | The "engine" an agent runs on. `{system}` already carries extra instructions. |
 | Skills as `SKILL.md` folders | `src/ai/skills.rs` | The file format and loader to copy for agents. `Prompt::with_skill` shows how to add instructions. |
-| Notes as HTML comments | `src/markdown/notes.rs` | The place to write `@John`. Notes stay hidden on GitHub, so a mention is safe to keep in the file. |
+| Notes as HTML comments | `src/markdown/notes.rs` | The place to write `@ai-john`. Notes stay hidden on GitHub, so a mention is safe to keep in the file. |
 | Resolve one note / all notes | `src/app/ask.rs` (`resolve_notes`, `Resolving`) | The flow an agent run reuses: build prompt, run tool, open merge. |
-| Compare two tools | `PendingRun.compare`, `MergeSession::compare` | `@John @Mary` can show both answers side by side. |
+| Compare two tools | `PendingRun.compare`, `MergeSession::compare` | `@ai-john @ai-mary` can show both answers side by side. |
 | Merge screen | `src/document/merge*.rs` | Nothing an agent does is applied without review. |
 | Folder consent | `Consent`, `AiSettings.allowed_folders` | Cloud agents still ask once per folder. |
 | No shell, arguments passed directly | `split_command`, `AiRun::start` | Text in a note cannot run commands. |
@@ -63,13 +71,13 @@ You are John, a careful fact checker on a small product team.
 | Field | Meaning | Default |
 | --- | --- | --- |
 | `name` | Shown in the UI | Folder name |
-| `handle` | What you type after `@` (case does not matter) | `name` in lower case, spaces removed |
+| `handle` | The part after `@ai-` (case does not matter). `handle: john` means you write `@ai-john`. Letters, digits and `-` only. | `name` in lower case, spaces as `-` |
 | `description` | One line, shown in the `@` picker and Settings | "Agent {name}" |
 | `tool` | `claude`, `codex`, `grok` or `local` | The default tool from Settings → AI |
 | `model` | Passed to tools that support it (for example `--model` for `claude`) | Tool default |
 | `command` | Full command template, for anything not covered above | The tool's command |
 | `skills` | Skill names to always add | None |
-| `output` | `rewrite` (change text, merge screen), `reply` (answer in the note) or `auto` (agent decides) | `rewrite` |
+| `output` | `reply` (answer in the note) or `rewrite` (skip the reply, go straight to the merge screen) | `reply` |
 | `context` | `selection` (quoted text only), `file` or `folder` | `file` |
 | Body | The personality and rules. Goes into `{system}` after rubrique's own rules. | Required |
 
@@ -93,33 +101,34 @@ over Claude Code's. Settings shows which one is used.
 
 ### In a note
 
-1. You add a note: `@John check this against the release plan`.
+1. You add a note: `@ai-john check this against the release plan`.
 2. The notes panel shows the note with a small `John` chip and a **Run**
    button. The quoted text in the preview gets John's color.
 3. You press **Run** (or **Run all mentions** at the top of the panel).
 4. rubrique builds the prompt:
    - **system**: rubrique's rules for the output type, then John's body, then
      his skills.
-   - **user**: the note text without `@John`, the quoted text, and the file
+   - **user**: the note text without `@ai-john`, the quoted text, and the file
      (or only the quote, if `context: selection`).
 5. John runs on his tool, in the file's folder, read-only, as Resolve does now.
 6. The result:
-   - `rewrite`: the merge screen opens with the change and the note removed.
-     Title: "John · Resolve note: the first Monday".
-   - `reply`: John's answer is added under the note as a reply (see below).
-     You can then press **Apply** on the reply to turn it into a rewrite, or
-     reply back with `@John` again.
+   - `reply` (default): John's answer is added under the note as a reply
+     (see below). From there you can move it into the text, or answer back
+     with `@ai-john` to continue the thread.
+   - `rewrite`: for agents set up that way, the merge screen opens right
+     away with the change and the note removed. Title: "John · Resolve
+     note: the first Monday".
 
 ### Several mentions
 
-- `@John @Mary check this`: both run at once and the merge screen compares
+- `@ai-john @ai-mary check this`: both run at once and the merge screen compares
   them. This is the existing Compare feature, with agents instead of tools.
-- A mention of an unknown handle shows "No agent called @jon. Did you mean
-  @john?" on the note card and does nothing.
+- A mention of an unknown handle shows "No agent called @ai-jon. Did you mean
+  @ai-john?" on the note card and does nothing.
 
 ### In the Ask bar
 
-Typing `@` in the Ask bar (Cmd+K) opens a picker of agents. `@John make it
+Typing `@` in the Ask bar (Cmd+K) opens a picker of agents. `@ai-john make it
 shorter` runs John on the selection with his personality and skills. This is
 the cheapest place to start, because Ask already handles selection, consent,
 compare and merge.
@@ -130,13 +139,38 @@ A reply has to live in the file, so it survives closing the app and is seen
 by teammates. Proposal: a second comment right after the note:
 
 ```markdown
-the first Monday<!-- note on "the first Monday": @John check this against the release plan --><!-- reply from "John": The release plan says Tuesday 3 March. -->
+the first Monday<!-- note on "the first Monday": @ai-john check this against the release plan --><!-- reply from "John": The release plan says Tuesday 3 March. -->
 ```
 
 - `find_notes` collects replies that follow a note into a thread.
 - GitHub and other viewers still hide both comments.
 - Deleting a note deletes its replies.
 - A reply is plain text; it never changes the document by itself.
+
+### Moving a reply into the text
+
+A reply can be advice ("the plan says Tuesday 3 March") or ready text. So
+the reply card gets two buttons:
+
+- **Use as text** (no AI): shown when the reply carries ready text. The agent
+  is asked to put any replacement text in a marked part of the reply:
+
+  ```markdown
+  <!-- reply from "John": The release plan says Tuesday 3 March. | text: the first Tuesday -->
+  ```
+
+  The button puts `the first Tuesday` in place of the quoted text, removes
+  the note and its thread, and opens the merge screen. Instant, free, and
+  exactly what you read in the reply.
+- **Apply with AI**: always shown. Runs the same agent again in `rewrite`
+  mode, with the note, the whole thread and the file, and the request "make
+  the change this thread agreed on". The result opens in the merge screen.
+  Use it when the reply is advice, or when the change touches more than the
+  quoted text.
+
+Both end in the merge screen, so nothing changes without review. If the text
+changed since the reply was written (the quote is no longer found), **Use as
+text** is disabled and only **Apply with AI** is offered.
 
 Why not keep replies outside the file (a sidecar file or app memory)? The file
 would move or be renamed and lose them, and teammates would not see them.
@@ -154,7 +188,9 @@ Proposal:
 - A limit (for example 3 at a time); more wait in a queue.
 - The notes panel shows per note: waiting, running (with seconds), done,
   failed. This builds on the existing `resolving_state`.
-- Finished rewrites wait in a **To review** list (status bar badge) instead of
+- New replies appear in the notes panel with an "unread" dot, so you can keep
+  writing while agents work. Finished rewrites (from **Apply with AI** or
+  rewrite agents) wait in a **To review** list (status bar badge) instead of
   opening the merge screen on top of whatever you are doing. You open them one
   by one. Each review still checks that the text did not change meanwhile, as
   `review_answer` does now.
@@ -164,7 +200,8 @@ Proposal:
 A new group next to Skills, using the same window.
 
 - A list of agents with name, handle, tool and where the file is.
-- **New agent**: a form with Name, Handle, Description, Tool (dropdown),
+- **New agent**: a form with Name, Handle (shown as `@ai-` plus a text field,
+  with a live preview of the mention), Description, Tool (dropdown),
   Model, Skills (checkboxes from the loaded skills), Output, Context and a
   large Personality field. **Save** writes `AGENT.md`, so the file stays the
   source of truth and can be edited by hand or shared.
@@ -183,7 +220,7 @@ more important, not less.
   on write mode by itself; a custom `command` that allows writes shows a
   warning in Settings and in the consent dialog.
 - **Mentions never run by themselves.** A file from someone else may contain
-  `@John delete the second half`. Running needs a click. An opt-in "run on
+  `@ai-john delete the second half`. Running needs a click. An opt-in "run on
   save" per agent can come later, and only for local tools or allowed folders.
 - **Folder agents are untrusted until the folder is allowed** (see above).
 - **Prompt injection.** The note text and file go in the user part of the
@@ -191,7 +228,7 @@ more important, not less.
   not make injection impossible, which is another reason the merge screen
   stays mandatory.
 - **Cost and time.** Show the tool and model on each chip, so a user sees that
-  `@John` runs on a cloud model and `@Sum` on a local one.
+  `@ai-john` runs on a cloud model and `@ai-sum` on a local one.
 
 ## Code changes, by file
 
@@ -214,30 +251,28 @@ Each step is useful on its own and can ship separately.
 1. **Agents in Ask.** `AGENT.md` format and loader, Settings → Agents as a
    list with Open file (like Skills), `@` picker in the Ask bar. One job at a
    time. Smallest change, tests the format.
-2. **Agents in notes.** `@John` in a note, chip and Run on the note card,
-   output `rewrite` through the existing Resolve flow. Unknown handle hint.
-3. **Replies and threads.** `output: reply`, reply comments in the file,
-   threads in the notes panel, Apply on a reply.
+2. **Agents in notes, with replies.** `@ai-john` in a note, chip and Run on
+   the note card. Reply comments in the file, threads in the notes panel,
+   **Use as text** and **Apply with AI** on a reply. Unknown handle hint.
+   Since reply is the default, replies ship together with mentions.
+3. **Rewrite agents.** `output: rewrite` for agents that should skip the
+   reply and go straight to the merge screen (reusing the Resolve flow).
 4. **Many jobs.** Job list, queue, per-note status, To review list, Run all
-   mentions. `@John @Mary` compare.
+   mentions. `@ai-john @ai-mary` compare.
 5. **Settings form and team agents.** Create and edit agents without touching
    the file, starter agents, folder agents in `.rubrique/agents`, Claude Code
    agents import.
 6. **Later, maybe.** Run on save for chosen agents. Agent hand-off
-   (`@John then @Mary`). Folder-wide jobs ("@John check every note in this
+   (`@ai-john then @ai-mary`). Folder-wide jobs ("@ai-john check every note in this
    folder"). Agents that may write files, but only into a copy that comes
    back through the merge screen.
 
 ## Open questions
 
-1. Should `@John` in normal text (not in a note) mean anything? Proposal: no,
-   only in notes and the Ask bar, so writing about a person called John never
-   triggers anything.
-2. Default output: `rewrite` (closest to today) or `reply` (safer, more
-   "chat with a colleague")? Proposal: `rewrite` for step 2, make `reply`
-   available in step 3, and let each agent choose.
-3. Handle collisions with real people in shared notes: should agent handles
-   use a prefix such as `@ai-john`? Proposal: plain handles, plus a Settings
-   check that warns if a handle looks like a common name used in the folder.
-4. Should the merge screen show which agent made each change when an agent
+1. Should `@ai-john` in normal text (not in a note) mean anything? Proposal: no,
+   only in notes and the Ask bar. With the `@ai-` prefix a clash is unlikely
+   anyway, but limiting it keeps the rules simple.
+2. Should the `ai-` prefix be changeable in Settings (for example `@bot-`)?
+   Proposal: no, a fixed prefix keeps shared files readable for everyone.
+3. Should the merge screen show which agent made each change when an agent
    rewrites a whole file with many notes? Useful for "Run all mentions".
