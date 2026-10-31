@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=rubrique
-GenericName=AI Markdown Editor
-Comment=AI-assisted Markdown editor
+GenericName=Agentic Markdown Editor
+Comment=Markdown editor that works with your agents: Claude Code, Codex, Grok or a local model
 Exec=rubrique %F
 Icon=rubrique
 Terminal=false
 Categories=Utility;TextEditor;
 MimeType=text/markdown;text/x-markdown;text/plain;
-Keywords=markdown;notes;editor;ai;writing;
+Keywords=markdown;notes;editor;ai;agent;claude;codex;writing;
