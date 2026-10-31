@@ -8,6 +8,13 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Changed
+
+- The **Ask bar shows what the tool gets** before it runs: open **What
+  Claude gets** for the request, the text, rubrique's instructions, the
+  skill, the command and the folder. The first run in a folder asks there
+  instead of in a separate dialog.
+
 ## [0.4.3] - 2026-10-31
 
 ### Changed

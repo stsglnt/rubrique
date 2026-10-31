@@ -8,13 +8,14 @@ use std::time::Duration;
 use eframe::egui::{self, Context, Ui, pos2};
 
 use super::{OpenFile, RubriqueApp, char_to_byte};
+use crate::ai::preview::{PromptParts, full_prompt, prompt_parts};
 use crate::ai::run::{AiRun, RunEnd};
 use crate::ai::skills::Skill;
 use crate::ai::view::{
-    AskBar, AskEvent, Consent, ConsentChoice, OutputAction, OutputInfo, OutputState, RunView, show_ask_bar,
-    show_consent, show_output,
+    AskBar, AskBarInfo, AskEvent, AskRequest, Consent, ConsentChoice, OutputAction, OutputInfo, OutputState, RunView,
+    show_ask_bar, show_consent, show_output,
 };
-use crate::ai::{self, AiTool, AskKind};
+use crate::ai::{self, AiSettings, AiTool, AskKind};
 use crate::document::merge::MergeSession;
 use crate::document::preview_selection;
 use crate::document::view::editor_selection;
@@ -23,7 +24,7 @@ use crate::markdown::notes::{find_notes, locate};
 /// Space between the top of the page and the Ask bar.
 const ASK_TOP: f32 = 56.0;
 /// Width the Ask bar takes, to center it on the page.
-const ASK_OUTER_WIDTH: f32 = 480.0;
+const ASK_OUTER_WIDTH: f32 = 600.0;
 /// Longest request shown in the merge column title.
 const TITLE_REQUEST_CHARS: usize = 28;
 
@@ -101,6 +102,8 @@ impl AiJob {
 #[derive(Debug, Default)]
 pub(super) struct AskState {
     bar: Option<(AskBar, AskTarget)>,
+    /// "What Claude gets" is open in the Ask bar (kept for the session).
+    prompt_open: bool,
     consent: Option<(Consent, PendingRun)>,
     pub(super) job: Option<AiJob>,
     /// Where the page (editor or preview) was drawn, to place the bar.
@@ -170,27 +173,19 @@ impl RubriqueApp {
         if let Some((bar, target)) = &mut self.ask.bar {
             let page = self.ask.page_rect.unwrap_or_else(|| ctx.content_rect());
             let left = page.left() + ((page.width() - ASK_OUTER_WIDTH) / 2.0).max(8.0);
-            let event = show_ask_bar(
-                ctx,
-                pos2(left, page.top() + ASK_TOP),
-                bar,
-                self.ai_found.each_ref().map(Option::is_some),
-                &self.skills,
-            );
+            let folder = run_folder(&target.path);
+            let shown = bar.shown();
+            let parts = target_parts(&self.settings.ai, target, &shown, bar.tool, bar.compare);
+            let info = AskBarInfo {
+                installed: self.ai_found.each_ref().map(Option::is_some),
+                skills: &self.skills,
+                parts: &parts,
+                folder: &folder,
+                allowed: self.settings.ai.is_allowed(&folder),
+            };
+            let event = show_ask_bar(ctx, pos2(left, page.top() + ASK_TOP), bar, &info, &mut self.ask.prompt_open);
             match event {
-                Some(AskEvent::Run { request, kind, skill }) => {
-                    let pending = PendingRun {
-                        target: target.clone(),
-                        request,
-                        kind,
-                        tool: bar.tool,
-                        skill,
-                        resolving: None,
-                        compare: bar.compare.filter(|compare| *compare != bar.tool),
-                    };
-                    self.ask.bar = None;
-                    self.begin_run(ctx, pending);
-                }
+                Some(AskEvent::Run { ask, confirmed }) => self.ask_run(ctx, ask, confirmed),
                 Some(AskEvent::Close) => self.ask.bar = None,
                 None => {}
             }
@@ -208,7 +203,40 @@ impl RubriqueApp {
         }
     }
 
-    /// Ask for permission the first time in a folder, then run.
+    /// A run from the Ask bar. In a folder not allowed yet it waits in the
+    /// bar, with what the tool gets shown, until the user presses Run.
+    fn ask_run(&mut self, ctx: &Context, ask: AskRequest, confirmed: bool) {
+        let Some((bar, target)) = &mut self.ask.bar else {
+            return;
+        };
+        let folder = run_folder(&target.path);
+        if !confirmed && !self.settings.ai.is_allowed(&folder) {
+            bar.wait(ask);
+            return;
+        }
+        let remember = bar.remember;
+        let pending = PendingRun {
+            target: target.clone(),
+            request: ask.request,
+            kind: ask.kind,
+            tool: bar.tool,
+            skill: ask.skill,
+            resolving: None,
+            compare: bar.compare.filter(|compare| *compare != bar.tool),
+        };
+        self.ask.bar = None;
+        if self.offer_missing_ai_tool(pending.tool) {
+            return;
+        }
+        if remember && !self.settings.ai.is_allowed(&folder) {
+            self.settings.ai.allow(&folder);
+            self.write_settings();
+        }
+        self.start_run(ctx, pending);
+    }
+
+    /// Ask for permission the first time in a folder, then run. For runs
+    /// that do not come from the Ask bar.
     fn begin_run(&mut self, ctx: &Context, pending: PendingRun) {
         if self.offer_missing_ai_tool(pending.tool) {
             return;
@@ -217,19 +245,15 @@ impl RubriqueApp {
         if self.settings.ai.is_allowed(&folder) {
             self.start_run(ctx, pending);
         } else {
-            let command = self.settings.ai.command(pending.tool).to_string();
-            let also = pending.compare.map(|tool| (tool, self.settings.ai.command(tool).to_string()));
-            let consent = Consent { tool: pending.tool, also, folder, command, remember: true };
-            self.ask.consent = Some((consent, pending));
+            let parts = pending.parts(&self.settings.ai);
+            self.ask.consent = Some((Consent { parts, folder, remember: true }, pending));
         }
     }
 
     fn start_run(&mut self, ctx: &Context, pending: PendingRun) {
         let target = &pending.target;
-        let mut prompt = ai::build_prompt(&pending.request, &target.text, pending.kind, target.whole_file);
-        if let Some(skill) = &pending.skill {
-            prompt = prompt.with_skill(skill);
-        }
+        let prompt =
+            full_prompt(&pending.request, &target.text, pending.kind, target.whole_file, pending.skill.as_deref());
         if prompt.is_too_long() {
             self.show_status("The text is too long to send; select a smaller part".to_string());
             return;
@@ -356,6 +380,12 @@ impl RubriqueApp {
 }
 
 impl PendingRun {
+    /// What the run will send, for showing before it starts.
+    fn parts(&self, settings: &AiSettings) -> PromptParts {
+        let ask = AskRequest { request: self.request.clone(), kind: self.kind, skill: self.skill.clone() };
+        target_parts(settings, &self.target, &ask, self.tool, self.compare)
+    }
+
     /// What the run is for, as shown in the output panel and merge screen.
     fn label(&self) -> String {
         match (&self.resolving, &self.skill) {
@@ -421,6 +451,22 @@ impl RubriqueApp {
             job.runs.iter_mut().for_each(|run| run.run.stop());
         }
     }
+}
+
+/// What `tool` (and `compare`) get for `ask` about the target's text.
+fn target_parts(
+    settings: &AiSettings,
+    target: &AskTarget,
+    ask: &AskRequest,
+    tool: AiTool,
+    compare: Option<AiTool>,
+) -> PromptParts {
+    let commands: Vec<(AiTool, &str)> = std::iter::once(tool)
+        .chain(compare.filter(|compare| *compare != tool))
+        .map(|tool| (tool, settings.command(tool)))
+        .collect();
+    let skill = ask.skill.as_deref();
+    prompt_parts(&ask.request, &target.text, ask.kind, target.whole_file, skill, &commands)
 }
 
 /// Tools run in the file's folder, so they can read nearby notes.
