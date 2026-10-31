@@ -6,6 +6,7 @@ use std::time::Duration;
 use eframe::egui::{self, Context, Key, KeyboardShortcut, Modifiers, RichText, Ui, ViewportCommand};
 
 mod ask;
+mod drafts;
 mod images;
 mod install;
 mod naming;
@@ -39,7 +40,7 @@ use crate::media::{MediaKind, format_name, image_uri, media_kind, open_with_syst
 use crate::scratch::{create_scratch, rename_target};
 use crate::settings::accessibility::TextSize;
 use crate::settings::view::{AiInfo, ScratchInfo, SettingsAction, SettingsGroup, VoiceInfo, show_settings};
-use crate::settings::{MarkdownView, Settings, default_scratch_folder, default_skills_folder, themes_folder};
+use crate::settings::{Settings, default_scratch_folder, default_skills_folder, themes_folder};
 use crate::theme::catalog::Themes;
 use crate::theme::style::{apply_accessibility, apply_theme, page_fill};
 use crate::voice::view::set_memo_states;
@@ -101,6 +102,9 @@ enum OpenFile {
         disk_notice: Option<DiskState>,
         /// Cursor and undo history while the tab is hidden.
         editor: Option<EditorState>,
+        /// A Markdown file shows its source instead of the preview. Every
+        /// file opens in preview; this lasts only for its tab.
+        source: bool,
     },
     /// An image (shown in the page) or a video (shown as a card).
     Media {
@@ -152,6 +156,8 @@ enum GuardedAction {
     CloseTab,
     /// Take a root out of the explorer (closes the tabs inside it).
     RemoveRoot(PathBuf),
+    /// Quit; unsaved edits are kept as drafts, so this only asks when
+    /// a draft cannot be written.
     Quit,
 }
 
@@ -220,6 +226,8 @@ pub struct RubriqueApp {
     voice: voice::VoiceState,
     /// Installing missing tools.
     install: install::InstallState,
+    /// Unsaved edits kept between runs.
+    drafts: drafts::DraftState,
 }
 
 /// A note in the making (new, or an existing one being edited).
@@ -283,17 +291,14 @@ impl RubriqueApp {
             note_draft: None,
             voice: voice::VoiceState::default(),
             install: install::InstallState::default(),
+            drafts: drafts::DraftState::default(),
         };
         preview_selection::install(ctx);
         egui_extras::install_image_loaders(ctx);
         app.remember_roots();
-        // Reopen last session's tabs that are still there, then the file asked for.
+        // Reopen last session's tabs (with their unsaved edits), then the file asked for.
         let saved_tabs = std::mem::take(&mut app.settings.open_tabs);
-        for path in saved_tabs {
-            if path.is_file() && app.roots.iter().any(|root| path.starts_with(&root.path)) {
-                app.open_in_tab(path);
-            }
-        }
+        app.reopen_tabs(saved_tabs);
         if let Some(file) = file {
             app.open_in_tab(file);
         }
@@ -323,7 +328,10 @@ impl RubriqueApp {
                 None => self.remove_root_now(&folder),
             },
             GuardedAction::Quit => {
-                if let Some(index) = self.dirty_tab(|_| true) {
+                // Asking is the fallback for when the edits cannot be kept.
+                if !self.keep_drafts()
+                    && let Some(index) = self.dirty_tab(|_| true)
+                {
                     self.switch_to_tab(index);
                     self.pending = Some(GuardedAction::Quit);
                 } else {
@@ -354,7 +362,7 @@ impl RubriqueApp {
         }
         match Document::open(&path) {
             Ok(Opened::Text(document)) => {
-                Some(OpenFile::Text { document, preview: None, disk_notice: None, editor: None })
+                Some(OpenFile::Text { document, preview: None, disk_notice: None, editor: None, source: false })
             }
             Ok(Opened::Unsupported(reason)) => Some(OpenFile::Unsupported { path, reason }),
             Err(error) => {
@@ -453,14 +461,15 @@ impl RubriqueApp {
     fn toggle_preview(&mut self) {
         self.finish_block_edit();
         let is_markdown = self.open_file.path().is_some_and(is_markdown_path);
-        if is_markdown {
-            self.settings.markdown_view = self.settings.markdown_view.toggled();
+        if is_markdown && let OpenFile::Text { source, .. } = &mut self.open_file {
+            *source = !*source;
         }
     }
 
     /// True when the right panel shows the rendered preview.
     fn showing_preview(&self) -> bool {
-        self.settings.markdown_view == MarkdownView::Preview && self.open_file.path().is_some_and(is_markdown_path)
+        matches!(self.open_file, OpenFile::Text { source: false, .. })
+            && self.open_file.path().is_some_and(is_markdown_path)
     }
 
     /// When the window regains focus, look for changes made by other programs.
@@ -529,8 +538,8 @@ impl RubriqueApp {
         }
 
         if ctx.input(|input| input.viewport().close_requested()) {
-            self.finish_block_edit();
-            if self.quit_confirmed || self.dirty_tab(|_| true).is_none() {
+            if self.quit_confirmed || self.keep_drafts() || self.dirty_tab(|_| true).is_none() {
+                self.pending = None;
                 self.save_settings(ctx);
             } else {
                 ctx.send_viewport_cmd(ViewportCommand::CancelClose);
@@ -961,8 +970,11 @@ impl RubriqueApp {
         } else {
             self.add_folder(folder);
         }
-        self.settings.markdown_view = MarkdownView::Edit;
         self.open_in_tab(path);
+        // A new scratch is for typing, so it opens on its source.
+        if let OpenFile::Text { source, .. } = &mut self.open_file {
+            *source = true;
+        }
         focus_editor(ctx);
     }
 
@@ -1681,19 +1693,6 @@ impl RubriqueApp {
                 }
             }
             if is_text {
-                let mode = if showing_preview { "Preview" } else { "Edit" };
-                // Markdown files switch mode with a click; other files only edit.
-                if is_markdown {
-                    let toggle = ui.small_button(mode).on_hover_text("Switch edit / preview (Cmd+E)");
-                    if toggle.clicked() {
-                        self.toggle_preview();
-                        if !self.showing_preview() {
-                            focus_editor(ui.ctx());
-                        }
-                    }
-                } else {
-                    ui.label(mode);
-                }
                 let ask = icon_text_button(
                     ui,
                     Icon::Sparkle,
@@ -1736,10 +1735,10 @@ impl RubriqueApp {
         let proceed = match choice {
             UnsavedChoice::Save => self.save(),
             UnsavedChoice::Discard => {
-                // Back to the saved text, so the next step sees nothing unsaved here.
+                // Back to the file, so the next step sees nothing unsaved here
+                // (and the draft goes with the edits).
                 if let OpenFile::Text { document, preview, .. } = &mut self.open_file {
-                    document.text = document.base_text().to_string();
-                    document.on_text_changed();
+                    document.discard_changes();
                     *preview = None;
                 }
                 true
@@ -1883,6 +1882,7 @@ impl eframe::App for RubriqueApp {
         self.handle_window_events(&ctx);
         self.handle_shortcuts(&ctx);
         self.poll_disk(&ctx);
+        self.poll_drafts(&ctx);
         self.poll_naming();
         self.poll_voice(&ctx);
         self.poll_install(&ctx);
@@ -1936,6 +1936,8 @@ impl eframe::App for RubriqueApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Usually done when the window asked to close; this covers other exits.
+        self.keep_drafts();
         self.remember_tabs();
         self.write_settings();
     }

@@ -8,6 +8,18 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-10-31
+
+### Changed
+
+- Every Markdown file opens in **preview**. A **Preview | Source** switch at
+  the right end of the tab bar (or `Cmd/Ctrl+E`) shows the source, for that
+  tab only. New scratch files open on their source, ready to type. The old
+  status bar Edit / Preview button is gone.
+- **Quitting keeps unsaved edits** as drafts and restores them on the next
+  start, without asking. The files themselves are not touched until you
+  save. If a file changed on disk meanwhile, the merge screen opens.
+
 ## [0.4.2] - 2026-10-30
 
 rubrique is now described as what it has become: an AI-assisted Markdown
@@ -246,7 +258,8 @@ screen before it touches your text.
   plain-text editor with a rendered Markdown preview, atomic saves, unsaved
   changes prompt, reload on outside changes, and line shortcuts.
 
-[Unreleased]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.2...HEAD
+[Unreleased]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.3...HEAD
+[0.4.3]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.2...rubrique-v0.4.3
 [0.4.2]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.1...rubrique-v0.4.2
 [0.4.1]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.0...rubrique-v0.4.1
 [0.4.0]: https://github.com/witseko/rubrique/compare/rubrique-v0.3.0...rubrique-v0.4.0
