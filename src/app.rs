@@ -40,7 +40,7 @@ use crate::media::{MediaKind, format_name, image_uri, media_kind, open_with_syst
 use crate::scratch::{create_scratch, rename_target};
 use crate::settings::accessibility::TextSize;
 use crate::settings::view::{AiInfo, ScratchInfo, SettingsAction, SettingsGroup, VoiceInfo, show_settings};
-use crate::settings::{MarkdownView, Settings, default_scratch_folder, default_skills_folder, themes_folder};
+use crate::settings::{Settings, default_scratch_folder, default_skills_folder, themes_folder};
 use crate::theme::catalog::Themes;
 use crate::theme::style::{apply_accessibility, apply_theme, page_fill};
 use crate::voice::view::set_memo_states;
@@ -102,6 +102,9 @@ enum OpenFile {
         disk_notice: Option<DiskState>,
         /// Cursor and undo history while the tab is hidden.
         editor: Option<EditorState>,
+        /// A Markdown file shows its source instead of the preview. Every
+        /// file opens in preview; this lasts only for its tab.
+        source: bool,
     },
     /// An image (shown in the page) or a video (shown as a card).
     Media {
@@ -359,7 +362,7 @@ impl RubriqueApp {
         }
         match Document::open(&path) {
             Ok(Opened::Text(document)) => {
-                Some(OpenFile::Text { document, preview: None, disk_notice: None, editor: None })
+                Some(OpenFile::Text { document, preview: None, disk_notice: None, editor: None, source: false })
             }
             Ok(Opened::Unsupported(reason)) => Some(OpenFile::Unsupported { path, reason }),
             Err(error) => {
@@ -458,14 +461,15 @@ impl RubriqueApp {
     fn toggle_preview(&mut self) {
         self.finish_block_edit();
         let is_markdown = self.open_file.path().is_some_and(is_markdown_path);
-        if is_markdown {
-            self.settings.markdown_view = self.settings.markdown_view.toggled();
+        if is_markdown && let OpenFile::Text { source, .. } = &mut self.open_file {
+            *source = !*source;
         }
     }
 
     /// True when the right panel shows the rendered preview.
     fn showing_preview(&self) -> bool {
-        self.settings.markdown_view == MarkdownView::Preview && self.open_file.path().is_some_and(is_markdown_path)
+        matches!(self.open_file, OpenFile::Text { source: false, .. })
+            && self.open_file.path().is_some_and(is_markdown_path)
     }
 
     /// When the window regains focus, look for changes made by other programs.
@@ -966,8 +970,11 @@ impl RubriqueApp {
         } else {
             self.add_folder(folder);
         }
-        self.settings.markdown_view = MarkdownView::Edit;
         self.open_in_tab(path);
+        // A new scratch is for typing, so it opens on its source.
+        if let OpenFile::Text { source, .. } = &mut self.open_file {
+            *source = true;
+        }
         focus_editor(ctx);
     }
 
@@ -1686,19 +1693,6 @@ impl RubriqueApp {
                 }
             }
             if is_text {
-                let mode = if showing_preview { "Preview" } else { "Edit" };
-                // Markdown files switch mode with a click; other files only edit.
-                if is_markdown {
-                    let toggle = ui.small_button(mode).on_hover_text("Switch edit / preview (Cmd+E)");
-                    if toggle.clicked() {
-                        self.toggle_preview();
-                        if !self.showing_preview() {
-                            focus_editor(ui.ctx());
-                        }
-                    }
-                } else {
-                    ui.label(mode);
-                }
                 let ask = icon_text_button(
                     ui,
                     Icon::Sparkle,
