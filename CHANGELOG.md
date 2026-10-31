@@ -8,6 +8,22 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-10-31
+
+### Changed
+
+- The **Ask bar shows what the tool gets** before it runs: open **What
+  Claude gets** for the request, the text, rubrique's instructions, the
+  skill, the command and the folder. The first run in a folder asks there
+  instead of in a separate dialog.
+
+### Fixed
+
+- Selecting text across several list items, task items or quote lines in
+  the preview and then adding a note or asking AI said "Cannot find the
+  selection in the file".
+- The preview's **+ Add note** button showed behind the open Ask bar.
+
 ## [0.4.3] - 2026-10-31
 
 ### Changed
@@ -258,7 +274,8 @@ screen before it touches your text.
   plain-text editor with a rendered Markdown preview, atomic saves, unsaved
   changes prompt, reload on outside changes, and line shortcuts.
 
-[Unreleased]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.3...HEAD
+[Unreleased]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.4...HEAD
+[0.4.4]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.3...rubrique-v0.4.4
 [0.4.3]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.2...rubrique-v0.4.3
 [0.4.2]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.1...rubrique-v0.4.2
 [0.4.1]: https://github.com/witseko/rubrique/compare/rubrique-v0.4.0...rubrique-v0.4.1

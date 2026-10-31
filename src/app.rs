@@ -1199,7 +1199,7 @@ impl RubriqueApp {
             self.media_action(ui.ctx(), event);
         }
         self.drop_hint(ui.ctx(), page);
-        if showing_preview && self.block_edit.is_none() && self.note_draft.is_none() {
+        if showing_preview && self.block_edit.is_none() && self.note_draft.is_none() && !self.ask.is_open() {
             self.add_note_button(ui.ctx());
         }
     }

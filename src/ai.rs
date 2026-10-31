@@ -8,6 +8,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 pub mod naming;
+pub mod preview;
 pub mod run;
 pub mod skills;
 pub mod summary;
@@ -345,10 +346,9 @@ pub fn clean_reply(reply: &str, original: &str) -> String {
 pub fn command_args(command: &str, prompt: &Prompt) -> Option<(String, Vec<String>)> {
     let mut words = split_command(command).into_iter();
     let program = words.next().filter(|program| !program.is_empty())?;
-    let words: Vec<String> = words.collect();
-    let has_system = words.iter().any(|word| word.contains(SYSTEM));
+    let has_system = preview::has_system(command);
     let user = if has_system { prompt.user.clone() } else { format!("{}\n\n{}", prompt.system, prompt.user) };
-    let args = words.into_iter().map(|word| word.replace(SYSTEM, &prompt.system).replace(PROMPT, &user)).collect();
+    let args = words.map(|word| word.replace(SYSTEM, &prompt.system).replace(PROMPT, &user)).collect();
     Some((program, args))
 }
 
