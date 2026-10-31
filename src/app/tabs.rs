@@ -11,9 +11,10 @@ use eframe::egui::{self, Color32, CornerRadius, Sense, Ui, pos2, vec2};
 
 use super::{GuardedAction, OpenFile, RubriqueApp};
 use crate::document::preview_selection;
-use crate::document::view::{restore_editor_state, take_editor_state};
+use crate::document::view::{focus_editor, restore_editor_state, take_editor_state};
 use crate::explorer::paths::{absolute_path_text, name_text};
-use crate::icons::{Icon, small_icon_button};
+use crate::explorer::tree::is_markdown_path;
+use crate::icons::{Icon, paint_icon, small_icon_button};
 use crate::media::image_uri;
 use crate::theme::style::page_fill;
 
@@ -29,6 +30,13 @@ const TAB_MAX_WIDTH: f32 = 220.0;
 const ACTIVE_LINE: f32 = 2.0;
 /// Radius of the unsaved-changes dot.
 const DIRTY_DOT: f32 = 3.5;
+/// Width of each half of the Preview | Source switch.
+const SWITCH_SEGMENT: f32 = 84.0;
+const SWITCH_HEIGHT: f32 = 22.0;
+/// Space inside the switch around its two halves.
+const SWITCH_INSET: f32 = 2.0;
+/// Space between the switch and the right edge of the tab strip.
+const SWITCH_MARGIN: f32 = 10.0;
 
 /// Something the user did on the tab strip.
 #[derive(Clone, Copy, Debug)]
@@ -248,7 +256,27 @@ impl RubriqueApp {
         ui.painter().rect_filled(strip, 0, strip_fill);
         let line = ui.visuals().widgets.noninteractive.bg_stroke;
         ui.painter().hline(strip.x_range(), strip.bottom() - line.width / 2.0, line);
-        ui.scope_builder(egui::UiBuilder::new().max_rect(strip), |ui| {
+        // Markdown files get the Preview | Source switch at the right end.
+        let has_switch =
+            matches!(self.open_file, OpenFile::Text { .. }) && self.open_file.path().is_some_and(is_markdown_path);
+        let switch_width = SWITCH_SEGMENT * 2.0 + SWITCH_INSET * 2.0;
+        let tabs_rect =
+            if has_switch { strip.with_max_x(strip.right() - switch_width - SWITCH_MARGIN * 2.0) } else { strip };
+        if has_switch {
+            let switch = egui::Rect::from_center_size(
+                pos2(strip.right() - SWITCH_MARGIN - switch_width / 2.0, strip.center().y),
+                vec2(switch_width, SWITCH_HEIGHT),
+            );
+            if let Some(preview) = preview_switch(ui, switch, self.showing_preview())
+                && preview != self.showing_preview()
+            {
+                self.toggle_preview();
+                if !self.showing_preview() {
+                    focus_editor(ui.ctx());
+                }
+            }
+        }
+        ui.scope_builder(egui::UiBuilder::new().max_rect(tabs_rect), |ui| {
             egui::ScrollArea::horizontal()
                 .id_salt("tab-strip")
                 .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
@@ -289,6 +317,49 @@ impl RubriqueApp {
             None => {}
         }
     }
+}
+
+/// The Preview | Source switch: two halves, the current mode filled like the
+/// page. Returns the mode that was clicked.
+fn preview_switch(ui: &mut Ui, rect: egui::Rect, preview: bool) -> Option<bool> {
+    let visuals = ui.visuals().clone();
+    ui.painter().rect_filled(rect, 7, visuals.widgets.inactive.weak_bg_fill);
+    let mut clicked = None;
+    let halves = [(true, "Preview", Icon::Eye, 0.0), (false, "Source", Icon::Code, SWITCH_SEGMENT)];
+    for (mode, label, icon, offset) in halves {
+        let left = rect.left() + SWITCH_INSET + offset;
+        let half = egui::Rect::from_min_size(
+            pos2(left, rect.top() + SWITCH_INSET),
+            vec2(SWITCH_SEGMENT, rect.height() - SWITCH_INSET * 2.0),
+        );
+        let response = ui.interact(half, ui.scope_id().with(("preview-switch", label)), Sense::click());
+        let selected = mode == preview;
+        let fill = if selected {
+            page_fill(&visuals)
+        } else if response.hovered() {
+            visuals.widgets.hovered.weak_bg_fill
+        } else {
+            Color32::TRANSPARENT
+        };
+        ui.painter().rect_filled(half, 5, fill);
+        let color = if selected { visuals.strong_text_color() } else { visuals.weak_text_color() };
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let galley = ui.painter().layout_no_wrap(label.to_string(), font, color);
+        let icon_size = 14.0;
+        let gap = 5.0;
+        let total = icon_size + gap + galley.size().x;
+        let start = half.center().x - total / 2.0;
+        let accent = if selected { visuals.hyperlink_color } else { color };
+        paint_icon(ui.painter(), icon, pos2(start + icon_size / 2.0, half.center().y), color, accent, fill);
+        ui.painter().galley(pos2(start + icon_size + gap, half.center().y - galley.size().y / 2.0), galley, color);
+        let tip = if mode { "Show the preview (Cmd+E)" } else { "Show the Markdown source (Cmd+E)" };
+        let response = response.on_hover_text(tip);
+        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, selected, label));
+        if response.clicked() {
+            clicked = Some(mode);
+        }
+    }
+    clicked
 }
 
 /// What one tab shows.

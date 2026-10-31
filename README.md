@@ -76,7 +76,7 @@ editor font size, reduced motion and a stronger focus outline.
 | Cmd+K | Ask AI |
 | Cmd+Shift+R | Record a voice memo, or stop |
 | Cmd+Shift+M | Add a note to the selection |
-| Cmd+E | Switch between edit and preview |
+| Cmd+E | Switch between preview and source |
 | Cmd+N | New scratch file |
 
 <details>

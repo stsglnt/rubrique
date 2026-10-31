@@ -35,6 +35,10 @@ pub enum Icon {
     Mic,
     /// Pause a voice memo.
     Pause,
+    /// The rendered preview of a note.
+    Eye,
+    /// The Markdown source of a note.
+    Code,
 }
 
 /// A flat button with `icon` and a hover tip. `active` keeps it highlighted
@@ -181,6 +185,19 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
             let triangle = [at(-1.6, -2.6), at(2.8, 0.0), at(-1.6, 2.6)];
             stroke_path(painter, &round_corners(&triangle, 0.6, true), true, detail);
         }
+        Icon::Eye => {
+            // An almond outline; the pupil is the accent.
+            let mut outline = quadratic(at(-6.5, 0.0), at(0.0, -6.0), at(6.5, 0.0));
+            outline.extend(quadratic(at(6.5, 0.0), at(0.0, 6.0), at(-6.5, 0.0)));
+            stroke_path(painter, &outline, true, line);
+            painter.circle_filled(center, 2.1, accent);
+        }
+        Icon::Code => {
+            // Angle brackets; the slash between them is the accent.
+            stroke_path(painter, &[at(-2.5, -4.0), at(-6.5, 0.0), at(-2.5, 4.0)], false, line);
+            stroke_path(painter, &[at(2.5, -4.0), at(6.5, 0.0), at(2.5, 4.0)], false, line);
+            stroke_path(painter, &[at(1.0, -4.5), at(-1.0, 4.5)], false, detail);
+        }
         Icon::Close => {
             // Two crossing strokes, smaller than the box so they read as a control.
             stroke_path(painter, &[at(-3.5, -3.5), at(3.5, 3.5)], false, line);
@@ -208,6 +225,11 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
 
 /// A small flat button with `icon` (like a tab's close cross), `size` wide
 /// and tall. `label` is what screen readers announce.
+/// Draw `icon` alone (no button) centered on `center`.
+pub fn paint_icon(painter: &Painter, icon: Icon, center: Pos2, line: Color32, accent: Color32, behind: Color32) {
+    paint(painter, icon, center, Colors { line, accent, behind });
+}
+
 pub fn small_icon_button(ui: &mut Ui, icon: Icon, size: f32, label: &str, tip: &str) -> Response {
     let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(egui::Role::Button, true, label));

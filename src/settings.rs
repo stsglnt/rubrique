@@ -13,24 +13,6 @@ use crate::voice::VoiceSettings;
 pub mod accessibility;
 pub mod view;
 
-/// How a Markdown file is shown: as editable text or as the rendered preview.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum MarkdownView {
-    #[default]
-    Edit,
-    Preview,
-}
-
-impl MarkdownView {
-    /// The other mode (what Cmd+E switches to).
-    pub fn toggled(self) -> Self {
-        match self {
-            MarkdownView::Edit => MarkdownView::Preview,
-            MarkdownView::Preview => MarkdownView::Edit,
-        }
-    }
-}
-
 /// Everything rubrique remembers between runs.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Settings {
@@ -42,8 +24,6 @@ pub struct Settings {
     pub open_tabs: Vec<PathBuf>,
     /// "Markdown only" checkbox in the explorer.
     pub markdown_only: bool,
-    /// Last used mode for Markdown files.
-    pub markdown_view: MarkdownView,
     /// Inner window size (width, height) in points.
     pub window_size: Option<(f32, f32)>,
     /// Color theme, or "system" to follow the OS.
@@ -107,8 +87,6 @@ impl Settings {
                 "last_file" => settings.last_file = non_empty_path(value),
                 "tab" => settings.open_tabs.extend(non_empty_path(value)),
                 "markdown_only" => settings.markdown_only = value == "true",
-                // Stored as `preview_mode=true|false` so existing settings files keep working.
-                "preview_mode" => settings.markdown_view = preview_mode_view(value),
                 "window_width" => width = value.parse::<f32>().ok(),
                 "window_height" => height = value.parse::<f32>().ok(),
                 "theme" => settings.theme = ThemeChoice::parse(value),
@@ -142,10 +120,9 @@ impl Settings {
         let folder_lines = path_lines("folder", &self.folders);
         let tab_lines = path_lines("tab", &self.open_tabs);
         format!(
-            "{folder_lines}{tab_lines}last_file={}\nmarkdown_only={}\npreview_mode={}\ntheme={}\nscratch_folder={}\n{window_lines}{}{}{}",
+            "{folder_lines}{tab_lines}last_file={}\nmarkdown_only={}\ntheme={}\nscratch_folder={}\n{window_lines}{}{}{}",
             path_text(&self.last_file),
             self.markdown_only,
-            self.markdown_view == MarkdownView::Preview,
             self.theme.id(),
             path_text(&self.scratch_folder),
             self.accessibility.to_lines(),
@@ -153,11 +130,6 @@ impl Settings {
             self.voice.to_lines(),
         )
     }
-}
-
-/// `preview_mode=true` means the preview; anything else means edit.
-fn preview_mode_view(value: &str) -> MarkdownView {
-    if value == "true" { MarkdownView::Preview } else { MarkdownView::Edit }
 }
 
 /// An empty value means "not set".
@@ -218,7 +190,6 @@ mod tests {
             last_file: Some(PathBuf::from("/home/a/my notes/x=y.md")),
             open_tabs: vec![PathBuf::from("/home/a/my notes/x=y.md"), PathBuf::from("/work/docs/photo.png")],
             markdown_only: true,
-            markdown_view: MarkdownView::Preview,
             window_size: Some((1200.0, 800.5)),
             theme: ThemeChoice::Named("dark".to_string()),
             accessibility: AccessibilitySettings {
@@ -252,14 +223,14 @@ mod tests {
 
     #[test]
     fn round_trip_without_window_size() {
-        let settings = Settings { markdown_view: MarkdownView::Edit, ..Settings::default() };
+        let settings = Settings { markdown_only: true, ..Settings::default() };
         assert_eq!(Settings::parse(&settings.to_text()), settings);
     }
 
     #[test]
-    fn reads_the_preview_mode_flag() {
-        assert_eq!(Settings::parse("preview_mode=true\n").markdown_view, MarkdownView::Preview);
-        assert_eq!(Settings::parse("preview_mode=false\n").markdown_view, MarkdownView::Edit);
+    fn old_preview_mode_line_is_ignored() {
+        // Every file opens in preview now, so the old global mode is not read.
+        assert_eq!(Settings::parse("preview_mode=false\n"), Settings::default());
     }
 
     #[test]
@@ -282,11 +253,5 @@ mod tests {
     fn theme_defaults_to_system() {
         assert_eq!(Settings::parse("").theme, ThemeChoice::System);
         assert_eq!(Settings::parse("theme=light\n").theme, ThemeChoice::Named("light".to_string()));
-    }
-
-    #[test]
-    fn toggling_the_view_switches_between_modes() {
-        assert_eq!(MarkdownView::Edit.toggled(), MarkdownView::Preview);
-        assert_eq!(MarkdownView::Preview.toggled(), MarkdownView::Edit);
     }
 }

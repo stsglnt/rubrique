@@ -8,6 +8,13 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Changed
+
+- Every Markdown file opens in **preview**. A **Preview | Source** switch at
+  the right end of the tab bar (or `Cmd/Ctrl+E`) shows the source, for that
+  tab only. New scratch files open on their source, ready to type. The old
+  status bar Edit / Preview button is gone.
+
 ## [0.4.2] - 2026-10-30
 
 rubrique is now described as what it has become: an AI-assisted Markdown
