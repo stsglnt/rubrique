@@ -8,6 +8,12 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Changed
+
+- **Quitting keeps unsaved edits** as drafts and restores them on the next
+  start, without asking. The files themselves are not touched until you
+  save. If a file changed on disk meanwhile, the merge screen opens.
+
 ## [0.4.2] - 2026-10-30
 
 rubrique is now described as what it has become: an AI-assisted Markdown

@@ -82,9 +82,13 @@ impl RubriqueApp {
             self.switch_to_tab(index);
             return;
         }
-        let Some(file) = self.load_file(path) else {
-            return;
-        };
+        if let Some(file) = self.load_file(path) {
+            self.add_tab(file);
+        }
+    }
+
+    /// Show `file` in a new tab right after the active one.
+    pub(super) fn add_tab(&mut self, file: OpenFile) {
         if self.tabs.is_empty() {
             self.tabs.push(OpenFile::Nothing);
             self.active_tab = 0;

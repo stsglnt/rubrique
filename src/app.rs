@@ -6,6 +6,7 @@ use std::time::Duration;
 use eframe::egui::{self, Context, Key, KeyboardShortcut, Modifiers, RichText, Ui, ViewportCommand};
 
 mod ask;
+mod drafts;
 mod images;
 mod install;
 mod naming;
@@ -152,6 +153,8 @@ enum GuardedAction {
     CloseTab,
     /// Take a root out of the explorer (closes the tabs inside it).
     RemoveRoot(PathBuf),
+    /// Quit; unsaved edits are kept as drafts, so this only asks when
+    /// a draft cannot be written.
     Quit,
 }
 
@@ -220,6 +223,8 @@ pub struct RubriqueApp {
     voice: voice::VoiceState,
     /// Installing missing tools.
     install: install::InstallState,
+    /// Unsaved edits kept between runs.
+    drafts: drafts::DraftState,
 }
 
 /// A note in the making (new, or an existing one being edited).
@@ -283,17 +288,14 @@ impl RubriqueApp {
             note_draft: None,
             voice: voice::VoiceState::default(),
             install: install::InstallState::default(),
+            drafts: drafts::DraftState::default(),
         };
         preview_selection::install(ctx);
         egui_extras::install_image_loaders(ctx);
         app.remember_roots();
-        // Reopen last session's tabs that are still there, then the file asked for.
+        // Reopen last session's tabs (with their unsaved edits), then the file asked for.
         let saved_tabs = std::mem::take(&mut app.settings.open_tabs);
-        for path in saved_tabs {
-            if path.is_file() && app.roots.iter().any(|root| path.starts_with(&root.path)) {
-                app.open_in_tab(path);
-            }
-        }
+        app.reopen_tabs(saved_tabs);
         if let Some(file) = file {
             app.open_in_tab(file);
         }
@@ -323,7 +325,10 @@ impl RubriqueApp {
                 None => self.remove_root_now(&folder),
             },
             GuardedAction::Quit => {
-                if let Some(index) = self.dirty_tab(|_| true) {
+                // Asking is the fallback for when the edits cannot be kept.
+                if !self.keep_drafts()
+                    && let Some(index) = self.dirty_tab(|_| true)
+                {
                     self.switch_to_tab(index);
                     self.pending = Some(GuardedAction::Quit);
                 } else {
@@ -529,8 +534,8 @@ impl RubriqueApp {
         }
 
         if ctx.input(|input| input.viewport().close_requested()) {
-            self.finish_block_edit();
-            if self.quit_confirmed || self.dirty_tab(|_| true).is_none() {
+            if self.quit_confirmed || self.keep_drafts() || self.dirty_tab(|_| true).is_none() {
+                self.pending = None;
                 self.save_settings(ctx);
             } else {
                 ctx.send_viewport_cmd(ViewportCommand::CancelClose);
@@ -1736,10 +1741,10 @@ impl RubriqueApp {
         let proceed = match choice {
             UnsavedChoice::Save => self.save(),
             UnsavedChoice::Discard => {
-                // Back to the saved text, so the next step sees nothing unsaved here.
+                // Back to the file, so the next step sees nothing unsaved here
+                // (and the draft goes with the edits).
                 if let OpenFile::Text { document, preview, .. } = &mut self.open_file {
-                    document.text = document.base_text().to_string();
-                    document.on_text_changed();
+                    document.discard_changes();
                     *preview = None;
                 }
                 true
@@ -1883,6 +1888,7 @@ impl eframe::App for RubriqueApp {
         self.handle_window_events(&ctx);
         self.handle_shortcuts(&ctx);
         self.poll_disk(&ctx);
+        self.poll_drafts(&ctx);
         self.poll_naming();
         self.poll_voice(&ctx);
         self.poll_install(&ctx);
@@ -1936,6 +1942,8 @@ impl eframe::App for RubriqueApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Usually done when the window asked to close; this covers other exits.
+        self.keep_drafts();
         self.remember_tabs();
         self.write_settings();
     }
