@@ -8,6 +8,12 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Fixed
+
+- Selecting text across several list items, task items or quote lines in
+  the preview and then adding a note or asking AI said "Cannot find the
+  selection in the file".
+
 ## [0.4.3] - 2026-10-31
 
 ### Changed
