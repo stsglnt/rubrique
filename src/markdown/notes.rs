@@ -92,8 +92,15 @@ fn match_from(chars: &[(usize, char)], start: usize, wanted: &[char]) -> Option<
                     return None;
                 }
             }
-            while chars.get(index).is_some_and(|(_, c)| c.is_whitespace()) {
+            let mut new_line = false;
+            while let Some((_, c)) = chars.get(index).filter(|(_, c)| c.is_whitespace()) {
+                new_line |= *c == '\n';
                 index += 1;
+            }
+            // A selection across list items or quote lines: the preview does
+            // not show the `- `, `1. `, `- [ ] ` or `> ` that start each line.
+            if new_line {
+                index = skip_line_marker(chars, index);
             }
             continue;
         }
@@ -106,6 +113,42 @@ fn match_from(chars: &[(usize, char)], start: usize, wanted: &[char]) -> Option<
         index += 1;
     }
     Some(index)
+}
+
+/// Skip what starts a Markdown line but is not shown as text: quote marks,
+/// a list marker (`-`, `*`, `+`, `1.`, `1)`) and a task box (`[ ]`, `[x]`),
+/// each with the spaces after it. Returns `index` when there is none.
+fn skip_line_marker(chars: &[(usize, char)], index: usize) -> usize {
+    let at = |i: usize| chars.get(i).map(|(_, c)| *c);
+    let skip_spaces = |mut i: usize| {
+        while at(i).is_some_and(|c| c == ' ' || c == '\t') {
+            i += 1;
+        }
+        i
+    };
+    let mut i = index;
+    while at(i) == Some('>') {
+        i = skip_spaces(i + 1);
+    }
+    let marker_end = match at(i) {
+        Some('-' | '*' | '+') => Some(i + 1),
+        Some(c) if c.is_ascii_digit() => {
+            let mut j = i;
+            while at(j).is_some_and(|c| c.is_ascii_digit()) {
+                j += 1;
+            }
+            matches!(at(j), Some('.' | ')')).then_some(j + 1)
+        }
+        _ => None,
+    };
+    // A marker counts only when a space follows it (`-x` is text).
+    if let Some(end) = marker_end.filter(|&end| at(end).is_some_and(|c| c == ' ' || c == '\t')) {
+        i = skip_spaces(end);
+        if at(i) == Some('[') && matches!(at(i + 1), Some(' ' | 'x' | 'X')) && at(i + 2) == Some(']') {
+            i = skip_spaces(i + 3);
+        }
+    }
+    i
 }
 
 /// Add a note about `quote`, right after the text at `range`.
@@ -153,6 +196,31 @@ mod tests {
         assert_eq!(&source[range], "soon");
         assert_eq!(locate(source, "not there"), None);
         assert_eq!(locate(source, "   "), None);
+    }
+
+    #[test]
+    fn locates_selections_across_list_items() {
+        let bullets = "Intro\n\n- first item\n- second *item*\n- third\n";
+        let range = locate(bullets, "first item second item third").unwrap();
+        assert_eq!(&bullets[range], "first item\n- second *item*\n- third");
+
+        let numbered = "1. alpha one\n2) beta two\n10. gamma\n";
+        let range = locate(numbered, "one beta two gamma").unwrap();
+        assert_eq!(&numbered[range], "one\n2) beta two\n10. gamma");
+
+        let tasks = "- [x] Add themes\n  - [ ] Ship the Windows build\n";
+        let range = locate(tasks, "Add themes Ship the Windows").unwrap();
+        assert_eq!(&tasks[range], "Add themes\n  - [ ] Ship the Windows");
+
+        let quote = "> said once\n> said twice\n";
+        assert!(locate(quote, "once said twice").is_some());
+    }
+
+    #[test]
+    fn a_dash_inside_a_line_is_text() {
+        // Only the start of a line is a marker: "a - b" still needs the dash.
+        assert_eq!(locate("a - b", "a b"), None);
+        assert!(locate("plain\n-x item", "plain x item").is_none());
     }
 
     #[test]
