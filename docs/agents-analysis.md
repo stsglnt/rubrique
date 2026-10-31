@@ -1,6 +1,6 @@
 # Agents in rubrique: analysis
 
-Status: proposal, nothing built yet.
+Status: step 1 (agents in Ask) is built. The rest is a proposal.
 
 Decided:
 
@@ -248,9 +248,19 @@ more important, not less.
 
 Each step is useful on its own and can ship separately.
 
-1. **Agents in Ask.** `AGENT.md` format and loader, Settings → Agents as a
-   list with Open file (like Skills), `@` picker in the Ask bar. One job at a
-   time. Smallest change, tests the format.
+1. **Agents in Ask.** (Done.) `AGENT.md` format and loader, Settings →
+   Agents as a list with Open file (like Skills), `@` picker in the Ask bar.
+   One job at a time. Built with a few choices beyond the plan above:
+   - Agents can also be plain `<name>.md` files, so `~/.claude/agents` works
+     as it is. Those agents run on Claude unless they say otherwise.
+   - `output` and `context` are not read yet. In Ask, an agent works on the
+     selection like any request and its answer goes to the merge screen.
+   - `model` is added as `--model` (after `exec` for Codex), replaces an
+     existing `--model`, or replaces the model in `ollama run`. It applies
+     only when the run uses the agent's own tool. `command` replaces the
+     tool's command fully.
+   - Picking an agent switches the Ask tool to the agent's tool when it is
+     installed. Compare still works: both tools get the agent's personality.
 2. **Agents in notes, with replies.** `@ai-john` in a note, chip and Run on
    the note card. Reply comments in the file, threads in the notes panel,
    **Use as text** and **Apply with AI** on a reply. Unknown handle hint.

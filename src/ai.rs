@@ -7,6 +7,7 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+pub mod agents;
 pub mod naming;
 pub mod run;
 pub mod skills;
@@ -99,6 +100,10 @@ pub struct AiSettings {
     pub skills_folder: Option<PathBuf>,
     /// Also offer Claude Code's skills from `~/.claude/skills`.
     pub use_claude_skills: bool,
+    /// Folder with rubrique's agents; `None` means the default one.
+    pub agents_folder: Option<PathBuf>,
+    /// Also offer Claude Code's agents from `~/.claude/agents`.
+    pub use_claude_agents: bool,
 }
 
 impl Default for AiSettings {
@@ -110,6 +115,8 @@ impl Default for AiSettings {
             allowed_folders: Vec::new(),
             skills_folder: None,
             use_claude_skills: true,
+            agents_folder: None,
+            use_claude_agents: true,
         }
     }
 }
@@ -144,6 +151,8 @@ impl AiSettings {
             "ai_summary_tool" => self.summary_tool = AiTool::from_id(value).or(self.summary_tool),
             "skills_folder" => self.skills_folder = (!value.is_empty()).then(|| PathBuf::from(value)),
             "ai_use_claude_skills" => self.use_claude_skills = value != "false",
+            "agents_folder" => self.agents_folder = (!value.is_empty()).then(|| PathBuf::from(value)),
+            "ai_use_claude_agents" => self.use_claude_agents = value != "false",
             "ai_allowed_folder" => {
                 if !value.is_empty() {
                     self.allowed_folders.push(PathBuf::from(value));
@@ -175,6 +184,12 @@ impl AiSettings {
         if !self.use_claude_skills {
             lines.push_str("ai_use_claude_skills=false\n");
         }
+        if let Some(folder) = &self.agents_folder {
+            let _ = writeln!(lines, "agents_folder={}", folder.display());
+        }
+        if !self.use_claude_agents {
+            lines.push_str("ai_use_claude_agents=false\n");
+        }
         for folder in &self.allowed_folders {
             let _ = writeln!(lines, "ai_allowed_folder={}", folder.display());
         }
@@ -197,6 +212,17 @@ impl AiSettings {
         let mut folders: Vec<PathBuf> = self.skills_folder.clone().or(default_folder).into_iter().collect();
         if self.use_claude_skills {
             folders.extend(skills::claude_skills_folder());
+        }
+        folders
+    }
+
+    /// Folders to read agents from, rubrique's own first, each with the tool
+    /// its agents use when they name none (Claude Code's agents run on Claude).
+    pub fn agent_folders(&self, default_folder: Option<PathBuf>) -> Vec<(PathBuf, Option<AiTool>)> {
+        let mut folders: Vec<_> =
+            self.agents_folder.clone().or(default_folder).into_iter().map(|folder| (folder, None)).collect();
+        if self.use_claude_agents {
+            folders.extend(agents::claude_agents_folder().map(|folder| (folder, Some(AiTool::Claude))));
         }
         folders
     }
@@ -276,6 +302,17 @@ impl Prompt {
     /// Add a skill's instructions to rubrique's own.
     pub fn with_skill(mut self, skill: &skills::Skill) -> Prompt {
         let _ = write!(self.system, "\n\nFollow the \"{}\" skill:\n{}", skill.name, skill.instructions);
+        self
+    }
+
+    /// Add an agent's personality and rules to rubrique's own. rubrique's
+    /// rules about the answer format still come first and win.
+    pub fn with_agent(mut self, agent: &agents::Agent) -> Prompt {
+        let _ = write!(
+            self.system,
+            "\n\nYou are the agent \"{}\" ({}). Work in its way, but keep the answer format above:\n{}",
+            agent.name, agent.description, agent.instructions
+        );
         self
     }
 
@@ -539,6 +576,15 @@ mod tests {
         let with =
             build_prompt("x", "y", AskKind::Rewrite, false).with_skill(&skill.unwrap_or_else(|| panic!("skill")));
         assert!(with.system.ends_with("Follow the \"tidy\" skill:\nUse lists."));
+        let agent =
+            agents::parse_agent("---\nname: John\ndescription: Editor\n---\nBe brief.", "j", PathBuf::new(), None);
+        let with =
+            build_prompt("x", "y", AskKind::Rewrite, false).with_agent(&agent.unwrap_or_else(|| panic!("agent")));
+        assert!(with.system.starts_with("You are helping inside rubrique"));
+        assert!(
+            with.system
+                .ends_with("agent \"John\" (Editor). Work in its way, but keep the answer format above:\nBe brief.")
+        );
     }
 
     #[test]
@@ -585,8 +631,14 @@ mod tests {
 
     #[test]
     fn remembers_allowed_folders() {
-        let mut settings =
-            AiSettings { skills_folder: Some(PathBuf::from("/s")), use_claude_skills: false, ..AiSettings::default() };
+        let mut settings = AiSettings {
+            skills_folder: Some(PathBuf::from("/s")),
+            use_claude_skills: false,
+            agents_folder: Some(PathBuf::from("/agents")),
+            use_claude_agents: false,
+            ..AiSettings::default()
+        };
+        assert_eq!(settings.agent_folders(None), [(PathBuf::from("/agents"), None)]);
         assert_eq!(settings.skill_folders(Some(PathBuf::from("/default"))), [PathBuf::from("/s")]);
         settings.allow(Path::new("/home/a/notes"));
         settings.allow(Path::new("/home/a/notes"));

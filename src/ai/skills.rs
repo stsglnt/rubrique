@@ -64,7 +64,7 @@ pub fn parse_skill(text: &str, folder_name: &str, path: PathBuf) -> Option<Skill
 }
 
 /// Front matter between `---` lines at the top, and the rest.
-fn split_front_matter(text: &str) -> (&str, &str) {
+pub(super) fn split_front_matter(text: &str) -> (&str, &str) {
     let Some(rest) = text.strip_prefix("---\n").or_else(|| text.strip_prefix("---\r\n")) else {
         return ("", text);
     };
@@ -78,7 +78,7 @@ fn split_front_matter(text: &str) -> (&str, &str) {
     ("", text)
 }
 
-fn unquote(value: &str) -> String {
+pub(super) fn unquote(value: &str) -> String {
     let quoted = value.len() >= 2
         && ((value.starts_with('"') && value.ends_with('"')) || (value.starts_with('\'') && value.ends_with('\'')));
     if quoted { value[1..value.len() - 1].to_string() } else { value.to_string() }

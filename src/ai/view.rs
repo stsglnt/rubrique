@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use eframe::egui::{self, Align, Context, Key, Layout, Pos2, RichText, Ui};
 
+use super::agents::{self, Agent, MENTION_PREFIX};
 use super::skills::Skill;
 use super::{AiTool, AskKind, QuickAction, format_elapsed};
 use crate::icons::{Icon, icon_label, icon_text_button};
@@ -33,13 +34,62 @@ pub struct AskBar {
     pub compare: Option<AiTool>,
     /// What the request is about, for the footer ("2 lines selected").
     pub scope: String,
+    /// The agent picked with `@ai-name`, shown as a chip before the field.
+    pub agent: Option<Box<Agent>>,
+    /// Why the request cannot run yet (an unknown agent, say).
+    error: Option<String>,
     /// Give the field focus on the next frame.
     focus: bool,
 }
 
 impl AskBar {
     pub fn new(tool: AiTool, scope: String) -> Self {
-        AskBar { request: String::new(), tool, compare: None, scope, focus: true }
+        AskBar { request: String::new(), tool, compare: None, scope, agent: None, error: None, focus: true }
+    }
+
+    /// Use `agent` for this request, and its tool when it has one that is installed.
+    fn pick_agent(&mut self, agent: &Agent, installed: [bool; 4]) {
+        if let Some(tool) = agent.tool
+            && AiTool::ALL.into_iter().zip(installed).any(|(each, found)| each == tool && found)
+        {
+            self.tool = tool;
+        }
+        self.agent = Some(Box::new(agent.clone()));
+        self.error = None;
+        self.focus = true;
+    }
+
+    /// The `@word` being typed at the start of the field, while no agent is
+    /// picked and no space follows it yet.
+    fn typing_mention(&self) -> Option<&str> {
+        if self.agent.is_some() {
+            return None;
+        }
+        let (word, rest) = agents::leading_mention(&self.request)?;
+        (rest.is_empty() && !self.request.ends_with(char::is_whitespace)).then_some(word)
+    }
+
+    /// Turn a finished `@ai-name ` at the start of the field into the
+    /// agent chip. An unknown `@ai-` name leaves the text and sets an error.
+    fn take_mention(&mut self, agents: &[Agent], installed: [bool; 4]) {
+        self.error = None;
+        if self.agent.is_some() || self.typing_mention().is_some() {
+            return;
+        }
+        let Some((word, rest)) = agents::leading_mention(&self.request) else {
+            return;
+        };
+        if !word.to_lowercase().starts_with(MENTION_PREFIX) {
+            return;
+        }
+        match agents::find_by_mention(agents, word) {
+            Some(agent) => {
+                let rest = rest.to_string();
+                self.pick_agent(agent, installed);
+                self.request = rest;
+            }
+            None => self.error = Some(format!("No agent called @{word}. See Settings → Agents.")),
+        }
     }
 }
 
@@ -57,8 +107,11 @@ pub fn show_ask_bar(
     bar: &mut AskBar,
     installed: [bool; 4],
     skills: &[Skill],
+    agents: &[Agent],
 ) -> Option<AskEvent> {
     let mut event = None;
+    bar.take_mention(agents, installed);
+    let suggestions: Vec<&Agent> = bar.typing_mention().map(|word| agents::matching(agents, word)).unwrap_or_default();
     egui::Area::new(egui::Id::unique("ask-bar")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
         let visuals = ui.visuals().clone();
         egui::Frame::popup(ui.style()).fill(visuals.extreme_bg_color).corner_radius(ASK_RADIUS).inner_margin(10).show(
@@ -68,23 +121,48 @@ pub fn show_ask_bar(
                 ui.spacing_mut().item_spacing.y = 8.0;
                 ui.horizontal(|ui| {
                     icon_label(ui, Icon::Sparkle);
+                    if let Some(agent) = &bar.agent {
+                        let chip = ui
+                            .small_button(format!("{} ×", agent.mention()))
+                            .on_hover_text(format!("{}: {}\nClick to remove", agent.name, agent.description));
+                        if chip.clicked() {
+                            bar.agent = None;
+                            bar.focus = true;
+                        }
+                    }
                     let field_width = ui.available_width() - TOOL_PICKER_WIDTH - ui.spacing().item_spacing.x;
-                    let field = ui.add(
-                        egui::TextEdit::singleline(&mut bar.request)
-                            .hint_text("What should change?")
-                            .desired_width(field_width),
+                    let hint = bar.agent.as_ref().map_or_else(
+                        || "What should change? Type @ for agents".to_string(),
+                        |agent| format!("What should {} do?", agent.name),
                     );
+                    let field =
+                        ui.add(egui::TextEdit::singleline(&mut bar.request).hint_text(hint).desired_width(field_width));
                     if bar.focus {
                         field.request_focus();
                         bar.focus = false;
                     }
                     let entered = field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
-                    if entered && !bar.request.trim().is_empty() {
+                    if entered && let Some(first) = suggestions.first() {
+                        // Enter while typing @… picks the first agent listed.
+                        bar.pick_agent(first, installed);
+                        bar.request.clear();
+                    } else if entered && (bar.error.is_some() || bar.typing_mention().is_some()) {
+                        bar.focus = true;
+                    } else if entered && !bar.request.trim().is_empty() {
                         let request = bar.request.trim().to_string();
                         event = Some(AskEvent::Run { request, kind: AskKind::Rewrite, skill: None });
+                    } else if entered {
+                        bar.focus = true;
                     }
                     tool_picker(ui, &mut bar.tool, installed);
                 });
+                if let Some(picked) = agent_suggestions(ui, bar.typing_mention(), &suggestions) {
+                    bar.pick_agent(picked, installed);
+                    bar.request.clear();
+                }
+                if let Some(error) = &bar.error {
+                    ui.label(RichText::new(error).size(11.5).color(ui.visuals().error_fg_color));
+                }
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     for action in QuickAction::ALL {
@@ -104,6 +182,9 @@ pub fn show_ask_bar(
                     if let Some(skill_event) = skills_menu(ui, &bar.request, skills) {
                         event = Some(skill_event);
                     }
+                    if let Some(picked) = agents_menu(ui, agents) {
+                        bar.pick_agent(picked, installed);
+                    }
                 });
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -121,6 +202,49 @@ pub fn show_ask_bar(
         event = Some(AskEvent::Close);
     }
     event
+}
+
+/// The agents matching the `@word` being typed, one per row; a click picks one.
+fn agent_suggestions<'a>(ui: &mut Ui, typing: Option<&str>, matches: &[&'a Agent]) -> Option<&'a Agent> {
+    let typing = typing?;
+    let mut picked = None;
+    if matches.is_empty() {
+        let text = format!("No agent matches @{typing}. Add agents in Settings → Agents.");
+        ui.label(RichText::new(text).size(11.5).weak());
+        return None;
+    }
+    for (index, agent) in matches.iter().enumerate() {
+        let row = ui.horizontal(|ui| {
+            let mention = RichText::new(agent.mention()).monospace();
+            let clicked = ui.selectable_label(index == 0, mention).clicked();
+            ui.label(&agent.name);
+            ui.add(egui::Label::new(RichText::new(&agent.description).size(11.5).weak()).truncate());
+            clicked
+        });
+        if row.inner {
+            picked = Some(*agent);
+        }
+    }
+    ui.label(RichText::new("Enter picks the first one").size(11.5).weak());
+    picked
+}
+
+/// The Agents… menu: pick an agent for the request.
+fn agents_menu<'a>(ui: &mut Ui, agents: &'a [Agent]) -> Option<&'a Agent> {
+    let mut picked = None;
+    ui.menu_button(RichText::new("Agents…").weak(), |ui| {
+        if agents.is_empty() {
+            ui.label(RichText::new("No agents yet. Add them in Settings → Agents.").weak());
+        }
+        for agent in agents {
+            let label = format!("{}  {}", agent.mention(), agent.name);
+            if ui.button(label).on_hover_text(&agent.description).clicked() {
+                picked = Some(agent);
+                ui.close();
+            }
+        }
+    });
+    picked
 }
 
 /// The Skills… menu: run a skill on the text, with the typed request (if

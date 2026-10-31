@@ -187,6 +187,11 @@ pub fn default_skills_folder() -> Option<PathBuf> {
     config_folder().map(|folder| folder.join("skills"))
 }
 
+/// Default folder for agents (`agents` in the config folder).
+pub fn default_agents_folder() -> Option<PathBuf> {
+    config_folder().map(|folder| folder.join("agents"))
+}
+
 /// Folder for the user's own `*.theme` files (`themes` in the config folder).
 pub fn themes_folder() -> Option<PathBuf> {
     config_folder().map(|folder| folder.join("themes"))

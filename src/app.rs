@@ -13,6 +13,7 @@ mod summary;
 mod tabs;
 mod voice;
 
+use crate::ai::agents::{self, Agent};
 use crate::ai::skills::{self, Skill};
 use crate::ai::{self, AiTool};
 use crate::document::media_view::{MediaEvent, image_pixels, show_image, show_video};
@@ -39,7 +40,9 @@ use crate::media::{MediaKind, format_name, image_uri, media_kind, open_with_syst
 use crate::scratch::{create_scratch, rename_target};
 use crate::settings::accessibility::TextSize;
 use crate::settings::view::{AiInfo, ScratchInfo, SettingsAction, SettingsGroup, VoiceInfo, show_settings};
-use crate::settings::{MarkdownView, Settings, default_scratch_folder, default_skills_folder, themes_folder};
+use crate::settings::{
+    MarkdownView, Settings, default_agents_folder, default_scratch_folder, default_skills_folder, themes_folder,
+};
 use crate::theme::catalog::Themes;
 use crate::theme::style::{apply_accessibility, apply_theme, page_fill};
 use crate::voice::view::set_memo_states;
@@ -197,6 +200,8 @@ pub struct RubriqueApp {
     ask: ask::AskState,
     /// Skills from the skills folders, read when Settings or Ask opens.
     skills: Vec<Skill>,
+    /// Agents from the agents folders, read when Settings or Ask opens.
+    agents: Vec<Agent>,
     /// Hover summaries in the explorer.
     summaries: summary::SummaryState,
     /// Name suggestions for scratch files.
@@ -272,6 +277,7 @@ impl RubriqueApp {
             settings_group: SettingsGroup::default(),
             ask: ask::AskState::default(),
             skills: Vec::new(),
+            agents: Vec::new(),
             summaries: summary::SummaryState::default(),
             naming: naming::NamingState::default(),
             repaint: ctx.clone(),
@@ -556,7 +562,7 @@ impl RubriqueApp {
         }
         if ctx.input_mut(|input| input.consume_shortcut(&ASK)) {
             self.check_ai_tools();
-            self.load_skills();
+            self.load_skills_and_agents();
             self.open_ask(ctx);
         }
         if ctx.input_mut(|input| input.consume_shortcut(&ADD_NOTE)) {
@@ -667,14 +673,83 @@ impl RubriqueApp {
         self.settings_open = !self.settings_open;
         if self.settings_open {
             self.check_ai_tools();
-            self.load_skills();
+            self.load_skills_and_agents();
             self.check_voice_tool();
         }
     }
 
-    /// Read the skills from the skills folders.
-    fn load_skills(&mut self) {
+    /// Read the skills and agents from their folders.
+    fn load_skills_and_agents(&mut self) {
         self.skills = skills::load_skills(&self.settings.ai.skill_folders(default_skills_folder()));
+        self.agents = agents::load_agents(&self.settings.ai.agent_folders(default_agents_folder()));
+    }
+
+    /// A click in Settings → Skills.
+    fn skills_settings_action(&mut self, action: &SettingsAction, skills_folder: Option<&Path>) {
+        match action {
+            SettingsAction::ChooseSkillsFolder => {
+                let mut dialog = rfd::FileDialog::new().set_title("Folder for skills");
+                if let Some(current) = skills_folder {
+                    dialog = dialog.set_directory(current);
+                }
+                if let Some(chosen) = dialog.pick_folder() {
+                    self.settings.ai.skills_folder = Some(chosen);
+                    self.load_skills_and_agents();
+                }
+            }
+            SettingsAction::ResetSkillsFolder => {
+                self.settings.ai.skills_folder = None;
+                self.load_skills_and_agents();
+            }
+            SettingsAction::ReloadSkills => {
+                self.load_skills_and_agents();
+                let count = self.skills.len();
+                self.show_status(format!("Found {count} skills"));
+            }
+            SettingsAction::CreateExampleSkill => match skills_folder.map(skills::create_example) {
+                Some(Ok(path)) => {
+                    self.load_skills_and_agents();
+                    self.show_status(format!("Example skill: {}", path.display()));
+                }
+                Some(Err(error)) => self.show_status(format!("Cannot create the example skill: {error}")),
+                None => {}
+            },
+            _ => {}
+        }
+    }
+
+    /// A click in Settings → Agents.
+    fn agents_settings_action(&mut self, action: &SettingsAction, agents_folder: Option<&Path>) {
+        match action {
+            SettingsAction::ChooseAgentsFolder => {
+                let mut dialog = rfd::FileDialog::new().set_title("Folder for agents");
+                if let Some(current) = agents_folder {
+                    dialog = dialog.set_directory(current);
+                }
+                if let Some(chosen) = dialog.pick_folder() {
+                    self.settings.ai.agents_folder = Some(chosen);
+                    self.load_skills_and_agents();
+                }
+            }
+            SettingsAction::ResetAgentsFolder => {
+                self.settings.ai.agents_folder = None;
+                self.load_skills_and_agents();
+            }
+            SettingsAction::ReloadAgents => {
+                self.load_skills_and_agents();
+                let count = self.agents.len();
+                self.show_status(format!("Found {count} agents"));
+            }
+            SettingsAction::CreateExampleAgent => match agents_folder.map(agents::create_example) {
+                Some(Ok(path)) => {
+                    self.load_skills_and_agents();
+                    self.show_status(format!("Example agent: {}", path.display()));
+                }
+                Some(Err(error)) => self.show_status(format!("Cannot create the example agent: {error}")),
+                None => {}
+            },
+            _ => {}
+        }
     }
 
     /// Look for each AI tool's program on `PATH`.
@@ -711,12 +786,15 @@ impl RubriqueApp {
             is_default: self.settings.scratch_folder.is_none() || scratch_folder == default_scratch_folder(),
         };
         let skills_folder = self.settings.ai.skills_folder.clone().or_else(default_skills_folder);
+        let agents_folder = self.settings.ai.agents_folder.clone().or_else(default_agents_folder);
         let install = self.install_status();
         let ai = AiInfo {
             settings: &mut self.settings.ai,
             found: &self.ai_found,
             skills: &self.skills,
             skills_folder: skills_folder.as_deref(),
+            agents: &self.agents,
+            agents_folder: agents_folder.as_deref(),
             recipes: &self.install.ai,
             local_model: self.install.local_model.as_ref(),
             install: &install,
@@ -769,33 +847,18 @@ impl RubriqueApp {
                 self.settings.ai.allowed_folders.clear();
                 self.show_status("rubrique will ask again before the next AI run in each folder".to_string());
             }
-            SettingsAction::ChooseSkillsFolder => {
-                let mut dialog = rfd::FileDialog::new().set_title("Folder for skills");
-                if let Some(current) = &skills_folder {
-                    dialog = dialog.set_directory(current);
-                }
-                if let Some(chosen) = dialog.pick_folder() {
-                    self.settings.ai.skills_folder = Some(chosen);
-                    self.load_skills();
-                }
+            SettingsAction::ChooseSkillsFolder
+            | SettingsAction::ResetSkillsFolder
+            | SettingsAction::ReloadSkills
+            | SettingsAction::CreateExampleSkill => self.skills_settings_action(&action, skills_folder.as_deref()),
+            SettingsAction::ChooseAgentsFolder
+            | SettingsAction::ResetAgentsFolder
+            | SettingsAction::ReloadAgents
+            | SettingsAction::CreateExampleAgent => self.agents_settings_action(&action, agents_folder.as_deref()),
+            SettingsAction::OpenFile(path) => {
+                self.settings_open = false;
+                self.open_in_tab(path);
             }
-            SettingsAction::ResetSkillsFolder => {
-                self.settings.ai.skills_folder = None;
-                self.load_skills();
-            }
-            SettingsAction::ReloadSkills => {
-                self.load_skills();
-                let count = self.skills.len();
-                self.show_status(format!("Found {count} skills"));
-            }
-            SettingsAction::CreateExampleSkill => match skills_folder.as_deref().map(skills::create_example) {
-                Some(Ok(path)) => {
-                    self.load_skills();
-                    self.show_status(format!("Example skill: {}", path.display()));
-                }
-                Some(Err(error)) => self.show_status(format!("Cannot create the example skill: {error}")),
-                None => {}
-            },
             SettingsAction::VoiceCommandChanged => self.check_voice_tool(),
             SettingsAction::Copy(text) => {
                 ui.ctx().copy_text(text);
@@ -1703,7 +1766,7 @@ impl RubriqueApp {
                 );
                 if ask.clicked() {
                     self.check_ai_tools();
-                    self.load_skills();
+                    self.load_skills_and_agents();
                     self.open_ask(ui.ctx());
                 }
                 if is_markdown || is_html {

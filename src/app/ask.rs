@@ -8,6 +8,7 @@ use std::time::Duration;
 use eframe::egui::{self, Context, Ui, pos2};
 
 use super::{OpenFile, RubriqueApp, char_to_byte};
+use crate::ai::agents::Agent;
 use crate::ai::run::{AiRun, RunEnd};
 use crate::ai::skills::Skill;
 use crate::ai::view::{
@@ -45,6 +46,8 @@ pub(super) struct PendingRun {
     kind: AskKind,
     tool: AiTool,
     skill: Option<Box<Skill>>,
+    /// The agent picked with `@ai-name`: its personality, skills, tool and model.
+    agent: Option<Box<Agent>>,
     /// Set when resolving notes: which ones.
     resolving: Option<Resolving>,
     /// A second tool to run at the same time, to compare.
@@ -176,6 +179,7 @@ impl RubriqueApp {
                 bar,
                 self.ai_found.each_ref().map(Option::is_some),
                 &self.skills,
+                &self.agents,
             );
             match event {
                 Some(AskEvent::Run { request, kind, skill }) => {
@@ -185,6 +189,7 @@ impl RubriqueApp {
                         kind,
                         tool: bar.tool,
                         skill,
+                        agent: bar.agent.clone(),
                         resolving: None,
                         compare: bar.compare.filter(|compare| *compare != bar.tool),
                     };
@@ -217,8 +222,8 @@ impl RubriqueApp {
         if self.settings.ai.is_allowed(&folder) {
             self.start_run(ctx, pending);
         } else {
-            let command = self.settings.ai.command(pending.tool).to_string();
-            let also = pending.compare.map(|tool| (tool, self.settings.ai.command(tool).to_string()));
+            let command = self.run_command(pending.tool, pending.agent.as_deref());
+            let also = pending.compare.map(|tool| (tool, self.run_command(tool, pending.agent.as_deref())));
             let consent = Consent { tool: pending.tool, also, folder, command, remember: true };
             self.ask.consent = Some((consent, pending));
         }
@@ -227,6 +232,15 @@ impl RubriqueApp {
     fn start_run(&mut self, ctx: &Context, pending: PendingRun) {
         let target = &pending.target;
         let mut prompt = ai::build_prompt(&pending.request, &target.text, pending.kind, target.whole_file);
+        if let Some(agent) = &pending.agent {
+            prompt = prompt.with_agent(agent);
+            for name in &agent.skills {
+                match self.skills.iter().find(|skill| skill.name.eq_ignore_ascii_case(name)) {
+                    Some(skill) => prompt = prompt.with_skill(skill),
+                    None => self.show_status(format!("{} uses the skill \"{name}\", which was not found", agent.name)),
+                }
+            }
+        }
         if let Some(skill) = &pending.skill {
             prompt = prompt.with_skill(skill);
         }
@@ -236,12 +250,13 @@ impl RubriqueApp {
         }
         let mut runs = Vec::new();
         for tool in std::iter::once(pending.tool).chain(pending.compare) {
-            let command = self.settings.ai.command(tool).to_string();
+            let command = self.run_command(tool, pending.agent.as_deref());
             if let Some(problem) = ai::check_command(&command) {
                 self.show_status(format!("{} command: {} (Settings → AI)", tool.name(), problem.message()));
                 continue;
             }
-            if self.offer_missing_ai_tool(tool) {
+            let own_command = pending.agent.as_ref().is_some_and(|agent| agent.command.is_some());
+            if !own_command && self.offer_missing_ai_tool(tool) {
                 continue;
             }
             let Some((program, args)) = ai::command_args(&command, &prompt) else {
@@ -256,6 +271,13 @@ impl RubriqueApp {
         if !runs.is_empty() {
             self.ask.job = Some(AiJob { runs, pending });
         }
+    }
+
+    /// The command for `tool`, changed by the agent when there is one (its
+    /// own command, or its model added).
+    fn run_command(&self, tool: AiTool, agent: Option<&Agent>) -> String {
+        let base = self.settings.ai.command(tool);
+        agent.map_or_else(|| base.to_string(), |agent| agent.command_for(tool, base))
     }
 
     /// The output panel of the current run(s).
@@ -358,11 +380,15 @@ impl RubriqueApp {
 impl PendingRun {
     /// What the run is for, as shown in the output panel and merge screen.
     fn label(&self) -> String {
-        match (&self.resolving, &self.skill) {
+        let label = match (&self.resolving, &self.skill) {
             (Some(Resolving::All), _) => "Resolve all notes".to_string(),
             (Some(Resolving::One(quote)), _) => format!("Resolve note: {}", short(quote)),
             (None, Some(skill)) => format!("{} skill", skill.name),
             (None, None) => format!("\u{201c}{}\u{201d}", short(&self.request)),
+        };
+        match &self.agent {
+            Some(agent) => format!("{} · {label}", agent.name),
+            None => label,
         }
     }
 }
@@ -395,6 +421,7 @@ impl RubriqueApp {
             kind: AskKind::Rewrite,
             tool,
             skill: None,
+            agent: None,
             resolving: Some(which),
             compare: None,
         };

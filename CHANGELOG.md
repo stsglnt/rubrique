@@ -8,6 +8,18 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Added
+
+- **Agents**: named helpers with their own personality, skills, AI tool and
+  model. Each one is a folder with an `AGENT.md` file in the agents folder.
+  Claude Code's agents in `~/.claude/agents` work too.
+- In Ask (`Cmd/Ctrl+K`), type `@` to pick an agent, or use **Agents…**.
+  Mentions start with `ai-` (`@ai-editor`), so they never clash with people's
+  names. The agent's personality and skills go with the request, and its
+  model is passed to the tool (`--model`, or the model in `ollama run`).
+- **Settings → Agents**: the agents folder, **Also use Claude's agents**, the
+  list of agents with **Open**, and **Create example agent**.
+
 ## [0.4.2] - 2026-10-30
 
 rubrique is now described as what it has become: an AI-assisted Markdown
