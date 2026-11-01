@@ -1,4 +1,4 @@
-//! rubrique: a fast editor. Agents when you ask. This version reviews every
+//! rubrique: a fast editor. Agentic when you ask. This version reviews every
 //! change in a merge screen first.
 
 mod ai;

@@ -5,7 +5,7 @@ and the GitHub description. Change this page first, then the others.
 
 ## Identity
 
-A fast editor. Agents when you ask.
+A fast editor. Agentic when you ask.
 
 Editor first. Agents second, and only on demand. Nothing else is identity.
 Which agents, which systems, how they connect, whether a key is needed: all
@@ -15,11 +15,11 @@ what it is.
 
 ## One line
 
-A fast editor. Agents when you ask.
+A fast editor. Agentic when you ask.
 
 ## Short description
 
-> A fast editor. Agents when you ask.
+> A fast editor. Agentic when you ask.
 
 ## Pitch
 
@@ -56,9 +56,10 @@ the identity.
 
 ## Words
 
-Use: editor, fast, agent, when you ask, merge screen, review, skill, note.
+Use: editor, fast, agentic, agent, when you ask, merge screen, review, skill,
+note.
 
-Avoid: AI-assisted, assistant, copilot, chat, autopilot, agentic.
+Avoid: AI-assisted, assistant, copilot, chat, autopilot.
 
 ## Do not claim yet
 

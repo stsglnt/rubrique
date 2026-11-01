@@ -10,7 +10,7 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Changed
 
-- rubrique is now described as **a fast editor, with agents when you ask**.
+- rubrique is now described as **a fast editor, agentic when you ask**.
   Markdown is what it does best, not what it is. Which agents, and on which systems, are details that may
   change. The README, the package descriptions and the repository
   description say so; [`docs/positioning.md`](docs/positioning.md) keeps the
