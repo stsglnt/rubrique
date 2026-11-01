@@ -1,10 +1,11 @@
 # <img src="assets/icon/rubrique-128.png" alt="" width="40" align="top"> rubrique
 
-A fast Markdown editor. Agents when you ask.
+A fast editor. Agents when you ask.
 
-Write in a small native editor that saves exactly what you typed. Press
-`Cmd/Ctrl+K` to hand the text to an agent. Review the change, then accept or
-reject it. macOS and Linux, written in Rust.
+Write in a small native editor that saves exactly what you typed: Markdown
+with a live preview, plus plain text, JSON, SQL and XML. Press `Cmd/Ctrl+K`
+to hand the text to an agent. Review the change, then accept or reject it.
+macOS and Linux, written in Rust.
 
 Today the agents are the ones on your computer: Claude Code, Codex, Grok or a
 local model. No API keys, no account.

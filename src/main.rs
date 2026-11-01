@@ -1,4 +1,4 @@
-//! rubrique: a fast Markdown editor. Agents when you ask, every change
+//! rubrique: a fast editor. Agents when you ask, every change
 //! reviewed in a merge screen first.
 
 mod ai;

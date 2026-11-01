@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=rubrique
-GenericName=Markdown Editor
-Comment=A fast Markdown editor. Agents when you ask.
+GenericName=Text Editor
+Comment=A fast editor. Agents when you ask.
 Exec=rubrique %F
 Icon=rubrique
 Terminal=false

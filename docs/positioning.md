@@ -5,25 +5,27 @@ and the GitHub description. Change this page first, then the others.
 
 ## Identity
 
-A fast Markdown editor. Agents when you ask.
+A fast editor. Agents when you ask.
 
 Editor first. Agents second, and only on demand. Nothing else is identity.
 Which agents, which systems, how they connect, whether a key is needed: all
 details of the current version. Keep them out of the headline and the first
-paragraph.
+paragraph. "Markdown" is a detail too: it is what rubrique does best, not
+what it is.
 
 ## One line
 
-A fast Markdown editor. Agents when you ask.
+A fast editor. Agents when you ask.
 
 ## Short description
 
-> A fast Markdown editor. Agents when you ask, every change reviewed.
+> A fast editor. Agents when you ask, every change reviewed.
 
 ## Pitch
 
-Write in a small native editor that saves exactly what you typed. Press
-`Cmd/Ctrl+K` to hand the text to an agent. Review the change, then accept or
+Write in a small native editor that saves exactly what you typed: Markdown
+with a live preview, plus plain text, JSON, SQL and XML. Press `Cmd/Ctrl+K`
+to hand the text to an agent. Review the change, then accept or
 reject it. macOS and Linux, written in Rust.
 
 ## Three things that matter
@@ -36,6 +38,7 @@ reject it. macOS and Linux, written in Rust.
 
 Say these after the identity, in the present tense:
 
+- Files: Markdown with preview, plain text, JSON, SQL, XML; images and videos open in their own view.
 - Agents: Claude Code, Codex, Grok, local model (Ollama or llama.cpp).
 - No API keys, no account.
 - macOS and Linux.
