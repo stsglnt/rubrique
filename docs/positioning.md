@@ -7,9 +7,13 @@ keep saying the same thing.
 
 ## Identity
 
-rubrique is an **agentic Markdown editor**. That is the whole identity.
-Agents do the work on your notes. You ask, review every change, and decide
-what lands in the file.
+rubrique is **a fast Markdown editor with agents on demand**. Two halves,
+in this order:
+
+1. **An editor first.** Small, quick, and it saves exactly what you typed.
+   Open a folder, write, close. No agent is involved until you ask.
+2. **Agentic on demand.** One shortcut away, agents work on your notes. You
+   review every change and decide what lands in the file.
 
 Everything else is a detail of the current version: which agents, which
 systems, how they connect, whether a key is needed. Details change between
@@ -18,20 +22,21 @@ the first paragraph of the README must not depend on them.
 
 ## One line
 
-An agentic Markdown editor.
+A fast Markdown editor with agents on demand.
 
 ## Short description
 
 For GitHub, package managers and app listings:
 
-> An agentic Markdown editor: agents work on your notes, you review every
-> change.
+> A fast Markdown editor with agents on demand: when you ask, agents work on
+> your notes and you review every change.
 
 ## The pitch
 
-Agents do the work on your notes. You ask, review every change in a merge
-screen, and decide what lands in the file. rubrique is a small native app
-for macOS and Linux, written in Rust, and it saves exactly what you typed.
+rubrique is an editor first: small, quick, and it saves exactly what you
+typed. When you want help, agents are one shortcut away. They work on your
+notes, you review every change in a merge screen and decide what lands in
+the file. A native app for macOS and Linux, written in Rust.
 
 ## What "agentic" means here
 
@@ -40,8 +45,9 @@ hands the agent the text, your request and a skill, runs it in the notes
 folder, and brings the answer back into a merge screen. The agent decides how
 to do the work. You decide what lands in the file.
 
-It does not mean rubrique acts without being asked. Agents run only when you
-ask, except local summaries, which can be turned off.
+"On demand" is part of the identity. Agents run only when you ask, except
+local summaries, which can be turned off. Without an agent installed,
+rubrique is still a complete editor.
 
 ## Details of the current version
 
@@ -70,18 +76,19 @@ their control.
 
 ## What sets it apart
 
-1. **Agents do the writing.** Ask one, or two at once and compare.
-2. **Every change is reviewed.** The merge screen is the only way text from
+1. **An editor you would use without the agents.** Fast, native, saves
+   exactly what you typed.
+2. **Agents on demand.** Ask one, or two at once and compare.
+3. **Every change is reviewed.** The merge screen is the only way text from
    an agent reaches a file.
-3. **Nothing hidden.** The Ask bar shows the request, the instructions, the
+4. **Nothing hidden.** The Ask bar shows the request, the instructions, the
    skill, the exact command and the folder before anything runs.
-4. **Your agents, your rules.** Skills in the same format as Claude Code,
+5. **Your agents, your rules.** Skills in the same format as Claude Code,
    and your own commands for each agent.
-5. **A real editor.** Small, native, saves exactly what you typed.
 
 ## Words
 
-Use: agent, agentic editor, merge screen, review, skill, note. Name an agent
+Use: editor, fast, agent, on demand, merge screen, review, skill, note. Name an agent
 when the sentence is about that agent.
 
 Avoid: AI-assisted, assistant, copilot, chat, autopilot, "the AI writes for

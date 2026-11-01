@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=rubrique
-GenericName=Agentic Markdown Editor
-Comment=Agentic Markdown editor: agents work on your notes, you review every change
+GenericName=Markdown Editor
+Comment=A fast Markdown editor with agents on demand
 Exec=rubrique %F
 Icon=rubrique
 Terminal=false

@@ -2,7 +2,7 @@
 name = "rubrique"
 version = "0.4.4"
 edition = "2024"
-description = "An agentic Markdown editor: agents work on your notes, you review every change"
+description = "A fast Markdown editor with agents on demand"
 publish = false
 # Minimum supported Rust (MSRV), matching the README.
 rust-version = "1.95"
@@ -53,7 +53,7 @@ panic = "abort"
 [package.metadata.deb]
 maintainer = "witseko"
 section = "editors"
-extended-description = "An agentic Markdown editor. Agents work on your notes; you review every change in a merge screen before it lands. Runs Claude Code, Codex, Grok or a local model."
+extended-description = "A fast Markdown editor with agents on demand. When you ask, agents work on your notes and you review every change in a merge screen before it lands. Runs Claude Code, Codex, Grok or a local model."
 assets = [
     ["target/release/rubrique", "usr/bin/", "755"],
     ["packaging/linux/rubrique.desktop", "usr/share/applications/", "644"],

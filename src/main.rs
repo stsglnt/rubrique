@@ -1,5 +1,5 @@
-//! rubrique: an agentic Markdown editor. Agents work on the notes, and every
-//! change is reviewed in a merge screen before it lands.
+//! rubrique: a fast Markdown editor with agents on demand. When asked, agents
+//! work on the notes and every change is reviewed in a merge screen first.
 
 mod ai;
 mod app;

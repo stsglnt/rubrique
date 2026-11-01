@@ -10,9 +10,10 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Changed
 
-- rubrique is now described as an **agentic Markdown editor**: agents work
-  on your notes, you review every change before it lands. Which agents, and
-  on which systems, are details that may change. The README, the package
+- rubrique is now described as **a fast Markdown editor with agents on
+  demand**: an editor first, and when you ask, agents work on your notes and
+  you review every change before it lands. Which agents, and on which
+  systems, are details that may change. The README, the package
   descriptions and the repository description say so, and
   [`docs/positioning.md`](docs/positioning.md) keeps the wording in one
   place. Nothing in the app changed.
