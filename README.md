@@ -1,14 +1,13 @@
 # <img src="assets/icon/rubrique-128.png" alt="" width="40" align="top"> rubrique
 
-A fast Markdown editor with agents on demand.
+A fast Markdown editor. Agents when you ask.
 
-rubrique is an editor first: small, quick, and it saves exactly what you
-typed. When you want help, agents are one shortcut away. They work on your
-notes, you review every change in a merge screen and decide what lands in
-the file. A native app for macOS and Linux, written in Rust.
+Write in a small native editor that saves exactly what you typed. Press
+`Cmd/Ctrl+K` to hand the text to an agent. Review the change, then accept or
+reject it. macOS and Linux, written in Rust.
 
-Today it drives the agents already on your computer: Claude Code, Codex, Grok
-or a local model, with no API keys and no account of its own.
+Today the agents are the ones on your computer: Claude Code, Codex, Grok or a
+local model. No API keys, no account.
 
 <img src="docs/screenshots/ai.png" alt="rubrique comparing Claude and Codex answers in the merge screen, with the Ask bar and a hover summary from a local model" width="880">
 
