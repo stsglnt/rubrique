@@ -38,6 +38,9 @@ macOS blocks it on first open: run
   before anything runs.
 - **Skills**: reusable instructions as `SKILL.md` folders, the same format as
   Claude Code skills. Your `~/.claude/skills` work here too.
+- **Named agents**: helpers with their own personality, skills, tool and
+  model. Type `@ai-editor` in Ask to use one. Set them up in Settings →
+  Agents as `AGENT.md` folders; Claude Code agents work too.
 - **Notes**: leave a note on a passage and let the agent resolve it, one at a
   time or all at once.
 - **Hover summaries**: rest the pointer on a file for a two-sentence summary

@@ -8,6 +8,7 @@ use std::time::Duration;
 use eframe::egui::{self, Context, Ui, pos2};
 
 use super::{OpenFile, RubriqueApp, char_to_byte};
+use crate::ai::agents::{Agent, find_skills};
 use crate::ai::preview::{PromptParts, full_prompt, prompt_parts};
 use crate::ai::run::{AiRun, RunEnd};
 use crate::ai::skills::Skill;
@@ -46,6 +47,8 @@ pub(super) struct PendingRun {
     kind: AskKind,
     tool: AiTool,
     skill: Option<Box<Skill>>,
+    /// The agent picked with `@ai-name`: its personality, skills, tool and model.
+    agent: Option<Box<Agent>>,
     /// Set when resolving notes: which ones.
     resolving: Option<Resolving>,
     /// A second tool to run at the same time, to compare.
@@ -175,10 +178,12 @@ impl RubriqueApp {
             let left = page.left() + ((page.width() - ASK_OUTER_WIDTH) / 2.0).max(8.0);
             let folder = run_folder(&target.path);
             let shown = bar.shown();
-            let parts = target_parts(&self.settings.ai, target, &shown, bar.tool, bar.compare);
+            let agent = bar.agent.as_deref();
+            let parts = target_parts(&self.settings.ai, &self.skills, target, &shown, (bar.tool, bar.compare), agent);
             let info = AskBarInfo {
                 installed: self.ai_found.each_ref().map(Option::is_some),
                 skills: &self.skills,
+                agents: &self.agents,
                 parts: &parts,
                 folder: &folder,
                 allowed: self.settings.ai.is_allowed(&folder),
@@ -221,6 +226,7 @@ impl RubriqueApp {
             kind: ask.kind,
             tool: bar.tool,
             skill: ask.skill,
+            agent: bar.agent.clone(),
             resolving: None,
             compare: bar.compare.filter(|compare| *compare != bar.tool),
         };
@@ -245,22 +251,28 @@ impl RubriqueApp {
         if self.settings.ai.is_allowed(&folder) {
             self.start_run(ctx, pending);
         } else {
-            let parts = pending.parts(&self.settings.ai);
+            let parts = pending.parts(&self.settings.ai, &self.skills);
             self.ask.consent = Some((Consent { parts, folder, remember: true }, pending));
         }
     }
 
     fn start_run(&mut self, ctx: &Context, pending: PendingRun) {
         let target = &pending.target;
-        let prompt =
-            full_prompt(&pending.request, &target.text, pending.kind, target.whole_file, pending.skill.as_deref());
+        let agent = pending.agent.as_deref();
+        let (skills, missing) = run_skills(&self.skills, agent, pending.skill.as_deref());
+        let prompt = full_prompt(&pending.request, &target.text, pending.kind, target.whole_file, agent, &skills);
+        if let Some(agent) = agent {
+            for name in missing {
+                self.show_status(format!("{} uses the skill \"{name}\", which was not found", agent.name));
+            }
+        }
         if prompt.is_too_long() {
             self.show_status("The text is too long to send; select a smaller part".to_string());
             return;
         }
         let mut runs = Vec::new();
         for tool in std::iter::once(pending.tool).chain(pending.compare) {
-            let command = self.settings.ai.command(tool).to_string();
+            let command = run_command(&self.settings.ai, tool, pending.agent.as_deref());
             if let Some(problem) = ai::check_command(&command) {
                 self.show_status(format!("{} command: {} (Settings → AI)", tool.name(), problem.message()));
                 continue;
@@ -381,9 +393,9 @@ impl RubriqueApp {
 
 impl PendingRun {
     /// What the run will send, for showing before it starts.
-    fn parts(&self, settings: &AiSettings) -> PromptParts {
+    fn parts(&self, settings: &AiSettings, skills: &[Skill]) -> PromptParts {
         let ask = AskRequest { request: self.request.clone(), kind: self.kind, skill: self.skill.clone() };
-        target_parts(settings, &self.target, &ask, self.tool, self.compare)
+        target_parts(settings, skills, &self.target, &ask, (self.tool, self.compare), self.agent.as_deref())
     }
 
     /// What the run is for, as shown in the output panel and merge screen.
@@ -425,6 +437,7 @@ impl RubriqueApp {
             kind: AskKind::Rewrite,
             tool,
             skill: None,
+            agent: None,
             resolving: Some(which),
             compare: None,
         };
@@ -453,20 +466,38 @@ impl RubriqueApp {
     }
 }
 
-/// What `tool` (and `compare`) get for `ask` about the target's text.
+/// What the tool (and the one to compare with) get for `ask` about the
+/// target's text, with the agent's personality, skills and model.
 fn target_parts(
     settings: &AiSettings,
+    all_skills: &[Skill],
     target: &AskTarget,
     ask: &AskRequest,
-    tool: AiTool,
-    compare: Option<AiTool>,
+    (tool, compare): (AiTool, Option<AiTool>),
+    agent: Option<&Agent>,
 ) -> PromptParts {
-    let commands: Vec<(AiTool, &str)> = std::iter::once(tool)
+    let commands: Vec<(AiTool, String)> = std::iter::once(tool)
         .chain(compare.filter(|compare| *compare != tool))
-        .map(|tool| (tool, settings.command(tool)))
+        .map(|tool| (tool, run_command(settings, tool, agent)))
         .collect();
-    let skill = ask.skill.as_deref();
-    prompt_parts(&ask.request, &target.text, ask.kind, target.whole_file, skill, &commands)
+    let commands: Vec<(AiTool, &str)> = commands.iter().map(|(tool, command)| (*tool, command.as_str())).collect();
+    let (skills, _missing) = run_skills(all_skills, agent, ask.skill.as_deref());
+    prompt_parts(&ask.request, &target.text, ask.kind, target.whole_file, agent, &skills, &commands)
+}
+
+/// The command for `tool`: the agent's own, or the one from Settings with
+/// the agent's model added.
+fn run_command(settings: &AiSettings, tool: AiTool, agent: Option<&Agent>) -> String {
+    let base = settings.command(tool);
+    agent.map_or_else(|| base.to_string(), |agent| agent.command_for(tool, base))
+}
+
+/// The skills a run adds: the agent's, then the one picked in the bar. Also
+/// returns the names of the agent's skills that were not found.
+fn run_skills<'a>(all: &'a [Skill], agent: Option<&Agent>, picked: Option<&'a Skill>) -> (Vec<&'a Skill>, Vec<String>) {
+    let (mut skills, missing) = agent.map(|agent| find_skills(agent, all)).unwrap_or_default();
+    skills.extend(picked);
+    (skills, missing)
 }
 
 /// Tools run in the file's folder, so they can read nearby notes.
