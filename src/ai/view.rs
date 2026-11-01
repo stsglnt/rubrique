@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, Align, Context, Key, Layout, Pos2, Response, RichText, Sense, Ui};
 
+use super::agents::{self, Agent, MENTION_PREFIX};
 use super::preview::PromptParts;
 use super::skills::Skill;
 use super::{AiTool, AskKind, QuickAction, format_elapsed};
@@ -51,13 +52,72 @@ pub struct AskBar {
     pub waiting: Option<AskRequest>,
     /// "Don't ask again for this folder".
     pub remember: bool,
+    /// The agent picked with `@ai-name`, shown as a chip before the field.
+    pub agent: Option<Box<Agent>>,
+    /// Why the request cannot run yet (an unknown agent, say).
+    error: Option<String>,
     /// Give the field focus on the next frame.
     focus: bool,
 }
 
 impl AskBar {
     pub fn new(tool: AiTool, scope: String) -> Self {
-        AskBar { request: String::new(), tool, compare: None, scope, waiting: None, remember: true, focus: true }
+        AskBar {
+            request: String::new(),
+            tool,
+            compare: None,
+            scope,
+            waiting: None,
+            remember: true,
+            agent: None,
+            error: None,
+            focus: true,
+        }
+    }
+
+    /// Use `agent` for this request, and its tool when it has one that is installed.
+    fn pick_agent(&mut self, agent: &Agent, installed: [bool; 4]) {
+        if let Some(tool) = agent.tool
+            && AiTool::ALL.into_iter().zip(installed).any(|(each, found)| each == tool && found)
+        {
+            self.tool = tool;
+        }
+        self.agent = Some(Box::new(agent.clone()));
+        self.error = None;
+        self.focus = true;
+    }
+
+    /// The `@word` being typed at the start of the field, while no agent is
+    /// picked and no space follows it yet.
+    fn typing_mention(&self) -> Option<&str> {
+        if self.agent.is_some() {
+            return None;
+        }
+        let (word, rest) = agents::leading_mention(&self.request)?;
+        (rest.is_empty() && !self.request.ends_with(char::is_whitespace)).then_some(word)
+    }
+
+    /// Turn a finished `@ai-name ` at the start of the field into the
+    /// agent chip. An unknown `@ai-` name leaves the text and sets an error.
+    fn take_mention(&mut self, agents: &[Agent], installed: [bool; 4]) {
+        self.error = None;
+        if self.agent.is_some() || self.typing_mention().is_some() {
+            return;
+        }
+        let Some((word, rest)) = agents::leading_mention(&self.request) else {
+            return;
+        };
+        if !word.to_lowercase().starts_with(MENTION_PREFIX) {
+            return;
+        }
+        match agents::find_by_mention(agents, word) {
+            Some(agent) => {
+                let rest = rest.to_string();
+                self.pick_agent(agent, installed);
+                self.request = rest;
+            }
+            None => self.error = Some(format!("No agent called @{word}. See Settings → Agents.")),
+        }
     }
 
     /// Hold `ask` until the user presses Run (or Enter) in a folder not
@@ -103,6 +163,7 @@ pub struct AskBarInfo<'a> {
     /// Which tools are installed, in [`AiTool::ALL`] order.
     pub installed: [bool; 4],
     pub skills: &'a [Skill],
+    pub agents: &'a [Agent],
     /// What Run would send now (see [`AskBar::shown`]).
     pub parts: &'a PromptParts,
     /// Where the tool runs.
@@ -115,6 +176,9 @@ pub struct AskBarInfo<'a> {
 /// "What Claude gets" is expanded.
 pub fn show_ask_bar(ctx: &Context, at: Pos2, bar: &mut AskBar, info: &AskBarInfo, open: &mut bool) -> Option<AskEvent> {
     let mut event = None;
+    bar.take_mention(info.agents, info.installed);
+    let suggestions: Vec<&Agent> =
+        bar.typing_mention().map(|word| agents::matching(info.agents, word)).unwrap_or_default();
     egui::Area::new(egui::Id::unique("ask-bar")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
         let visuals = ui.visuals().clone();
         egui::Frame::popup(ui.style()).fill(visuals.extreme_bg_color).corner_radius(ASK_RADIUS).inner_margin(10).show(
@@ -124,12 +188,22 @@ pub fn show_ask_bar(ctx: &Context, at: Pos2, bar: &mut AskBar, info: &AskBarInfo
                 ui.spacing_mut().item_spacing.y = 8.0;
                 ui.horizontal(|ui| {
                     icon_label(ui, Icon::Sparkle);
+                    if let Some(agent) = &bar.agent {
+                        let chip = ui
+                            .small_button(format!("{} ×", agent.mention()))
+                            .on_hover_text(format!("{}: {}\nClick to remove", agent.name, agent.description));
+                        if chip.clicked() {
+                            bar.agent = None;
+                            bar.focus = true;
+                        }
+                    }
                     let field_width = ui.available_width() - TOOL_PICKER_WIDTH - ui.spacing().item_spacing.x;
-                    let field = ui.add(
-                        egui::TextEdit::singleline(&mut bar.request)
-                            .hint_text("What should change?")
-                            .desired_width(field_width),
+                    let hint = bar.agent.as_ref().map_or_else(
+                        || "What should change? Type @ for agents".to_string(),
+                        |agent| format!("What should {} do?", agent.name),
                     );
+                    let field =
+                        ui.add(egui::TextEdit::singleline(&mut bar.request).hint_text(hint).desired_width(field_width));
                     if bar.focus {
                         field.request_focus();
                         bar.focus = false;
@@ -138,12 +212,27 @@ pub fn show_ask_bar(ctx: &Context, at: Pos2, bar: &mut AskBar, info: &AskBarInfo
                         bar.waiting = None;
                     }
                     let entered = field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
-                    if entered && let Some(ask) = runnable(bar) {
+                    if entered && let Some(first) = suggestions.first() {
+                        // Enter while typing @… picks the first agent listed.
+                        bar.pick_agent(first, info.installed);
+                        bar.request.clear();
+                    } else if entered && (bar.error.is_some() || bar.typing_mention().is_some()) {
+                        bar.focus = true;
+                    } else if entered && let Some(ask) = runnable(bar) {
                         event = Some(AskEvent::Run { ask, confirmed: true });
+                    } else if entered {
+                        bar.focus = true;
                     }
                     tool_picker(ui, &mut bar.tool, info.installed);
                 });
-                if let Some(action_event) = action_row(ui, bar, info.skills) {
+                if let Some(picked) = agent_suggestions(ui, bar.typing_mention(), &suggestions) {
+                    bar.pick_agent(picked, info.installed);
+                    bar.request.clear();
+                }
+                if let Some(error) = &bar.error {
+                    ui.label(RichText::new(error).size(SMALL_TEXT).color(ui.visuals().error_fg_color));
+                }
+                if let Some(action_event) = action_row(ui, bar, info) {
                     event = Some(action_event);
                 }
                 ui.separator();
@@ -177,8 +266,8 @@ fn runnable(bar: &AskBar) -> Option<AskRequest> {
     (!ask.request.is_empty()).then_some(ask)
 }
 
-/// The quick actions and the Skills… menu.
-fn action_row(ui: &mut Ui, bar: &mut AskBar, skills: &[Skill]) -> Option<AskEvent> {
+/// The quick actions and the Skills… and Agents… menus.
+fn action_row(ui: &mut Ui, bar: &mut AskBar, info: &AskBarInfo) -> Option<AskEvent> {
     let mut event = None;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
@@ -194,11 +283,57 @@ fn action_row(ui: &mut Ui, bar: &mut AskBar, skills: &[Skill]) -> Option<AskEven
                 }
             }
         }
-        if let Some(skill_event) = skills_menu(ui, &bar.request, skills) {
+        if let Some(skill_event) = skills_menu(ui, &bar.request, info.skills) {
             event = Some(skill_event);
+        }
+        if let Some(picked) = agents_menu(ui, info.agents) {
+            bar.pick_agent(picked, info.installed);
         }
     });
     event
+}
+
+/// The agents matching the `@word` being typed, one per row; a click picks one.
+fn agent_suggestions<'a>(ui: &mut Ui, typing: Option<&str>, matches: &[&'a Agent]) -> Option<&'a Agent> {
+    let typing = typing?;
+    let mut picked = None;
+    if matches.is_empty() {
+        let text = format!("No agent matches @{typing}. Add agents in Settings → Agents.");
+        ui.label(RichText::new(text).size(SMALL_TEXT).weak());
+        return None;
+    }
+    for (index, agent) in matches.iter().enumerate() {
+        let row = ui.horizontal(|ui| {
+            let mention = RichText::new(agent.mention()).monospace();
+            let clicked = ui.selectable_label(index == 0, mention).clicked();
+            ui.label(&agent.name);
+            ui.add(egui::Label::new(RichText::new(&agent.description).size(SMALL_TEXT).weak()).truncate());
+            clicked
+        });
+        if row.inner {
+            picked = Some(*agent);
+        }
+    }
+    ui.label(RichText::new("Enter picks the first one").size(SMALL_TEXT).weak());
+    picked
+}
+
+/// The Agents… menu: pick an agent for the request.
+fn agents_menu<'a>(ui: &mut Ui, agents: &'a [Agent]) -> Option<&'a Agent> {
+    let mut picked = None;
+    ui.menu_button(RichText::new("Agents…").weak(), |ui| {
+        if agents.is_empty() {
+            ui.label(RichText::new("No agents yet. Add them in Settings → Agents.").weak());
+        }
+        for agent in agents {
+            let label = format!("{}  {}", agent.mention(), agent.name);
+            if ui.button(label).on_hover_text(&agent.description).clicked() {
+                picked = Some(agent);
+                ui.close();
+            }
+        }
+    });
+    picked
 }
 
 /// "What Claude gets ▸" with the scope at the right; a click opens it.
@@ -308,9 +443,13 @@ pub fn prompt_rows(ui: &mut Ui, parts: &PromptParts, folder: &Path, salt: &str) 
             ui.label(RichText::new(note).size(SMALL_TEXT).weak());
         }
     });
-    row(ui, "Skill", |ui| match &parts.skill {
-        Some(name) => ui.label(name),
+    row(ui, "Agent", |ui| match &parts.agent {
+        Some(agent) => ui.label(agent),
         None => ui.label(RichText::new("None").weak()),
+    });
+    let label = if parts.skills.len() > 1 { "Skills" } else { "Skill" };
+    row(ui, label, |ui| {
+        if parts.skills.is_empty() { ui.label(RichText::new("None").weak()) } else { ui.label(parts.skills.join(", ")) }
     });
     let label = if parts.commands.len() > 1 { "Commands" } else { "Command" };
     fold_row(ui, egui::Id::unique((salt, "command")), label, true, |ui, open| {

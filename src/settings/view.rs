@@ -7,6 +7,7 @@ use eframe::egui::{
     pos2, vec2,
 };
 
+use crate::ai::agents::Agent;
 use crate::ai::skills::Skill;
 use crate::ai::{AiSettings, AiTool, CommandProblem, check_command};
 use crate::install::view::{InstallAction, install_prompt};
@@ -37,6 +38,16 @@ pub enum SettingsAction {
     ReloadSkills,
     /// Write the example skill into the skills folder.
     CreateExampleSkill,
+    /// Pick another agents folder.
+    ChooseAgentsFolder,
+    /// Go back to the default agents folder.
+    ResetAgentsFolder,
+    /// Read the agents folders again.
+    ReloadAgents,
+    /// Write the example agent into the agents folder.
+    CreateExampleAgent,
+    /// Open this file in a tab (and close Settings).
+    OpenFile(PathBuf),
     /// Ask again before the next run in every folder.
     ForgetAllowedFolders,
     /// The transcription command changed, so look for its program again.
@@ -70,6 +81,10 @@ pub struct AiInfo<'a> {
     pub skills: &'a [Skill],
     /// rubrique's skills folder (the chosen one or the default).
     pub skills_folder: Option<&'a Path>,
+    /// Agents found in the agents folders.
+    pub agents: &'a [Agent],
+    /// rubrique's agents folder (the chosen one or the default).
+    pub agents_folder: Option<&'a Path>,
     /// How to install each missing tool, in [`AiTool::ALL`] order.
     pub recipes: &'a [Option<Recipe>; 4],
     /// How to download the local model, when Ollama is there but the model is not.
@@ -119,12 +134,13 @@ pub enum SettingsGroup {
     Files,
     Ai,
     Skills,
+    Agents,
     VoiceMemos,
 }
 
 impl SettingsGroup {
-    pub const ALL: [SettingsGroup; 6] =
-        [Self::Appearance, Self::Accessibility, Self::Files, Self::Ai, Self::Skills, Self::VoiceMemos];
+    pub const ALL: [SettingsGroup; 7] =
+        [Self::Appearance, Self::Accessibility, Self::Files, Self::Ai, Self::Skills, Self::Agents, Self::VoiceMemos];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -133,6 +149,7 @@ impl SettingsGroup {
             Self::Files => "Files",
             Self::Ai => "AI",
             Self::Skills => "Skills",
+            Self::Agents => "Agents",
             Self::VoiceMemos => "Voice memos",
         }
     }
@@ -214,6 +231,10 @@ pub fn show_settings(
                     SettingsGroup::Skills => {
                         let AiInfo { settings, skills, skills_folder, .. } = ai;
                         skills_section(ui, settings, skills, skills_folder)
+                    }
+                    SettingsGroup::Agents => {
+                        let AiInfo { settings, agents, agents_folder, .. } = ai;
+                        agents_section(ui, settings, agents, agents_folder)
                     }
                     SettingsGroup::VoiceMemos => voice_section(ui, voice),
                 };
@@ -449,6 +470,75 @@ fn skills_section(
         }
         if ui.button("Create example skill").on_hover_text("Adds an \"action-items\" skill to the folder").clicked() {
             action = Some(SettingsAction::CreateExampleSkill);
+        }
+    });
+    action
+}
+
+/// Agents: the folder, Claude Code's agents, and every agent found, each
+/// with how to call it and an Open button.
+fn agents_section(
+    ui: &mut Ui,
+    settings: &mut AiSettings,
+    agents: &[Agent],
+    folder: Option<&Path>,
+) -> Option<SettingsAction> {
+    let mut action = None;
+    ui.label(RichText::new("Agents").strong());
+    ui.label(
+        RichText::new(
+            "Named helpers with their own personality, skills and AI tool. Call one in Ask (Cmd+K) \
+             with @ai- and its handle, for example @ai-editor. One folder per agent with an AGENT.md file.",
+        )
+        .weak(),
+    );
+    if let Some(folder) = folder {
+        path_box(ui, folder);
+    }
+    ui.horizontal(|ui| {
+        if ui.button("Change…").clicked() {
+            action = Some(SettingsAction::ChooseAgentsFolder);
+        }
+        if ui.add_enabled(settings.agents_folder.is_some(), egui::Button::new("Use default")).clicked() {
+            action = Some(SettingsAction::ResetAgentsFolder);
+        }
+    });
+    if ui.checkbox(&mut settings.use_claude_agents, "Also use Claude's agents (~/.claude/agents)").changed() {
+        action = Some(SettingsAction::ReloadAgents);
+    }
+    ui.add_space(6.0);
+    ui.separator();
+    if agents.is_empty() {
+        ui.label(RichText::new("No agents found yet.").weak());
+    }
+    for agent in agents {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(agent.mention()).monospace().strong());
+            ui.label(&agent.name);
+            ui.label(RichText::new(format!("· {}", agent.engine())).size(SMALL_SIZE).weak());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.button("Open").on_hover_text(agent.path.display().to_string()).clicked() {
+                    action = Some(SettingsAction::OpenFile(agent.path.clone()));
+                }
+            });
+        });
+        ui.add(egui::Label::new(RichText::new(&agent.description).size(SMALL_SIZE).weak()).wrap());
+        if !agent.skills.is_empty() {
+            let skills = format!("Skills: {}", agent.skills.join(", "));
+            ui.label(RichText::new(skills).size(SMALL_SIZE).weak());
+        }
+    }
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        if ui.button("Reload").clicked() {
+            action = Some(SettingsAction::ReloadAgents);
+        }
+        if ui
+            .button("Create example agent")
+            .on_hover_text("Adds an \"editor\" agent (@ai-editor) to the folder")
+            .clicked()
+        {
+            action = Some(SettingsAction::CreateExampleAgent);
         }
     });
     action

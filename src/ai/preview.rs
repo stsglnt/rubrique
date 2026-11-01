@@ -2,19 +2,31 @@
 //! gets"). Built from the same code that builds the real prompt, so what is
 //! shown is what is sent.
 
+use super::agents::Agent;
 use super::skills::Skill;
 use super::{AiTool, AskKind, Prompt, SYSTEM, build_prompt, display_command, split_command};
 
 /// Longest selection shown as it is; longer text is only counted.
 const SHOWN_TEXT_CHARS: usize = 300;
 
-/// The prompt for `request` about `text`, with the skill's instructions.
-pub fn full_prompt(request: &str, text: &str, kind: AskKind, whole_file: bool, skill: Option<&Skill>) -> Prompt {
-    let prompt = build_prompt(request, text, kind, whole_file);
-    match skill {
-        Some(skill) => prompt.with_skill(skill),
-        None => prompt,
+/// The prompt for `request` about `text`, with the agent's personality and
+/// each skill's instructions, in that order.
+pub fn full_prompt(
+    request: &str,
+    text: &str,
+    kind: AskKind,
+    whole_file: bool,
+    agent: Option<&Agent>,
+    skills: &[&Skill],
+) -> Prompt {
+    let mut prompt = build_prompt(request, text, kind, whole_file);
+    if let Some(agent) = agent {
+        prompt = prompt.with_agent(agent);
     }
+    for skill in skills {
+        prompt = prompt.with_skill(skill);
+    }
+    prompt
 }
 
 /// The parts of a prompt and the commands that will carry it.
@@ -23,10 +35,12 @@ pub struct PromptParts {
     /// The request as sent.
     pub request: String,
     pub text: TextSummary,
-    /// rubrique's instructions, with any skill's.
+    /// rubrique's instructions, with the agent's and any skill's.
     pub system: String,
-    /// The skill's name.
-    pub skill: Option<String>,
+    /// The agent, as "@ai-editor (Editor)".
+    pub agent: Option<String>,
+    /// The skills' names: the agent's, then the one picked.
+    pub skills: Vec<String>,
     /// One per tool (two when comparing).
     pub commands: Vec<ShownCommand>,
     /// Too long to pass as an argument; the run will not start.
@@ -83,10 +97,11 @@ pub fn prompt_parts(
     text: &str,
     kind: AskKind,
     whole_file: bool,
-    skill: Option<&Skill>,
+    agent: Option<&Agent>,
+    skills: &[&Skill],
     commands: &[(AiTool, &str)],
 ) -> PromptParts {
-    let prompt = full_prompt(request, text, kind, whole_file, skill);
+    let prompt = full_prompt(request, text, kind, whole_file, agent, skills);
     let commands = commands
         .iter()
         .map(|(tool, command)| ShownCommand {
@@ -101,7 +116,8 @@ pub fn prompt_parts(
         text: TextSummary::new(text, whole_file),
         too_long: prompt.is_too_long(),
         system: prompt.system,
-        skill: skill.map(|skill| skill.name.clone()),
+        agent: agent.map(|agent| format!("{} ({})", agent.mention(), agent.name)),
+        skills: skills.iter().map(|skill| skill.name.clone()).collect(),
         commands,
     }
 }
@@ -137,7 +153,7 @@ fn plural(count: usize, noun: &str) -> String {
 mod tests {
     use std::path::PathBuf;
 
-    use super::super::{MAX_PROMPT_BYTES, command_args, skills};
+    use super::super::{MAX_PROMPT_BYTES, agents, command_args, skills};
     use super::*;
 
     const CLAUDE: &str = "claude -p --permission-mode plan --append-system-prompt {system} {prompt}";
@@ -146,14 +162,16 @@ mod tests {
     #[test]
     fn parts_match_what_is_sent() {
         let request = " Make it shorter. Keep the meaning and the tone. ";
-        let parts = prompt_parts(request, "Hello there.", AskKind::Rewrite, false, None, &[(AiTool::Claude, CLAUDE)]);
-        let prompt = full_prompt(request, "Hello there.", AskKind::Rewrite, false, None);
+        let parts =
+            prompt_parts(request, "Hello there.", AskKind::Rewrite, false, None, &[], &[(AiTool::Claude, CLAUDE)]);
+        let prompt = full_prompt(request, "Hello there.", AskKind::Rewrite, false, None, &[]);
         assert_eq!(parts.request, "Make it shorter. Keep the meaning and the tone.");
         assert_eq!(parts.system, prompt.system);
         let (_, args) = command_args(CLAUDE, &prompt).unwrap_or_default();
         assert!(args.contains(&parts.system));
         assert_eq!(parts.commands[0].command, display_command(CLAUDE, request));
-        assert_eq!(parts.skill, None);
+        assert_eq!(parts.agent, None);
+        assert_eq!(parts.skills, Vec::<String>::new());
         assert!(!parts.too_long);
         assert_eq!(parts.tools(), "Claude");
     }
@@ -161,15 +179,30 @@ mod tests {
     #[test]
     fn parts_include_the_skill() {
         let skill = skills::parse_skill("---\nname: tidy\n---\nUse lists.", "tidy", PathBuf::new()).unwrap();
-        let parts = prompt_parts("x", "y", AskKind::Rewrite, false, Some(&skill), &[(AiTool::Claude, CLAUDE)]);
-        assert_eq!(parts.skill.as_deref(), Some("tidy"));
+        let parts = prompt_parts("x", "y", AskKind::Rewrite, false, None, &[&skill], &[(AiTool::Claude, CLAUDE)]);
+        assert_eq!(parts.skills, ["tidy"]);
         assert!(parts.system.ends_with("Follow the \"tidy\" skill:\nUse lists."));
+    }
+
+    #[test]
+    fn parts_include_the_agent_before_skills() {
+        let agent =
+            agents::parse_agent("---\nname: Ed\ndescription: Editor\n---\nBe brief.", "ed", PathBuf::new(), None)
+                .unwrap();
+        let skill = skills::parse_skill("---\nname: tidy\n---\nUse lists.", "tidy", PathBuf::new()).unwrap();
+        let parts =
+            prompt_parts("x", "y", AskKind::Rewrite, false, Some(&agent), &[&skill], &[(AiTool::Claude, CLAUDE)]);
+        assert_eq!(parts.agent.as_deref(), Some("@ai-ed (Ed)"));
+        assert_eq!(parts.skills, ["tidy"]);
+        let agent_at = parts.system.find("Be brief.").unwrap();
+        let skill_at = parts.system.find("Use lists.").unwrap();
+        assert!(agent_at < skill_at);
     }
 
     #[test]
     fn compare_shows_both_commands() {
         let commands = [(AiTool::Claude, CLAUDE), (AiTool::Codex, CODEX)];
-        let parts = prompt_parts("why?", "x", AskKind::Answer, true, None, &commands);
+        let parts = prompt_parts("why?", "x", AskKind::Answer, true, None, &[], &commands);
         assert_eq!(parts.tools(), "Claude and Codex");
         assert!(!parts.commands[0].instructions_in_prompt);
         assert!(parts.commands[1].instructions_in_prompt);
@@ -193,7 +226,7 @@ mod tests {
     #[test]
     fn flags_long_text() {
         let text = "a".repeat(MAX_PROMPT_BYTES);
-        assert!(prompt_parts("x", &text, AskKind::Rewrite, true, None, &[]).too_long);
+        assert!(prompt_parts("x", &text, AskKind::Rewrite, true, None, &[], &[]).too_long);
     }
 
     #[test]
