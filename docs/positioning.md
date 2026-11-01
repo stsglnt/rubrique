@@ -19,7 +19,7 @@ A fast editor. Agents when you ask.
 
 ## Short description
 
-> A fast editor. Agents when you ask, every change reviewed.
+> A fast editor. Agents when you ask.
 
 ## Pitch
 
@@ -32,7 +32,8 @@ reject it. macOS and Linux, written in Rust.
 
 1. An editor you would use with no agent installed.
 2. Agents run only when you ask.
-3. Nothing reaches a file without the merge screen.
+3. You decide what lands in the file. How (today: a merge screen) is a
+   detail.
 
 ## Details of this version
 
@@ -40,6 +41,7 @@ Say these after the identity, in the present tense:
 
 - Files: Markdown with preview, plain text, JSON, SQL, XML; images and videos open in their own view.
 - Agents: Claude Code, Codex, Grok, local model (Ollama or llama.cpp).
+- Every change goes through the merge screen.
 - No API keys, no account.
 - macOS and Linux.
 - Transcription with whisper.cpp on the computer.

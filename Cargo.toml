@@ -53,7 +53,7 @@ panic = "abort"
 [package.metadata.deb]
 maintainer = "witseko"
 section = "editors"
-extended-description = "A fast editor for Markdown and other text. Agents when you ask, and every change is reviewed before it lands. Runs Claude Code, Codex, Grok or a local model."
+extended-description = "A fast editor. Agents when you ask. This version edits Markdown and other text, runs Claude Code, Codex, Grok or a local model, and reviews every change in a merge screen."
 assets = [
     ["target/release/rubrique", "usr/bin/", "755"],
     ["packaging/linux/rubrique.desktop", "usr/share/applications/", "644"],
