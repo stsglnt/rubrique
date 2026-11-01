@@ -1,12 +1,13 @@
 # <img src="assets/icon/rubrique-128.png" alt="" width="40" align="top"> rubrique
 
-An AI-assisted Markdown editor for macOS and Linux.
+An agentic Markdown editor for macOS and Linux.
 
-Ask Claude, Codex, Grok or a local model to rewrite, summarize or transcribe
-your notes. Every change waits in a merge screen until you accept it.
-rubrique runs the AI tools you already have: no API keys, no account, no
-cloud of its own. It is a small native app written in Rust, and it saves
-exactly what you typed.
+rubrique puts the agents you already have to work on your notes: Claude Code,
+Codex, Grok or a local model. Ask one agent, or ask two and compare their
+answers. Agents run in your notes folder, read-only, and every change waits
+in a merge screen until you accept it. There are no API keys, no account and
+no cloud of rubrique's own. It is a small native app written in Rust, and it
+saves exactly what you typed.
 
 <img src="docs/screenshots/ai.png" alt="rubrique comparing Claude and Codex answers in the merge screen, with the Ask bar and a hover summary from a local model" width="880">
 
@@ -24,20 +25,26 @@ From 0.5.0 the macOS app is signed and notarized. For 0.4.x and older,
 macOS blocks it on first open: run
 `xattr -dr com.apple.quarantine /Applications/rubrique.app` once.
 
-## AI
+## Agents
 
 - **Ask** (`Cmd/Ctrl+K`): type a request or pick Shorter, Fix grammar, Table,
   Translate or Explain. Works on the selection or the whole file.
-- **Compare**: send one request to two tools and keep the best parts of each.
-- **Review**: every AI change opens in the merge screen first. Nothing is
-  applied until you accept it.
+- **Compare**: send one request to two agents and keep the best parts of each.
+- **Review**: every change an agent makes opens in the merge screen first.
+  Nothing is applied until you accept it.
+- **See what the agent gets**: the Ask bar shows the request, the text,
+  rubrique's instructions, the skill, the exact command and the folder
+  before anything runs.
+- **Skills**: reusable instructions as `SKILL.md` folders, the same format as
+  Claude Code skills. Your `~/.claude/skills` work here too.
+- **Notes**: leave a note on a passage and let the agent resolve it, one at a
+  time or all at once.
 - **Hover summaries**: rest the pointer on a file for a two-sentence summary
   from a local model.
-- **Skills**: reusable instructions as `SKILL.md` folders, the same format as
-  Claude Code skills.
 
-AI runs only when you ask, except local summaries, which you can turn off.
-Cloud tools run only in folders you allowed.
+Agents run only when you ask, except local summaries, which you can turn off.
+The built-in commands are read-only: Claude Code in plan mode, Codex in its
+read-only sandbox. Cloud agents run only in folders you allowed.
 
 ## Writing
 
@@ -45,8 +52,6 @@ Cloud tools run only in folders you allowed.
   **Transcribe** it with whisper.cpp on your computer.
 - **Drop images and audio** on the page: they are copied next to the note
   and linked where the cursor is.
-- **Notes**: select text in the preview and add a note. AI can resolve one
-  note or all of them.
 - **Edit in the preview**: click a block to edit just that block.
 - **Scratch files** (`Cmd/Ctrl+N`): an empty note for later. A local model
   can suggest a name once you save it.
@@ -74,7 +79,7 @@ editor font size, reduced motion and a stronger focus outline.
 
 | Shortcut | Action |
 | --- | --- |
-| Cmd+K | Ask AI |
+| Cmd+K | Ask an agent |
 | Cmd+Shift+R | Record a voice memo, or stop |
 | Cmd+Shift+M | Add a note to the selection |
 | Cmd+E | Switch between preview and source |
@@ -99,19 +104,20 @@ editor font size, reduced motion and a stronger focus outline.
 
 </details>
 
-## Set up the AI tools
+## Set up the agents
 
 rubrique finds these programs on your `PATH`. Install the ones you want:
 
 | Tool | Program | Used for |
 | --- | --- | --- |
-| Claude Code | `claude` | Ask, Compare |
-| Codex | `codex` | Ask, Compare |
-| Grok | `grok` | Ask, Compare |
+| Claude Code | `claude` | Ask, Compare, Notes |
+| Codex | `codex` | Ask, Compare, Notes |
+| Grok | `grok` | Ask, Compare, Notes |
 | Ollama | `ollama` | Local summaries, file names |
 | whisper.cpp | `whisper-cli` | Transcribing memos |
 
 Settings → AI shows which ones were found and lets you change each command.
+When one is missing, rubrique offers its install command and shows it first.
 
 whisper.cpp also needs its model:
 
@@ -162,4 +168,5 @@ rubrique follows [Semantic Versioning](https://semver.org). See
 3. Push to `main`.
 
 The Release workflow builds the packages, tags the version and publishes a
-GitHub release with the changelog notes.
+GitHub release with the changelog notes. The wording used to describe
+rubrique lives in [`docs/positioning.md`](docs/positioning.md).
