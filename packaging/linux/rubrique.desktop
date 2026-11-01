@@ -2,7 +2,7 @@
 Type=Application
 Name=rubrique
 GenericName=Text Editor
-Comment=A fast editor. Agentic when you ask.
+Comment=A fast editor, agentic on demand.
 Exec=rubrique %F
 Icon=rubrique
 Terminal=false

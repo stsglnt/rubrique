@@ -1,6 +1,6 @@
 # <img src="assets/icon/rubrique-128.png" alt="" width="40" align="top"> rubrique
 
-A fast editor. Agentic when you ask.
+A fast editor, agentic on demand.
 
 Write in a small native editor that saves exactly what you typed: Markdown
 with a live preview, plus plain text, JSON, SQL and XML. Press `Cmd/Ctrl+K`
