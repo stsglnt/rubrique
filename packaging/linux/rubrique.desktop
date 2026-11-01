@@ -2,7 +2,7 @@
 Type=Application
 Name=rubrique
 GenericName=Agentic Markdown Editor
-Comment=Markdown editor that works with your agents: Claude Code, Codex, Grok or a local model
+Comment=Agentic Markdown editor: agents work on your notes, you review every change
 Exec=rubrique %F
 Icon=rubrique
 Terminal=false

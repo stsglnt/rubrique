@@ -1,13 +1,13 @@
 # <img src="assets/icon/rubrique-128.png" alt="" width="40" align="top"> rubrique
 
-An agentic Markdown editor for macOS and Linux.
+An agentic Markdown editor.
 
-rubrique puts the agents you already have to work on your notes: Claude Code,
-Codex, Grok or a local model. Ask one agent, or ask two and compare their
-answers. Agents run in your notes folder, read-only, and every change waits
-in a merge screen until you accept it. There are no API keys, no account and
-no cloud of rubrique's own. It is a small native app written in Rust, and it
-saves exactly what you typed.
+Agents do the work on your notes. You ask, review every change in a merge
+screen, and decide what lands in the file. rubrique is a small native app for
+macOS and Linux, written in Rust, and it saves exactly what you typed.
+
+Today it drives the agents already on your computer: Claude Code, Codex, Grok
+or a local model, with no API keys and no account of its own.
 
 <img src="docs/screenshots/ai.png" alt="rubrique comparing Claude and Codex answers in the merge screen, with the Ask bar and a hover summary from a local model" width="880">
 
