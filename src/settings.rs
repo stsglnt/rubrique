@@ -24,6 +24,8 @@ pub struct Settings {
     pub open_tabs: Vec<PathBuf>,
     /// "Markdown only" checkbox in the explorer.
     pub markdown_only: bool,
+    /// Mark files that have notes in the explorer.
+    pub note_marks: bool,
     /// Inner window size (width, height) in points.
     pub window_size: Option<(f32, f32)>,
     /// Color theme, or "system" to follow the OS.
@@ -87,6 +89,7 @@ impl Settings {
                 "last_file" => settings.last_file = non_empty_path(value),
                 "tab" => settings.open_tabs.extend(non_empty_path(value)),
                 "markdown_only" => settings.markdown_only = value == "true",
+                "note_marks" => settings.note_marks = value == "true",
                 "window_width" => width = value.parse::<f32>().ok(),
                 "window_height" => height = value.parse::<f32>().ok(),
                 "theme" => settings.theme = ThemeChoice::parse(value),
@@ -120,9 +123,10 @@ impl Settings {
         let folder_lines = path_lines("folder", &self.folders);
         let tab_lines = path_lines("tab", &self.open_tabs);
         format!(
-            "{folder_lines}{tab_lines}last_file={}\nmarkdown_only={}\ntheme={}\nscratch_folder={}\n{window_lines}{}{}{}",
+            "{folder_lines}{tab_lines}last_file={}\nmarkdown_only={}\nnote_marks={}\ntheme={}\nscratch_folder={}\n{window_lines}{}{}{}",
             path_text(&self.last_file),
             self.markdown_only,
+            self.note_marks,
             self.theme.id(),
             path_text(&self.scratch_folder),
             self.accessibility.to_lines(),
@@ -200,6 +204,7 @@ mod tests {
             last_file: Some(PathBuf::from("/home/a/my notes/x=y.md")),
             open_tabs: vec![PathBuf::from("/home/a/my notes/x=y.md"), PathBuf::from("/work/docs/photo.png")],
             markdown_only: true,
+            note_marks: true,
             window_size: Some((1200.0, 800.5)),
             theme: ThemeChoice::Named("dark".to_string()),
             accessibility: AccessibilitySettings {

@@ -63,6 +63,7 @@ read-only sandbox. Cloud agents run only in folders you allowed.
 ## Files
 
 - **Explorer**: several folders at once. **Markdown only** hides other files.
+  A speech bubble can mark files that have notes (Settings → Files).
 - **Tabs**: each tab keeps its unsaved changes, cursor and undo history.
   Files with unsaved changes are green in the explorer.
 - **Images and videos** open in their own view.

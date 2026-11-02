@@ -14,6 +14,9 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   for every tab with unsaved changes, not only the open one.
 - **Double-click a file in the explorer to rename it.** A single click
   still opens it.
+- **Files with notes get a speech bubble** before their name in the
+  explorer. Turn it on in Settings → Files → **Mark files that have notes**.
+  Files are checked when shown and read again only after they change.
 
 - **Agents**: named helpers with their own personality, skills, AI tool and
   model. Each one is a folder with an `AGENT.md` file in the agents folder.

@@ -39,6 +39,8 @@ pub enum Icon {
     Eye,
     /// The Markdown source of a note.
     Code,
+    /// A file has notes (the explorer's marker).
+    Bubble,
 }
 
 /// A flat button with `icon` and a hover tip. `active` keeps it highlighted
@@ -198,6 +200,7 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
             stroke_path(painter, &[at(2.5, -4.0), at(6.5, 0.0), at(2.5, 4.0)], false, line);
             stroke_path(painter, &[at(1.0, -4.5), at(-1.0, 4.5)], false, detail);
         }
+        Icon::Bubble => paint_bubble(painter, center, line, accent),
         Icon::Close => {
             // Two crossing strokes, smaller than the box so they read as a control.
             stroke_path(painter, &[at(-3.5, -3.5), at(3.5, 3.5)], false, line);
@@ -274,6 +277,16 @@ fn plus_badge(painter: &Painter, center: Pos2, accent: Color32, behind: Color32)
 
 /// A path with round joins and round ends: the line, plus a dot of the
 /// line's width at every point (egui draws plain lines with square ends).
+/// A speech bubble with a short tail at the bottom left; the dot inside is
+/// the accent.
+fn paint_bubble(painter: &Painter, center: Pos2, line: Stroke, accent: Color32) {
+    let at = |x: f32, y: f32| center + vec2(x, y);
+    let outline =
+        [at(-6.0, -5.5), at(6.0, -5.5), at(6.0, 2.5), at(-1.5, 2.5), at(-4.5, 5.5), at(-4.5, 2.5), at(-6.0, 2.5)];
+    stroke_path(painter, &round_corners(&outline, 1.8, true), true, line);
+    painter.circle_filled(at(0.0, -1.5), 1.4, accent);
+}
+
 fn stroke_path(painter: &Painter, points: &[Pos2], closed: bool, stroke: Stroke) {
     let shape = if closed {
         egui::Shape::closed_line(points.to_vec(), stroke)
