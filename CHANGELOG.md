@@ -10,6 +10,10 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Added
 
+- **Click the empty space under the last block** in the preview to type a
+  new block there. It goes to the end of the file after a blank line; an
+  empty box adds nothing.
+
 - **Agents**: named helpers with their own personality, skills, AI tool and
   model. Each one is a folder with an `AGENT.md` file in the agents folder.
   Claude Code's agents in `~/.claude/agents` work too.
