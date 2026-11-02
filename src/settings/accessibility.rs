@@ -74,6 +74,8 @@ pub struct AccessibilitySettings {
     pub reduce_motion: bool,
     /// Thicker outlines on the focused control and text field.
     pub strong_focus: bool,
+    /// Line numbers to the left of the source editor.
+    pub line_numbers: bool,
 }
 
 impl Default for AccessibilitySettings {
@@ -83,6 +85,7 @@ impl Default for AccessibilitySettings {
             editor_font_size: DEFAULT_EDITOR_FONT_SIZE,
             reduce_motion: false,
             strong_focus: false,
+            line_numbers: false,
         }
     }
 }
@@ -99,6 +102,7 @@ impl AccessibilitySettings {
             "editor_font_size" => self.editor_font_size = parse_font_size(value).unwrap_or(self.editor_font_size),
             "reduce_motion" => self.reduce_motion = value == "true",
             "strong_focus" => self.strong_focus = value == "true",
+            "line_numbers" => self.line_numbers = value == "true",
             _ => return false,
         }
         true
@@ -107,11 +111,12 @@ impl AccessibilitySettings {
     /// Settings lines for [`AccessibilitySettings::parse_line`].
     pub fn to_lines(&self) -> String {
         format!(
-            "text_scale={}\neditor_font_size={}\nreduce_motion={}\nstrong_focus={}\n",
+            "text_scale={}\neditor_font_size={}\nreduce_motion={}\nstrong_focus={}\nline_numbers={}\n",
             self.text_size.scale(),
             self.editor_font_size,
             self.reduce_motion,
-            self.strong_focus
+            self.strong_focus,
+            self.line_numbers
         )
     }
 }
@@ -141,8 +146,13 @@ mod tests {
     #[test]
     fn round_trip() {
         for text_size in TextSize::ALL {
-            let settings =
-                AccessibilitySettings { text_size, editor_font_size: 16, reduce_motion: true, strong_focus: true };
+            let settings = AccessibilitySettings {
+                text_size,
+                editor_font_size: 16,
+                reduce_motion: true,
+                strong_focus: true,
+                line_numbers: true,
+            };
             assert_eq!(parse(&settings.to_lines()), settings);
         }
         assert_eq!(parse(&AccessibilitySettings::default().to_lines()), AccessibilitySettings::default());

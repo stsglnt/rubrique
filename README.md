@@ -74,7 +74,7 @@ read-only sandbox. Cloud agents run only in folders you allowed.
 
 Five built-in themes: Light, Dark, Sepia, Midnight, High contrast. Or follow
 the system, or add your own. Settings → Accessibility sets the text size, the
-editor font size, reduced motion and a stronger focus outline.
+editor font size, line numbers, reduced motion and a stronger focus outline.
 
 ## Shortcuts
 
