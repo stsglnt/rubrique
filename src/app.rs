@@ -1151,12 +1151,17 @@ impl RubriqueApp {
     /// Left panel: one file tree per root folder.
     fn explorer(&mut self, ui: &mut Ui) {
         let open_path = self.open_file.path().map(Path::to_path_buf);
+        let dirty_files: Vec<PathBuf> = std::iter::once(&self.open_file)
+            .chain(&self.tabs)
+            .filter(|file| file.is_dirty())
+            .filter_map(|file| file.path().map(Path::to_path_buf))
+            .collect();
         let context = TreeContext {
             root: Path::new(""),
             can_remove_roots: self.roots.len() > 1,
             markdown_only: self.settings.markdown_only,
             open_file: open_path.as_deref(),
-            open_file_dirty: self.open_file.is_dirty(),
+            dirty_files: &dirty_files,
         };
         let action = show_explorer(ui, &mut self.roots, &mut self.settings.markdown_only, &context);
         match action {

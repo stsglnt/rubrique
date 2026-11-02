@@ -10,6 +10,11 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Added
 
+- **Unsaved files are green in the explorer**, with a dot after the name,
+  for every tab with unsaved changes, not only the open one.
+- **Double-click a file in the explorer to rename it.** A single click
+  still opens it.
+
 - **Agents**: named helpers with their own personality, skills, AI tool and
   model. Each one is a folder with an `AGENT.md` file in the agents folder.
   Claude Code's agents in `~/.claude/agents` work too.
