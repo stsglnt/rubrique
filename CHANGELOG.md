@@ -10,6 +10,11 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Added
 
+- **Tables** (`| a | b |` with a `| --- | --- |` row) show as a grid in the
+  preview, in AI answers and in **Open in browser**, with bold headers,
+  striped rows and the column alignment from the colons. A table can follow
+  a paragraph line directly, as on GitHub.
+
 - **Agents**: named helpers with their own personality, skills, AI tool and
   model. Each one is a folder with an `AGENT.md` file in the agents folder.
   Claude Code's agents in `~/.claude/agents` work too.
