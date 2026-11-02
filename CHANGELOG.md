@@ -10,6 +10,15 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Added
 
+- **Find** (`Cmd/Ctrl+F`): a bar at the top right of the page. Matches in
+  the open file are tinted, the current one in the accent color; Enter,
+  Shift+Enter, `Cmd/Ctrl+G` and `Cmd/Ctrl+Shift+G` step through them, and
+  Esc closes the bar with the cursor on the match. **All files** searches
+  every text file under the explorer's folders (hidden entries and files
+  over 1 MB skipped) by name and by content, lists the first 300 hits with
+  their line, and opens the file at the match on a click. Find works on the
+  source, so a preview switches to it.
+
 - **Agents**: named helpers with their own personality, skills, AI tool and
   model. Each one is a folder with an `AGENT.md` file in the agents folder.
   Claude Code's agents in `~/.claude/agents` work too.

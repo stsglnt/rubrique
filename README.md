@@ -69,6 +69,9 @@ read-only sandbox. Cloud agents run only in folders you allowed.
   changes it, you get a side-by-side merge. Quitting keeps unsaved edits
   for the next start without touching the file.
 - **Open in browser** (`Cmd/Ctrl+Shift+B`): the note as a web page.
+- **Find** (`Cmd/Ctrl+F`): matches in the open file are tinted; Enter and
+  Shift+Enter step through them. **All files** searches every text file in
+  the explorer's folders, by name and by content; a click opens the match.
 
 <img src="docs/screenshots/themes.png" alt="One rubrique window shown in five themes: Light, Dark, Sepia, Midnight and High contrast" width="880">
 
@@ -83,6 +86,7 @@ editor font size, reduced motion and a stronger focus outline.
 | Shortcut | Action |
 | --- | --- |
 | Cmd+K | Ask an agent |
+| Cmd+F | Find in this file, or in all files |
 | Cmd+Shift+R | Record a voice memo, or stop |
 | Cmd+Shift+M | Add a note to the selection |
 | Cmd+E | Switch between preview and source |
@@ -101,6 +105,7 @@ editor font size, reduced motion and a stronger focus outline.
 | Cmd+Shift+B | Open in browser |
 | Cmd+Shift+F | Format JSON, SQL or XML |
 | Cmd+Shift+C | Copy the open file's path |
+| Cmd+G / Cmd+Shift+G | Next / previous match |
 | Alt+Up / Alt+Down | Move lines |
 | Cmd+D | Duplicate lines |
 | Cmd+Shift+D | Insert today's date |
