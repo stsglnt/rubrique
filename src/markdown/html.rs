@@ -6,7 +6,7 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use super::blocks::{Block, List};
+use super::blocks::{Block, ColumnAlign, List, Table};
 use super::inlines::{Inline, is_openable_url};
 use crate::theme::palette::{Palette, Rgb};
 
@@ -54,6 +54,9 @@ fn style(palette: &Palette) -> String {
          pre {{ background: var(--code); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; overflow-x: auto; }}\n\
          pre code {{ background: none; padding: 0; }}\n\
          blockquote {{ margin: 1em 0; padding: 0 0 0 16px; border-left: 3px solid var(--accent); color: var(--weak); }}\n\
+         table {{ border-collapse: collapse; margin: 1em 0; }}\n\
+         th, td {{ border: 1px solid var(--border); padding: 4px 10px; text-align: left; }}\n\
+         th {{ background: var(--code); }}\n\
          hr {{ border: 0; border-top: 1px solid var(--border); margin: 2em 0; }}\n\
          li > p {{ margin: 0; }}\n\
          li.task {{ list-style: none; margin-left: -1.4em; }}\n\
@@ -114,6 +117,7 @@ fn write_block(out: &mut String, block: &Block) {
             out.push_str("</blockquote>\n");
         }
         Block::List(list) => write_list(out, list),
+        Block::Table(table) => write_table(out, table),
         Block::ThematicBreak => out.push_str("<hr>\n"),
     }
 }
@@ -154,6 +158,35 @@ fn write_list(out: &mut String, list: &List) {
     }
     out.push_str(close);
     out.push('\n');
+}
+
+fn write_table(out: &mut String, table: &Table) {
+    let align_attr = |column: usize| match table.align.get(column) {
+        Some(ColumnAlign::Center) => " align=\"center\"",
+        Some(ColumnAlign::Right) => " align=\"right\"",
+        _ => "",
+    };
+    out.push_str("<table>\n<thead>\n<tr>");
+    for (column, cell) in table.header.iter().enumerate() {
+        let _ = write!(out, "<th{}>", align_attr(column));
+        write_inlines(out, cell);
+        out.push_str("</th>");
+    }
+    out.push_str("</tr>\n</thead>\n");
+    if !table.rows.is_empty() {
+        out.push_str("<tbody>\n");
+        for row in &table.rows {
+            out.push_str("<tr>");
+            for (column, cell) in row.iter().enumerate() {
+                let _ = write!(out, "<td{}>", align_attr(column));
+                write_inlines(out, cell);
+                out.push_str("</td>");
+            }
+            out.push_str("</tr>\n");
+        }
+        out.push_str("</tbody>\n");
+    }
+    out.push_str("</table>\n");
 }
 
 fn write_inlines(out: &mut String, inlines: &[Inline]) {
@@ -252,6 +285,15 @@ mod tests {
         let mut out = String::new();
         write_blocks(&mut out, &parse_blocks(markdown));
         out
+    }
+
+    #[test]
+    fn tables() {
+        assert_eq!(
+            body("| a | b |\n| - | -: |\n| 1 | *2* |"),
+            "<table>\n<thead>\n<tr><th>a</th><th align=\"right\">b</th></tr>\n</thead>\n\
+             <tbody>\n<tr><td>1</td><td align=\"right\"><em>2</em></td></tr>\n</tbody>\n</table>\n"
+        );
     }
 
     #[test]

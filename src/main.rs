@@ -1,6 +1,5 @@
-//! rubrique: an agentic Markdown editor for macOS and Linux. It runs the
-//! agents already on the computer (Claude Code, Codex, Grok or a local model)
-//! and reviews every change in a merge screen.
+//! rubrique: a fast editor, agentic on demand. This version reviews every
+//! change in a merge screen first.
 
 mod ai;
 mod app;

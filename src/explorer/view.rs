@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, RichText, Ui};
 
-use crate::icons::{Icon, icon_button};
+use super::note_marks::NoteMarks;
+use crate::icons::{Icon, icon_button, paint_icon};
 
 use super::paths::{absolute_path_text, name_text, relative_path_text};
 use super::tree::{Children, FsNode, NodeKind, is_markdown_path};
@@ -58,7 +59,6 @@ fn hovered_id() -> egui::Id {
 
 /// Read-only facts the tree needs while drawing.
 #[derive(Clone, Copy, Debug)]
-#[expect(clippy::struct_excessive_bools, reason = "independent display switches, not a state machine")]
 pub struct TreeContext<'a> {
     /// Root folder of the entry being drawn, for "Copy relative path".
     pub root: &'a Path,
@@ -68,8 +68,11 @@ pub struct TreeContext<'a> {
     pub markdown_only: bool,
     /// File shown in the editor, highlighted in the tree.
     pub open_file: Option<&'a Path>,
-    /// The open file has unsaved changes (shows a dot after its name).
-    pub open_file_dirty: bool,
+    /// Files with unsaved changes, in any tab: shown in green with a dot
+    /// after the name.
+    pub dirty_files: &'a [PathBuf],
+    /// Which files have notes, when the marker is turned on.
+    pub note_marks: Option<&'a NoteMarks>,
     /// Remote folders are turned on (shows "Add remote folder").
     pub remote_enabled: bool,
 }
@@ -173,13 +176,23 @@ fn show_folder(ui: &mut Ui, folder: &mut FsNode, context: &TreeContext, action: 
     }
 }
 
-/// Draw one file row; clicking it asks the app to open the file.
+/// Draw one file row; a click opens the file, a double click renames it.
 fn show_file(ui: &mut Ui, file: &FsNode, context: &TreeContext, action: &mut Option<ExplorerAction>) {
     let is_open = context.open_file == Some(file.path.as_path());
-    let dirty_marker = if is_open && context.open_file_dirty { " •" } else { "" };
+    let dirty = context.dirty_files.iter().any(|path| path == &file.path);
+    let dirty_marker = if dirty { " •" } else { "" };
     let label = format!("{ICON_GAP}{}{}{dirty_marker}", file.name, link_marker(file));
+    let label = if dirty { egui::RichText::new(label).color(UNSAVED_COLOR) } else { egui::RichText::new(label) };
     let response = tree_row(ui, is_open, label);
-    if response.clicked() {
+    if let Some(marks) = context.note_marks
+        && is_markdown_path(&file.path)
+        && marks.has_notes(&file.path)
+    {
+        paint_note_mark(ui, &response);
+    }
+    if response.double_clicked() {
+        *action = Some(ExplorerAction::Rename(file.path.clone()));
+    } else if response.clicked() {
         *action = Some(ExplorerAction::OpenFile(file.path.clone()));
     }
     if response.hovered() {
@@ -193,11 +206,28 @@ fn tree_row(ui: &mut Ui, selected: bool, label: impl Into<egui::WidgetText>) -> 
     ui.add(egui::Button::selectable(selected, label.into()))
 }
 
+/// Name color of a file with unsaved changes: a green that reads on every
+/// built-in theme.
+const UNSAVED_COLOR: egui::Color32 = egui::Color32::from_rgb(0x34, 0xa8, 0x53);
 /// Room at the start of each row for the folder arrow, so file names line
 /// up with folder names.
 const ICON_GAP: &str = "     ";
 /// Width and height of the folder arrow, in points.
 const ARROW_SIZE: f32 = 7.0;
+/// Width of the note marker's icon box, in points.
+const NOTE_MARK_SIZE: f32 = 14.0;
+
+/// Paint the speech bubble in the gap before a file name, where folders
+/// have their arrow.
+fn paint_note_mark(ui: &Ui, response: &egui::Response) {
+    let visuals = ui.visuals();
+    let center = egui::pos2(
+        response.rect.left() + ui.spacing().button_padding.x + NOTE_MARK_SIZE / 2.0,
+        response.rect.center().y,
+    );
+    let behind = if response.hovered() { visuals.widgets.hovered.weak_bg_fill } else { visuals.panel_fill };
+    paint_icon(ui.painter(), Icon::Bubble, center, visuals.weak_text_color(), visuals.hyperlink_color, behind);
+}
 
 /// Paint a small triangle (right when collapsed, down when expanded).
 /// Painted by hand because the default egui fonts have no arrow glyphs.

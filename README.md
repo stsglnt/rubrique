@@ -1,13 +1,14 @@
 # <img src="assets/icon/rubrique-128.png" alt="" width="40" align="top"> rubrique
 
-An agentic Markdown editor for macOS and Linux.
+A fast editor, agentic on demand.
 
-rubrique puts the agents you already have to work on your notes: Claude Code,
-Codex, Grok or a local model. Ask one agent, or ask two and compare their
-answers. Agents run in your notes folder, read-only, and every change waits
-in a merge screen until you accept it. There are no API keys, no account and
-no cloud of rubrique's own. It is a small native app written in Rust, and it
-saves exactly what you typed.
+Write in a small native editor that saves exactly what you typed: Markdown
+with a live preview, plus plain text, JSON, SQL and XML. Press `Cmd/Ctrl+K`
+to hand the text to an agent. Review the change, then accept or reject it.
+macOS and Linux, written in Rust.
+
+Today the agents are the ones on your computer: Claude Code, Codex, Grok or a
+local model. No API keys, no account.
 
 <img src="docs/screenshots/ai.png" alt="rubrique comparing Claude and Codex answers in the merge screen, with the Ask bar and a hover summary from a local model" width="880">
 
@@ -55,7 +56,8 @@ read-only sandbox. Cloud agents run only in folders you allowed.
   **Transcribe** it with whisper.cpp on your computer.
 - **Drop images and audio** on the page: they are copied next to the note
   and linked where the cursor is.
-- **Edit in the preview**: click a block to edit just that block.
+- **Edit in the preview**: click a block to edit just that block, or the
+  empty space under the last one to add a new block.
 - **Scratch files** (`Cmd/Ctrl+N`): an empty note for later. A local model
   can suggest a name once you save it.
 - **Format** (`Cmd/Ctrl+Shift+F`): pretty-print JSON, SQL or XML.
@@ -63,7 +65,9 @@ read-only sandbox. Cloud agents run only in folders you allowed.
 ## Files
 
 - **Explorer**: several folders at once. **Markdown only** hides other files.
+  A speech bubble can mark files that have notes (Settings → Files).
 - **Tabs**: each tab keeps its unsaved changes, cursor and undo history.
+  Files with unsaved changes are green in the explorer.
 - **Images and videos** open in their own view.
 - **Safe saves**: rubrique never reformats your file. If another program
   changes it, you get a side-by-side merge. Quitting keeps unsaved edits
