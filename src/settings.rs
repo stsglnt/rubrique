@@ -6,6 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::ai::AiSettings;
+use crate::remote::settings_text;
 use crate::settings::accessibility::AccessibilitySettings;
 use crate::theme::catalog::ThemeChoice;
 use crate::voice::VoiceSettings;
@@ -38,6 +39,8 @@ pub struct Settings {
     pub ai: AiSettings,
     /// Voice memos: folder, dropped files, transcription.
     pub voice: VoiceSettings,
+    /// Remote folders over SSH.
+    pub remote: crate::remote::RemoteSettings,
 }
 
 impl Settings {
@@ -80,14 +83,15 @@ impl Settings {
             if settings.ai.parse_line(key.trim(), value)
                 || settings.voice.parse_line(key.trim(), value)
                 || settings.accessibility.parse_line(key.trim(), value)
+                || settings.remote.parse_line(key.trim(), value)
             {
                 continue;
             }
             match key.trim() {
-                "folder" => settings.folders.extend(non_empty_path(value)),
+                "folder" => settings.folders.extend(from_settings_text(value)),
                 "last_folder" => legacy_folder = non_empty_path(value),
-                "last_file" => settings.last_file = non_empty_path(value),
-                "tab" => settings.open_tabs.extend(non_empty_path(value)),
+                "last_file" => settings.last_file = from_settings_text(value),
+                "tab" => settings.open_tabs.extend(from_settings_text(value)),
                 "markdown_only" => settings.markdown_only = value == "true",
                 "note_marks" => settings.note_marks = value == "true",
                 "window_width" => width = value.parse::<f32>().ok(),
@@ -110,21 +114,22 @@ impl Settings {
     pub fn to_text(&self) -> String {
         let path_text =
             |path: &Option<PathBuf>| path.as_ref().map(|path| path.display().to_string()).unwrap_or_default();
+        let last_file = self.last_file.as_deref().map(settings_text).unwrap_or_default();
         let window_lines = match self.window_size {
             Some((width, height)) => format!("window_width={width}\nwindow_height={height}\n"),
             None => String::new(),
         };
         let path_lines = |key: &str, paths: &[PathBuf]| {
             paths.iter().fold(String::new(), |mut lines, path| {
-                let _ = writeln!(lines, "{key}={}", path.display());
+                let _ = writeln!(lines, "{key}={}", settings_text(path));
                 lines
             })
         };
         let folder_lines = path_lines("folder", &self.folders);
         let tab_lines = path_lines("tab", &self.open_tabs);
         format!(
-            "{folder_lines}{tab_lines}last_file={}\nmarkdown_only={}\nnote_marks={}\ntheme={}\nscratch_folder={}\n{window_lines}{}{}{}",
-            path_text(&self.last_file),
+            "{folder_lines}{tab_lines}last_file={}\nmarkdown_only={}\nnote_marks={}\ntheme={}\nscratch_folder={}\n{window_lines}{}{}{}{}",
+            last_file,
             self.markdown_only,
             self.note_marks,
             self.theme.id(),
@@ -132,8 +137,15 @@ impl Settings {
             self.accessibility.to_lines(),
             self.ai.to_lines(),
             self.voice.to_lines(),
+            self.remote.to_lines(),
         )
     }
+}
+
+/// A path from the settings file: `ssh://host/path` stands for a remote
+/// folder's mirror path. An empty value means "not set".
+fn from_settings_text(value: &str) -> Option<PathBuf> {
+    crate::remote::from_settings_text(value)
 }
 
 /// An empty value means "not set".
@@ -173,6 +185,11 @@ pub fn default_agents_folder() -> Option<PathBuf> {
     config_folder().map(|folder| folder.join("agents"))
 }
 
+/// Where remote files are mirrored (`remote` in the config folder).
+pub fn remote_mirror_folder() -> Option<PathBuf> {
+    config_folder().map(|folder| folder.join("remote"))
+}
+
 /// Folder for the user's own `*.theme` files (`themes` in the config folder).
 pub fn themes_folder() -> Option<PathBuf> {
     config_folder().map(|folder| folder.join("themes"))
@@ -199,8 +216,9 @@ mod tests {
 
     #[test]
     fn round_trip() {
+        let remote_folder = crate::remote::testing::mirror_of("server", Path::new("/srv/notes"));
         let settings = Settings {
-            folders: vec![PathBuf::from("/home/a/my notes"), PathBuf::from("/work/docs")],
+            folders: vec![PathBuf::from("/home/a/my notes"), PathBuf::from("/work/docs"), remote_folder.clone()],
             last_file: Some(PathBuf::from("/home/a/my notes/x=y.md")),
             open_tabs: vec![PathBuf::from("/home/a/my notes/x=y.md"), PathBuf::from("/work/docs/photo.png")],
             markdown_only: true,
@@ -227,8 +245,14 @@ mod tests {
                 auto_transcribe: false,
                 command: "yap transcribe {audio}".to_string(),
             },
+            remote: crate::remote::RemoteSettings { enabled: true, ssh_program: "/opt/ssh".to_string() },
         };
-        assert_eq!(Settings::parse(&settings.to_text()), settings);
+        let text = settings.to_text();
+        assert!(text.contains("folder=ssh://server/srv/notes\n"), "{text}");
+        assert_eq!(Settings::parse(&text), settings);
+        let with_tab = Settings { open_tabs: vec![remote_folder.join("a.md")], ..Settings::default() };
+        assert!(with_tab.to_text().contains("tab=ssh://server/srv/notes/a.md\n"));
+        assert_eq!(Settings::parse(&with_tab.to_text()), with_tab);
     }
 
     #[test]

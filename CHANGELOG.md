@@ -17,6 +17,19 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Added
 
+- **Remote folders over SSH** (optional, off by default): Settings → Files →
+  **Open folders on other computers over SSH**, then **Add remote folder**
+  in the explorer. rubrique runs the system `ssh` (your `~/.ssh/config`,
+  keys, ssh-agent and jump hosts work; password logins do not) and shares
+  one connection per host. Remote files open, save safely (temp file and
+  rename on the server, permissions and symlinks kept, a cut-off upload
+  changes nothing), and are checked for outside changes every 2 seconds,
+  with the merge screen when both sides changed. Images linked from a remote
+  note are downloaded for the preview, **Find → All files** searches remote
+  folders on the server, and agents run on a local copy of the note's folder.
+  Remote folders and tabs come back at the next start (saved as
+  `ssh://host/path`). Adding images, audio or voice memos to remote notes is
+  not supported yet.
 - **Unsaved files are green in the explorer**, with a dot after the name,
   for every tab with unsaved changes, not only the open one.
 - **Double-click a file in the explorer to rename it.** A single click
