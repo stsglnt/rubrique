@@ -1264,6 +1264,7 @@ impl RubriqueApp {
         }
         match preview_event {
             Some(PreviewEvent::StartEdit(index)) => self.start_block_edit(index),
+            Some(PreviewEvent::StartNewBlock) => self.start_new_block(),
             Some(PreviewEvent::FinishEdit) => self.finish_block_edit(),
             Some(PreviewEvent::Code { index, action }) => self.code_block_action(ui.ctx(), index, action),
             Some(PreviewEvent::Memo(action)) => self.memo_action(ui.ctx(), action),
@@ -1373,6 +1374,17 @@ impl RubriqueApp {
         self.block_edit = Some(BlockEdit { index, range, text: text.to_string(), focused: false });
     }
 
+    /// Edit an empty new block at the end of the file. The blank line before
+    /// it is added when the edit is finished with text in it.
+    fn start_new_block(&mut self) {
+        self.finish_block_edit();
+        let OpenFile::Text { document, preview: Some(blocks), .. } = &self.open_file else {
+            return;
+        };
+        let end = document.text.len();
+        self.block_edit = Some(BlockEdit { index: blocks.len(), range: end..end, text: String::new(), focused: false });
+    }
+
     /// Put the edited block's Markdown into the document.
     fn finish_block_edit(&mut self) {
         self.finish_block_edit_with_shift();
@@ -1388,9 +1400,14 @@ impl RubriqueApp {
         if document.text.get(edit.range.clone()) == Some(edit.text.as_str()) {
             return None;
         }
+        let appended = edit.range.is_empty() && edit.range.start == document.text.len();
+        let new_text = if appended { appended_block(&document.text, &edit.text) } else { edit.text };
+        if new_text.is_empty() {
+            return None;
+        }
         let old_length = isize::try_from(edit.range.len()).unwrap_or(0);
-        let new_length = isize::try_from(edit.text.len()).unwrap_or(0);
-        document.text.replace_range(edit.range.clone(), &edit.text);
+        let new_length = isize::try_from(new_text.len()).unwrap_or(0);
+        document.text.replace_range(edit.range.clone(), &new_text);
         document.on_text_changed();
         *preview = None;
         Some((edit.range.start, new_length - old_length))
@@ -1827,6 +1844,24 @@ impl RubriqueApp {
 }
 
 /// `value` moved by `delta` bytes.
+/// A block typed at the end of the file: a blank line before it unless the
+/// file is empty or already ends with one, and a line break after it. Empty
+/// input gives an empty string, so nothing is added.
+fn appended_block(text: &str, block: &str) -> String {
+    let block = block.trim_end();
+    if block.trim().is_empty() {
+        return String::new();
+    }
+    let separator = if text.is_empty() || text.ends_with("\n\n") {
+        ""
+    } else if text.ends_with('\n') {
+        "\n"
+    } else {
+        "\n\n"
+    };
+    format!("{separator}{block}\n")
+}
+
 fn shift(value: usize, delta: isize) -> usize {
     value.saturating_add_signed(delta)
 }
@@ -2016,5 +2051,19 @@ impl eframe::App for RubriqueApp {
         self.keep_drafts();
         self.remember_tabs();
         self.write_settings();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::appended_block;
+
+    #[test]
+    fn appended_block_gets_a_blank_line_before_it() {
+        assert_eq!(appended_block("", "New"), "New\n");
+        assert_eq!(appended_block("Old", "New"), "\n\nNew\n");
+        assert_eq!(appended_block("Old\n", "New"), "\nNew\n");
+        assert_eq!(appended_block("Old\n\n", "New\n"), "New\n");
+        assert_eq!(appended_block("Old\n", "  \n"), "");
     }
 }

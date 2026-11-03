@@ -55,7 +55,8 @@ read-only sandbox. Cloud agents run only in folders you allowed.
   **Transcribe** it with whisper.cpp on your computer.
 - **Drop images and audio** on the page: they are copied next to the note
   and linked where the cursor is.
-- **Edit in the preview**: click a block to edit just that block.
+- **Edit in the preview**: click a block to edit just that block, or the
+  empty space under the last one to add a new block.
 - **Scratch files** (`Cmd/Ctrl+N`): an empty note for later. A local model
   can suggest a name once you save it.
 - **Format** (`Cmd/Ctrl+Shift+F`): pretty-print JSON, SQL or XML.

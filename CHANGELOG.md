@@ -17,6 +17,9 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Added
 
+- **Click the empty space under the last block** in the preview to type a
+  new block there. It goes to the end of the file after a blank line; an
+  empty box adds nothing.
 - **Tables** (`| a | b |` with a `| --- | --- |` row) show as a grid in the
   preview, in AI answers and in **Open in browser**, with bold headers,
   striped rows and the column alignment from the colons. A table can follow
