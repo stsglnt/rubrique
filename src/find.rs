@@ -251,7 +251,7 @@ mod tests {
         let capped = search_files(&roots, "milk", 1);
         assert_eq!(capped.hits.len(), 1);
         assert!(capped.truncated);
-        assert!(search_files(&roots, "  ", 10).hits.is_empty());
+        assert_eq!(search_files(&roots, "  ", 10).hits, []);
     }
 
     #[test]
