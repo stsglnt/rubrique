@@ -13,6 +13,7 @@ use crate::ai::{AiSettings, AiTool, CommandProblem, check_command};
 use crate::install::view::{InstallAction, install_prompt};
 use crate::install::{InstallStatus, Recipe};
 use crate::settings::accessibility::{AccessibilitySettings, EDITOR_FONT_SIZES, TextSize};
+use crate::settings::privacy::{LOCK_AFTER_CHOICES, PrivacySettings};
 use crate::theme::catalog::{ThemeChoice, Themes};
 use crate::theme::palette::{Base, Palette, Rgb, Theme};
 use crate::voice::VoiceSettings;
@@ -56,6 +57,22 @@ pub enum SettingsAction {
     Copy(String),
     /// A click in an install prompt.
     Install(InstallAction),
+    /// Choose the scratch password, which turns encryption on.
+    SetScratchPassword,
+    /// Choose a new scratch password and seal every scratch with it.
+    ChangeScratchPassword,
+    /// Enter the scratch password for this session.
+    UnlockScratches,
+    /// Forget the scratch password until it is entered again.
+    LockScratches,
+    /// Encrypt the plain scratches already in the folder.
+    EncryptExistingScratches,
+    /// Choose a PIN, or a new one.
+    SetPin,
+    /// Turn the PIN off (asks for it first).
+    RemovePin,
+    /// Lock the window now.
+    LockNow,
     Close,
 }
 
@@ -90,6 +107,14 @@ pub struct AiInfo<'a> {
     /// How to download the local model, when Ollama is there but the model is not.
     pub local_model: Option<&'a Recipe>,
     pub install: &'a InstallStatus,
+}
+
+/// Scratch encryption and the PIN, for the Privacy section.
+#[derive(Debug)]
+pub struct PrivacyInfo<'a> {
+    pub settings: &'a mut PrivacySettings,
+    /// The scratch password was entered in this session.
+    pub unlocked: bool,
 }
 
 /// Where scratch files go, for the Scratches section.
@@ -132,6 +157,7 @@ pub enum SettingsGroup {
     Appearance,
     Accessibility,
     Files,
+    Privacy,
     Ai,
     Skills,
     Agents,
@@ -139,14 +165,23 @@ pub enum SettingsGroup {
 }
 
 impl SettingsGroup {
-    pub const ALL: [SettingsGroup; 7] =
-        [Self::Appearance, Self::Accessibility, Self::Files, Self::Ai, Self::Skills, Self::Agents, Self::VoiceMemos];
+    pub const ALL: [SettingsGroup; 8] = [
+        Self::Appearance,
+        Self::Accessibility,
+        Self::Files,
+        Self::Privacy,
+        Self::Ai,
+        Self::Skills,
+        Self::Agents,
+        Self::VoiceMemos,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Appearance => "Appearance",
             Self::Accessibility => "Accessibility",
             Self::Files => "Files",
+            Self::Privacy => "Privacy",
             Self::Ai => "AI",
             Self::Skills => "Skills",
             Self::Agents => "Agents",
@@ -184,6 +219,7 @@ pub fn show_settings(
     themes_folder: Option<&Path>,
     accessibility: &mut AccessibilitySettings,
     scratch: ScratchInfo,
+    privacy: PrivacyInfo,
     ai: AiInfo,
     voice: VoiceInfo,
 ) -> Option<SettingsAction> {
@@ -227,6 +263,7 @@ pub fn show_settings(
                     SettingsGroup::Appearance => appearance_section(ui, themes, current, themes_folder),
                     SettingsGroup::Accessibility => accessibility_section(ui, accessibility),
                     SettingsGroup::Files => files_section(ui, scratch),
+                    SettingsGroup::Privacy => privacy_section(ui, privacy),
                     SettingsGroup::Ai => ai_section(ui, ai),
                     SettingsGroup::Skills => {
                         let AiInfo { settings, skills, skills_folder, .. } = ai;
@@ -341,6 +378,107 @@ fn files_section(ui: &mut Ui, scratch: ScratchInfo) -> Option<SettingsAction> {
         if ui.add_enabled(!scratch.is_default, egui::Button::new("Use default")).clicked() {
             action = Some(SettingsAction::ResetScratchFolder);
         }
+    });
+    action
+}
+
+/// Width of the "Lock after" drop-down.
+const LOCK_PICKER_WIDTH: f32 = 120.0;
+
+/// "Off", "1 minute", "15 minutes".
+fn lock_after_label(minutes: u32) -> String {
+    match minutes {
+        0 => "Off".to_string(),
+        1 => "1 minute".to_string(),
+        _ => format!("{minutes} minutes"),
+    }
+}
+
+/// A button that can be greyed out; true when clicked.
+fn enabled_button(ui: &mut Ui, label: &str, enabled: bool) -> bool {
+    ui.add_enabled(enabled, egui::Button::new(label)).clicked()
+}
+
+/// Privacy: encrypted scratches and the app PIN.
+fn privacy_section(ui: &mut Ui, privacy: PrivacyInfo) -> Option<SettingsAction> {
+    let PrivacyInfo { settings, unlocked } = privacy;
+    let mut action = None;
+
+    ui.label(RichText::new("Encrypted scratches").strong());
+    ui.label(
+        RichText::new(
+            "New scratch files are saved encrypted with a password. They open only after you enter it, \
+             and AI tools never see them.",
+        )
+        .weak(),
+    );
+    let has_password = settings.vault.is_some();
+    let mut encrypt = settings.encrypt_scratches;
+    if ui.checkbox(&mut encrypt, "Encrypt new scratches").changed() {
+        if encrypt && !has_password {
+            action = Some(SettingsAction::SetScratchPassword);
+        } else {
+            settings.encrypt_scratches = encrypt;
+        }
+    }
+    if has_password {
+        ui.label(if unlocked { "Unlocked for this session." } else { "Locked: enter the password to read them." });
+        ui.horizontal_wrapped(|ui| {
+            let (label, toggle) = if unlocked {
+                ("Lock scratches", SettingsAction::LockScratches)
+            } else {
+                ("Unlock…", SettingsAction::UnlockScratches)
+            };
+            if enabled_button(ui, label, true) {
+                action = Some(toggle);
+            }
+            if enabled_button(ui, "Change password…", true) {
+                action = Some(SettingsAction::ChangeScratchPassword);
+            }
+            if enabled_button(ui, "Encrypt existing scratches", unlocked) {
+                action = Some(SettingsAction::EncryptExistingScratches);
+            }
+        });
+        ui.label(
+            RichText::new("If you forget the password, encrypted scratches cannot be read. There is no way back.")
+                .color(ui.visuals().warn_fg_color),
+        );
+    }
+
+    ui.add_space(12.0);
+    ui.label(RichText::new("App PIN").strong());
+    ui.label(
+        RichText::new(
+            "Ask for a PIN when rubrique opens and after it sits idle. The PIN locks the window only: \
+             it does not encrypt your files.",
+        )
+        .weak(),
+    );
+    let has_pin = settings.pin_hash.is_some();
+    ui.horizontal_wrapped(|ui| {
+        if enabled_button(ui, if has_pin { "Change PIN…" } else { "Set PIN…" }, true) {
+            action = Some(SettingsAction::SetPin);
+        }
+        if enabled_button(ui, "Remove PIN…", has_pin) {
+            action = Some(SettingsAction::RemovePin);
+        }
+        if enabled_button(ui, "Lock app now", has_pin) {
+            action = Some(SettingsAction::LockNow);
+        }
+    });
+    ui.add_enabled_ui(has_pin, |ui| {
+        ui.horizontal(|ui| {
+            ui.label("Lock after");
+            egui::ComboBox::from_id_salt("privacy-lock-after")
+                .selected_text(lock_after_label(settings.lock_after_minutes))
+                .width(LOCK_PICKER_WIDTH)
+                .show_ui(ui, |ui| {
+                    for minutes in LOCK_AFTER_CHOICES {
+                        ui.selectable_value(&mut settings.lock_after_minutes, minutes, lock_after_label(minutes));
+                    }
+                });
+            ui.label(RichText::new("without use").weak());
+        });
     });
     action
 }

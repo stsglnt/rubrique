@@ -50,6 +50,9 @@ impl RubriqueApp {
         let OpenFile::Text { document, .. } = &self.open_file else {
             return;
         };
+        if document.is_encrypted() {
+            return;
+        }
         let path = document.path.clone();
         let in_scratches = self.settings.scratch_folder_or_default().as_deref() == path.parent();
         let nameable = in_scratches
@@ -67,6 +70,9 @@ impl RubriqueApp {
 
     /// Ask the summaries tool for a name for `path`, from `text`.
     pub(super) fn start_naming(&mut self, path: PathBuf, text: &str, for_dialog: bool) -> Result<(), String> {
+        if crate::crypto::file_is_encrypted(&path) {
+            return Err(super::privacy::AI_OFF_MESSAGE.to_string());
+        }
         let Some(tool) = self.settings.ai.summary_tool else {
             return Err("Pick a tool under Summaries use in Settings → AI".to_string());
         };

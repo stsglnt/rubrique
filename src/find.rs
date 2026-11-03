@@ -151,7 +151,8 @@ fn search_folder(folder: &Path, root: &Path, query: &str, limit: usize, results:
         let Ok(text) = fs::read_to_string(&path) else {
             continue;
         };
-        if text.contains('\0') {
+        // Encrypted scratches: only their names are searched.
+        if text.contains('\0') || crate::crypto::is_encrypted(text.as_bytes()) {
             continue;
         }
         results.files_searched += 1;
@@ -251,5 +252,15 @@ mod tests {
         assert_eq!(capped.hits.len(), 1);
         assert!(capped.truncated);
         assert!(search_files(&roots, "  ", 10).hits.is_empty());
+    }
+
+    #[test]
+    fn skips_the_text_of_encrypted_scratches() {
+        let folder = TempFolder::new();
+        // Real ones are rarely valid UTF-8; this one is, to show the check.
+        folder.write("secret-milk.md", "RUBRIQUE-ENC1\nmilk");
+        let results = search_files(&[folder.path().to_path_buf()], "milk", 10);
+        assert_eq!(results.hits.len(), 1);
+        assert_eq!(results.hits[0].kind, HitKind::Name);
     }
 }

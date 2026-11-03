@@ -5,8 +5,11 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
+
+use crate::crypto::{self, DecryptError, Vault};
 
 const BYTES_PER_MEGABYTE: u64 = 1024 * 1024;
 
@@ -28,6 +31,8 @@ pub enum Unsupported {
     Binary,
     /// Text in another encoding (or not text at all).
     NotUtf8,
+    /// An encrypted scratch sealed with another password.
+    WrongPassword,
 }
 
 impl Unsupported {
@@ -41,6 +46,9 @@ impl Unsupported {
             ),
             Unsupported::Binary => "Binary file.".to_string(),
             Unsupported::NotUtf8 => "Not a UTF-8 text file.".to_string(),
+            Unsupported::WrongPassword => {
+                "Encrypted with another password. It cannot be read with the current one.".to_string()
+            }
         }
     }
 }
@@ -52,6 +60,8 @@ pub enum Opened {
     Text(Document),
     /// A file the editor refuses to show, and why.
     Unsupported(Unsupported),
+    /// An encrypted scratch, and no password was entered yet.
+    Locked,
 }
 
 /// What changed on disk since we last loaded or saved.
@@ -84,20 +94,37 @@ pub struct Document {
     /// Changes on every edit and is never shared with another document, so
     /// a draft written at one revision is known to be up to date.
     revision: u64,
+    /// The key when the file is stored encrypted; `None` for plain files.
+    vault: Option<Arc<Vault>>,
 }
 
 impl Document {
     /// Read a file, refusing ones that are too large, binary, or not UTF-8.
+    /// An encrypted file is opened with `vault`, or comes back
+    /// [`Opened::Locked`] without one.
     ///
     /// # Errors
     ///
     /// Fails when the file cannot be read (missing, permissions, ...).
-    pub fn open(path: &Path) -> io::Result<Opened> {
+    pub fn open(path: &Path, vault: Option<&Arc<Vault>>) -> io::Result<Opened> {
         let metadata = fs::metadata(path)?;
         if metadata.len() > MAX_FILE_BYTES {
             return Ok(Opened::Unsupported(Unsupported::TooLarge(metadata.len())));
         }
-        let bytes = fs::read(path)?;
+        let mut bytes = fs::read(path)?;
+        let mut sealed_with = None;
+        if crypto::is_encrypted(&bytes) {
+            let Some(vault) = vault else {
+                return Ok(Opened::Locked);
+            };
+            bytes = match vault.decrypt(&bytes) {
+                Ok(plain) => plain,
+                Err(DecryptError::WrongKey | DecryptError::Corrupt) => {
+                    return Ok(Opened::Unsupported(Unsupported::WrongPassword));
+                }
+            };
+            sealed_with = Some(Arc::clone(vault));
+        }
         let text = match text_from_bytes(bytes) {
             Ok(text) => text,
             Err(reason) => return Ok(Opened::Unsupported(reason)),
@@ -110,12 +137,13 @@ impl Document {
             dirty: false,
             disk_modified: metadata.modified().ok(),
             revision: next_revision(),
+            vault: sealed_with,
         }))
     }
 
     /// A buffer for a file that no longer exists: `text` with unsaved
     /// changes over `base_text`. Saving creates the file again.
-    pub fn missing(path: &Path, text: String, base_text: String) -> Self {
+    pub fn missing(path: &Path, text: String, base_text: String, vault: Option<Arc<Vault>>) -> Self {
         Document {
             path: path.to_path_buf(),
             text,
@@ -124,7 +152,25 @@ impl Document {
             disk_modified: None,
             base_text,
             revision: next_revision(),
+            vault,
         }
+    }
+
+    /// The file is stored encrypted.
+    pub fn is_encrypted(&self) -> bool {
+        self.vault.is_some()
+    }
+
+    /// The key the file is stored with, for its draft.
+    pub fn vault(&self) -> Option<&Vault> {
+        self.vault.as_deref()
+    }
+
+    /// Store the file with `vault` from now on (`None`: plain). The caller
+    /// wrote the file that way already, so only the modification time is new.
+    pub fn set_vault(&mut self, vault: Option<Arc<Vault>>) {
+        self.vault = vault;
+        self.disk_modified = modified_time(&self.path);
     }
 
     /// Put back edits kept from an earlier session: `text` in the buffer,
@@ -173,7 +219,10 @@ impl Document {
         // Write through symlinks: renaming over the link itself would replace
         // the link with a plain file.
         let target = fs::canonicalize(&self.path).unwrap_or_else(|_| self.path.clone());
-        write_atomically(&target, self.text.as_bytes())?;
+        match &self.vault {
+            Some(vault) => write_atomically(&target, &vault.encrypt(self.text.as_bytes()))?,
+            None => write_atomically(&target, self.text.as_bytes())?,
+        }
         self.saved_hash = Some(hash_text(&self.text));
         self.dirty = false;
         self.disk_modified = modified_time(&self.path);
@@ -192,7 +241,12 @@ impl Document {
     ///
     /// Fails when the file cannot be read or is no longer UTF-8 text.
     pub fn read_disk_text(&self) -> io::Result<String> {
-        let bytes = fs::read(&self.path)?;
+        let mut bytes = fs::read(&self.path)?;
+        if let Some(vault) = &self.vault {
+            bytes = vault.decrypt(&bytes).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "the file is no longer encrypted with this password")
+            })?;
+        }
         text_from_bytes(bytes).map_err(|reason| io::Error::new(io::ErrorKind::InvalidData, reason.describe()))
     }
 
@@ -291,9 +345,9 @@ mod tests {
     use crate::test_support::TempFolder;
 
     fn open_text(path: &Path) -> Document {
-        match Document::open(path).unwrap() {
+        match Document::open(path, None).unwrap() {
             Opened::Text(document) => document,
-            Opened::Unsupported(reason) => panic!("unexpected {reason:?}"),
+            other => panic!("unexpected {other:?}"),
         }
     }
 
@@ -372,9 +426,9 @@ mod tests {
             (latin1, Unsupported::NotUtf8),
             (large, Unsupported::TooLarge(MAX_FILE_BYTES + 1)),
         ] {
-            match Document::open(&path).unwrap() {
+            match Document::open(&path, None).unwrap() {
                 Opened::Unsupported(reason) => assert_eq!(reason, expected),
-                Opened::Text(_) => panic!("{} should not open", path.display()),
+                _ => panic!("{} should not open", path.display()),
             }
         }
     }
@@ -451,7 +505,7 @@ mod tests {
     fn missing_document_is_dirty_until_saved_or_discarded() {
         let temp = TempFolder::new();
         let path = temp.path().join("gone.md");
-        let mut document = Document::missing(&path, "mine".to_string(), "old".to_string());
+        let mut document = Document::missing(&path, "mine".to_string(), "old".to_string(), None);
         assert!(document.is_dirty());
         assert_eq!(document.disk_state(), DiskState::Unchanged, "already known to be missing");
 
@@ -459,5 +513,48 @@ mod tests {
         assert!(!document.is_dirty());
         assert_eq!(document.text, "old");
         assert!(!path.exists(), "discarding never writes the file");
+    }
+
+    #[test]
+    fn encrypted_files_open_save_and_lock() {
+        let temp = TempFolder::new();
+        let (vault, _) = Vault::create("pw");
+        let vault = Arc::new(vault);
+        let path = temp.path().join("secret.md");
+        fs::write(&path, vault.encrypt(b"hidden words")).unwrap();
+
+        assert!(matches!(Document::open(&path, None).unwrap(), Opened::Locked));
+        let (other, _) = Vault::create("pw");
+        assert!(matches!(
+            Document::open(&path, Some(&Arc::new(other))).unwrap(),
+            Opened::Unsupported(Unsupported::WrongPassword)
+        ));
+
+        let Opened::Text(mut document) = Document::open(&path, Some(&vault)).unwrap() else {
+            panic!("should open");
+        };
+        assert!(document.is_encrypted());
+        assert_eq!(document.text, "hidden words");
+        document.text.push_str(" and more");
+        document.on_text_changed();
+        document.save().unwrap();
+        let bytes = fs::read(&path).unwrap();
+        assert!(crypto::is_encrypted(&bytes));
+        assert!(!bytes.windows(6).any(|window| window == b"hidden"));
+        assert_eq!(document.read_disk_text().unwrap(), "hidden words and more");
+        assert_eq!(document.disk_state(), DiskState::Unchanged);
+    }
+
+    #[test]
+    fn plain_files_ignore_the_vault() {
+        let temp = TempFolder::new();
+        let path = temp.write("plain.md", "text");
+        let vault = Arc::new(Vault::create("pw").0);
+        let Opened::Text(mut document) = Document::open(&path, Some(&vault)).unwrap() else {
+            panic!("should open");
+        };
+        assert!(!document.is_encrypted());
+        document.save().unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"text");
     }
 }
