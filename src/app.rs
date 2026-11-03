@@ -7,6 +7,7 @@ use eframe::egui::{self, Context, Key, KeyboardShortcut, Modifiers, RichText, Ui
 
 mod ask;
 mod drafts;
+mod find;
 mod images;
 mod install;
 mod naming;
@@ -84,6 +85,9 @@ const ASK: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::K);
 const RECORD: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::R);
 const COPY_OPEN_PATH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::C);
 const CLOSE_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::W);
+const FIND: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::F);
+const FIND_NEXT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::G);
+const FIND_PREVIOUS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::G);
 const NEXT_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::Tab);
 const PREVIOUS_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::SHIFT), Key::Tab);
 const TEXT_LARGER: [KeyboardShortcut; 2] =
@@ -198,6 +202,8 @@ pub struct RubriqueApp {
     themes: Themes,
     /// The settings panel is shown on the right.
     settings_open: bool,
+    /// The find bar, while it is open.
+    find: Option<find::FindBar>,
     /// The group open in the settings window.
     settings_group: SettingsGroup,
     /// Ask bar, AI run and its output panel.
@@ -280,6 +286,7 @@ impl RubriqueApp {
             window_title: String::new(),
             themes,
             settings_open: false,
+            find: None,
             settings_group: SettingsGroup::default(),
             ask: ask::AskState::default(),
             skills: Vec::new(),
@@ -572,6 +579,10 @@ impl RubriqueApp {
             self.load_skills_and_agents();
             self.open_ask(ctx);
         }
+        if ctx.input_mut(|input| input.consume_shortcut(&FIND)) {
+            self.open_find();
+        }
+        self.find_shortcuts(ctx);
         if ctx.input_mut(|input| input.consume_shortcut(&ADD_NOTE)) {
             self.start_note(ctx);
         }
@@ -608,6 +619,7 @@ impl RubriqueApp {
         {
             *preview = None;
         }
+        self.prepare_find(ctx);
     }
 
     /// Cmd/Ctrl + plus, minus and 0: the next text size, the one before, the default.
@@ -1230,7 +1242,8 @@ impl RubriqueApp {
                     let was_dirty = document.is_dirty();
                     let markdown = is_markdown_path(&document.path);
                     let line_numbers = self.settings.accessibility.line_numbers;
-                    if let Some(stats) = show_editor(ui, document, markdown, line_numbers) {
+                    let find = find::highlight(&mut self.find);
+                    if let Some(stats) = show_editor(ui, document, markdown, line_numbers, find) {
                         self.stats = Some(stats);
                     }
                     // Any edit invalidates the cached preview.
@@ -1986,6 +1999,7 @@ impl eframe::App for RubriqueApp {
         }
         egui::CentralPanel::default().frame(page_frame).show(ui, |ui| self.document_area(ui));
         self.handle_dropped_files(&ctx);
+        self.find_bar(&ctx);
 
         self.ask_dialogs(&ctx);
         self.install_dialog(&ctx);
