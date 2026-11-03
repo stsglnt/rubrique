@@ -309,6 +309,11 @@ fn accessibility_section(ui: &mut Ui, settings: &mut AccessibilitySettings) -> O
     ui.label(RichText::new("The Markdown editor and other monospace text, before the text size.").weak());
     let slider = egui::Slider::new(&mut settings.editor_font_size, EDITOR_FONT_SIZES).suffix(" pt");
     changed |= ui.add(slider).changed();
+    ui.add_space(4.0);
+    changed |= ui
+        .checkbox(&mut settings.line_numbers, "Line numbers")
+        .on_hover_text("Number the lines in the source editor")
+        .changed();
 
     ui.add_space(6.0);
     ui.separator();
