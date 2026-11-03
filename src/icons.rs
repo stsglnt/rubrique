@@ -41,6 +41,8 @@ pub enum Icon {
     Code,
     /// A file has notes (the explorer's marker).
     Bubble,
+    /// Add a folder from another computer (over SSH).
+    ServerPlus,
 }
 
 /// A flat button with `icon` and a hover tip. `active` keeps it highlighted
@@ -110,6 +112,18 @@ struct Colors {
     behind: Color32,
 }
 
+/// Two stacked server units with a light each; the plus badge is the accent.
+fn paint_server_plus(painter: &Painter, center: Pos2, colors: Colors) {
+    let at = |x: f32, y: f32| center + vec2(x, y);
+    let line = Stroke::new(LINE, colors.line);
+    for top in [-5.5, 0.5] {
+        let unit = [at(-6.5, top), at(6.5, top), at(6.5, top + 5.0), at(-6.5, top + 5.0)];
+        stroke_path(painter, &round_corners(&unit, CORNER, true), true, line);
+        painter.circle_filled(at(-3.6, top + 2.5), 0.9, colors.line);
+    }
+    plus_badge(painter, at(4.0, 3.5), colors.accent, colors.behind);
+}
+
 fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
     // Whole pixels keep the thin lines sharp.
     let center = center.round();
@@ -133,6 +147,7 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
             stroke_path(painter, &round_corners(&outline, CORNER, true), true, line);
             plus_badge(painter, at(4.0, 3.5), accent, behind);
         }
+        Icon::ServerPlus => paint_server_plus(painter, center, colors),
         Icon::NewScratch => {
             // A square open at the top right with a pencil writing into it; the
             // pencil tip is the accent, like the marker tip of the app icon.

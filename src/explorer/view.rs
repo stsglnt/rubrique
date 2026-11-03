@@ -23,6 +23,8 @@ pub enum ExplorerAction {
     RemoveRoot(PathBuf),
     /// Ask the system for a folder to add as a root.
     AddFolder,
+    /// Ask for a folder on another computer to add as a root.
+    AddRemoteFolder,
     /// Create a new scratch file and open it.
     NewScratch,
     /// Ask for a new name for this file.
@@ -71,6 +73,8 @@ pub struct TreeContext<'a> {
     pub dirty_files: &'a [PathBuf],
     /// Which files have notes, when the marker is turned on.
     pub note_marks: Option<&'a NoteMarks>,
+    /// Remote folders are turned on (shows "Add remote folder").
+    pub remote_enabled: bool,
 }
 
 /// Draw the explorer panel: "Add folder…", refresh, the Markdown filter and one tree per root folder.
@@ -84,6 +88,12 @@ pub fn show_explorer(
     ui.horizontal(|ui| {
         if icon_button(ui, Icon::FolderPlus, "Add folder", "Add a folder to the explorer", false).clicked() {
             action = Some(ExplorerAction::AddFolder);
+        }
+        if context.remote_enabled
+            && icon_button(ui, Icon::ServerPlus, "Add remote folder", "Add a folder on another computer (SSH)", false)
+                .clicked()
+        {
+            action = Some(ExplorerAction::AddRemoteFolder);
         }
         if icon_button(ui, Icon::NewScratch, "New scratch", "New scratch file for quick notes (Cmd+N)", false).clicked()
         {

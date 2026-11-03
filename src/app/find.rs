@@ -9,7 +9,8 @@ use eframe::egui::{self, Context, Key, Modifiers, RichText, Ui, pos2};
 use super::{OpenFile, RubriqueApp};
 use crate::document::view::{FindHighlight, focus_editor, select_editor_range};
 use crate::explorer::paths::name_text;
-use crate::find::{FileHit, HitKind, SearchResults, char_index, find_all, search_files};
+use crate::find::{FileHit, HitKind, SearchResults, char_index, find_all, search_files, search_remote_files};
+use crate::remote::task::{Task, spawn_with_repaint};
 
 const FIND_WIDTH: f32 = 440.0;
 const FIND_RADIUS: u8 = 8;
@@ -43,6 +44,10 @@ pub(super) struct FindBar {
     pending: Option<Range<usize>>,
     /// All-files results, and the query they are for.
     results: Option<(String, SearchResults)>,
+    /// Results from remote folders (or why they failed), and their query.
+    remote_results: Option<(String, Result<SearchResults, String>)>,
+    /// A remote search running in the background, and its query.
+    remote_search: Option<(String, Task<std::io::Result<SearchResults>>)>,
 }
 
 impl RubriqueApp {
@@ -262,19 +267,36 @@ fn find_row(ui: &mut Ui, bar: &mut FindBar) -> Option<FindEvent> {
 
 /// The all-files results under the field; a click opens the hit.
 fn results_list(ui: &mut Ui, bar: &mut FindBar, roots: &[PathBuf]) -> Option<FileHit> {
+    let (remote_roots, local_roots): (Vec<PathBuf>, Vec<PathBuf>) =
+        roots.iter().cloned().partition(|root| crate::remote::is_mirror(root));
     if bar.results.as_ref().is_none_or(|(query, _)| *query != bar.query) {
         let results = if bar.query.trim().is_empty() {
             SearchResults::default()
         } else {
-            search_files(roots, &bar.query, RESULT_LIMIT)
+            search_files(&local_roots, &bar.query, RESULT_LIMIT)
         };
         bar.results = Some((bar.query.clone(), results));
     }
-    let Some((_, results)) = &bar.results else {
+    let searching_remote =
+        !remote_roots.is_empty() && !bar.query.trim().is_empty() && poll_remote_search(ui.ctx(), bar, remote_roots);
+    let Some((_, local)) = &bar.results else {
         return None;
     };
     if bar.query.trim().is_empty() {
         return None;
+    }
+    let mut results = local.clone();
+    let mut remote_error = None;
+    match &bar.remote_results {
+        Some((query, Ok(remote))) if *query == bar.query => {
+            results.files_searched += remote.files_searched;
+            results.truncated |= remote.truncated;
+            let room = RESULT_LIMIT.saturating_sub(results.hits.len());
+            results.truncated |= remote.hits.len() > room;
+            results.hits.extend(remote.hits.iter().take(room).cloned());
+        }
+        Some((query, Err(error))) if *query == bar.query => remote_error = Some(error.clone()),
+        _ => {}
     }
     ui.separator();
     let summary = if results.hits.is_empty() {
@@ -287,7 +309,16 @@ fn results_list(ui: &mut Ui, bar: &mut FindBar, roots: &[PathBuf]) -> Option<Fil
             results.file_count()
         )
     };
-    ui.label(RichText::new(summary).size(SMALL_TEXT).weak());
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(summary).size(SMALL_TEXT).weak());
+        if searching_remote {
+            ui.add(egui::Spinner::new().size(10.0));
+            ui.label(RichText::new("searching remote folders…").size(SMALL_TEXT).weak());
+        }
+    });
+    if let Some(error) = remote_error {
+        ui.label(RichText::new(format!("Remote folders: {error}")).size(SMALL_TEXT).color(ui.visuals().warn_fg_color));
+    }
     let mut clicked = None;
     egui::ScrollArea::vertical().id_salt("find-results").max_height(RESULTS_HEIGHT).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
@@ -298,6 +329,29 @@ fn results_list(ui: &mut Ui, bar: &mut FindBar, roots: &[PathBuf]) -> Option<Fil
         }
     });
     clicked
+}
+
+/// Keep the remote search in step with the query: pick up a finished one,
+/// and start a new one when none is running. One search at a time, so fast
+/// typing does not start a search per key. True while results for the
+/// current query are still coming.
+fn poll_remote_search(ctx: &Context, bar: &mut FindBar, remote_roots: Vec<PathBuf>) -> bool {
+    let finished = bar.remote_search.as_ref().and_then(|(query, task)| Some((query.clone(), task.take()?)));
+    if let Some((query, result)) = finished {
+        bar.remote_search = None;
+        bar.remote_results = Some((query, result.map_err(|error| error.to_string())));
+    }
+    let current = bar.remote_results.as_ref().is_some_and(|(query, _)| *query == bar.query);
+    if current {
+        return false;
+    }
+    if bar.remote_search.is_none() {
+        let query = bar.query.clone();
+        let task_query = query.clone();
+        let task = spawn_with_repaint(ctx, move || search_remote_files(&remote_roots, &task_query, RESULT_LIMIT));
+        bar.remote_search = Some((query, task));
+    }
+    true
 }
 
 /// One hit: the file's path under its folder, then the line and its text.
@@ -313,5 +367,5 @@ fn result_row(ui: &mut Ui, hit: &FileHit) -> egui::Response {
     };
     let label = format!("{place}\n{text}");
     ui.add(egui::Button::new(RichText::new(label).size(SMALL_TEXT)).frame(false).wrap())
-        .on_hover_text(hit.path.display().to_string())
+        .on_hover_text(crate::remote::display(&hit.path))
 }

@@ -86,6 +86,14 @@ read-only sandbox. Cloud agents run only in folders you allowed.
 - **Find** (`Cmd/Ctrl+F`): matches in the open file are tinted; Enter and
   Shift+Enter step through them. **All files** searches every text file in
   the explorer's folders, by name and by content; a click opens the match.
+- **Remote folders** (optional, off by default): open a folder on another
+  computer over SSH and edit it like a local one. Turn it on in Settings →
+  Files, then use **Add remote folder** in the explorer. rubrique runs your
+  own `ssh`, so `~/.ssh/config`, keys and ssh-agent work; password logins do
+  not. Saves are safe on the server too, outside changes open the merge
+  screen, images show in the preview, Find searches the server, and agents
+  work on remote notes. Adding images or voice memos to remote notes is not
+  supported yet.
 
 <img src="docs/screenshots/themes.png" alt="One rubrique window shown in five themes: Light, Dark, Sepia, Midnight and High contrast" width="880">
 

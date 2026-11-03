@@ -13,11 +13,13 @@ mod icons;
 mod install;
 mod markdown;
 mod media;
+mod remote;
 mod scratch;
 mod settings;
 #[cfg(test)]
 mod test_support;
 mod theme;
+mod vfs;
 mod voice;
 
 use std::path::{Path, PathBuf};
@@ -54,6 +56,7 @@ fn main() -> ExitCode {
     }
 
     let settings = Settings::load();
+    remote::set_ssh_program(&settings.remote.ssh_program);
     let (roots, file) = match starting_location(&arguments, &settings) {
         Ok(location) => location,
         Err(message) => {
@@ -111,12 +114,17 @@ fn starting_location(arguments: &[PathBuf], settings: &Settings) -> Result<(Vec<
         return Ok((roots, file));
     }
 
-    let saved: Vec<PathBuf> = settings.folders.iter().filter(|folder| folder.is_dir()).cloned().collect();
+    // Remote folders are not checked here (that would wait for the network);
+    // the explorer shows an error row when one cannot be reached.
+    let usable = |path: &Path, local_check: fn(&Path) -> bool| {
+        if remote::is_mirror(path) { settings.remote.enabled } else { local_check(path) }
+    };
+    let saved: Vec<PathBuf> = settings.folders.iter().filter(|folder| usable(folder, Path::is_dir)).cloned().collect();
     if !saved.is_empty() {
         let file = settings
             .last_file
             .clone()
-            .filter(|file| file.is_file() && saved.iter().any(|folder| file.starts_with(folder)));
+            .filter(|file| usable(file, Path::is_file) && saved.iter().any(|folder| file.starts_with(folder)));
         return Ok((saved, file));
     }
     let current = std::env::current_dir().map_err(|error| format!("current folder: {error}"))?;

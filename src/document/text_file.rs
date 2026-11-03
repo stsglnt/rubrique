@@ -7,9 +7,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::SystemTime;
 
 use crate::crypto::{self, DecryptError, Vault};
+use crate::vfs::{self, Contents, Stamp};
 
 const BYTES_PER_MEGABYTE: u64 = 1024 * 1024;
 
@@ -86,8 +86,8 @@ pub struct Document {
     saved_hash: Option<u64>,
     /// The buffer differs from what is on disk.
     dirty: bool,
-    /// Modification time when we last read or wrote the file.
-    disk_modified: Option<SystemTime>,
+    /// The file's version when we last read or wrote it.
+    disk_modified: Option<Stamp>,
     /// The text as last read from or written to disk: the common starting
     /// point when the file and the buffer both changed (for merging).
     base_text: String,
@@ -107,11 +107,10 @@ impl Document {
     ///
     /// Fails when the file cannot be read (missing, permissions, ...).
     pub fn open(path: &Path, vault: Option<&Arc<Vault>>) -> io::Result<Opened> {
-        let metadata = fs::metadata(path)?;
-        if metadata.len() > MAX_FILE_BYTES {
-            return Ok(Opened::Unsupported(Unsupported::TooLarge(metadata.len())));
-        }
-        let mut bytes = fs::read(path)?;
+        let (mut bytes, stamp) = match vfs::read_file(path, MAX_FILE_BYTES)? {
+            (Contents::Bytes(bytes), stamp) => (bytes, stamp),
+            (Contents::TooLarge(size), _) => return Ok(Opened::Unsupported(Unsupported::TooLarge(size))),
+        };
         let mut sealed_with = None;
         if crypto::is_encrypted(&bytes) {
             let Some(vault) = vault else {
@@ -135,7 +134,7 @@ impl Document {
             base_text: text.clone(),
             text,
             dirty: false,
-            disk_modified: metadata.modified().ok(),
+            disk_modified: stamp,
             revision: next_revision(),
             vault: sealed_with,
         }))
@@ -170,7 +169,7 @@ impl Document {
     /// wrote the file that way already, so only the modification time is new.
     pub fn set_vault(&mut self, vault: Option<Arc<Vault>>) {
         self.vault = vault;
-        self.disk_modified = modified_time(&self.path);
+        self.disk_modified = vfs::current_stamp(&self.path).ok().flatten();
     }
 
     /// Put back edits kept from an earlier session: `text` in the buffer,
@@ -188,7 +187,7 @@ impl Document {
         self.text = self.read_disk_text().unwrap_or_else(|_| self.base_text.clone());
         self.saved_hash = Some(hash_text(&self.text));
         self.base_text.clone_from(&self.text);
-        self.disk_modified = modified_time(&self.path);
+        self.disk_modified = vfs::current_stamp(&self.path).ok().flatten();
         self.on_text_changed();
     }
 
@@ -209,23 +208,21 @@ impl Document {
         self.revision = next_revision();
     }
 
-    /// Write the buffer atomically: temp file in the same folder, flush, rename.
+    /// Write the buffer atomically: temp file in the same folder, flush, rename
+    /// (on the host for a remote file). Writes through symlinks.
     ///
     /// # Errors
     ///
     /// Fails when the temp file cannot be written or renamed; the file on
     /// disk is then left as it was.
     pub fn save(&mut self) -> io::Result<()> {
-        // Write through symlinks: renaming over the link itself would replace
-        // the link with a plain file.
-        let target = fs::canonicalize(&self.path).unwrap_or_else(|_| self.path.clone());
-        match &self.vault {
-            Some(vault) => write_atomically(&target, &vault.encrypt(self.text.as_bytes()))?,
-            None => write_atomically(&target, self.text.as_bytes())?,
-        }
+        let stamp = match &self.vault {
+            Some(vault) => vfs::save(&self.path, &vault.encrypt(self.text.as_bytes()))?,
+            None => vfs::save(&self.path, self.text.as_bytes())?,
+        };
         self.saved_hash = Some(hash_text(&self.text));
         self.dirty = false;
-        self.disk_modified = modified_time(&self.path);
+        self.disk_modified = stamp;
         self.base_text.clone_from(&self.text);
         Ok(())
     }
@@ -241,7 +238,12 @@ impl Document {
     ///
     /// Fails when the file cannot be read or is no longer UTF-8 text.
     pub fn read_disk_text(&self) -> io::Result<String> {
-        let mut bytes = fs::read(&self.path)?;
+        let mut bytes = match vfs::read_file(&self.path, MAX_FILE_BYTES)?.0 {
+            Contents::Bytes(bytes) => bytes,
+            Contents::TooLarge(size) => {
+                return Err(io::Error::new(io::ErrorKind::FileTooLarge, Unsupported::TooLarge(size).describe()));
+            }
+        };
         if let Some(vault) = &self.vault {
             bytes = vault.decrypt(&bytes).map_err(|_| {
                 io::Error::new(io::ErrorKind::InvalidData, "the file is no longer encrypted with this password")
@@ -254,7 +256,13 @@ impl Document {
     /// used when only the modification time changed, or after a merge. The
     /// buffer is dirty exactly when it differs from `disk_text`.
     pub fn accept_disk_text(&mut self, disk_text: String) {
-        self.disk_modified = modified_time(&self.path);
+        self.disk_modified = if self.vault.is_some() {
+            // A remote stamp is a checksum of the stored (encrypted) bytes,
+            // not of the text, so ask for it.
+            vfs::current_stamp(&self.path).ok().flatten()
+        } else {
+            vfs::stamp_of(&self.path, disk_text.as_bytes())
+        };
         self.saved_hash = Some(hash_text(&disk_text));
         self.base_text = disk_text;
         self.on_text_changed();
@@ -266,24 +274,34 @@ impl Document {
         self.accept_disk_text(disk_text);
     }
 
-    /// Compare the file's modification time with the one we know.
+    /// Compare the file's version on disk with the one we know. For a
+    /// remote file this asks the host; the app does that in the background
+    /// and uses [`Document::disk_state_from`] instead.
     pub fn disk_state(&self) -> DiskState {
-        match fs::metadata(&self.path) {
-            // Already known to be missing (user chose "Keep mine"): no news.
-            Err(_) if self.disk_modified.is_none() => DiskState::Unchanged,
-            Err(_) => DiskState::Deleted,
-            Ok(metadata) if metadata.modified().ok() != self.disk_modified => DiskState::Modified,
-            Ok(_) => DiskState::Unchanged,
+        self.disk_state_from(vfs::current_stamp(&self.path))
+    }
+
+    /// Compare `current` (the file's stamp now: `None` when it is gone, an
+    /// error when that could not be told) with the one we know.
+    pub fn disk_state_from(&self, current: io::Result<Option<Stamp>>) -> DiskState {
+        match current {
+            // Gone, and we did not know yet ("Keep mine" already knows).
+            Ok(None) if self.disk_modified.is_some() => DiskState::Deleted,
+            Ok(Some(stamp)) if Some(&stamp) != self.disk_modified.as_ref() => DiskState::Modified,
+            // The same version, or no answer from the host: no news.
+            _ => DiskState::Unchanged,
         }
     }
 
     /// Accept the current disk state without reloading ("Keep mine"):
     /// the buffer stays dirty and we stop asking about this change.
     pub fn acknowledge_disk_change(&mut self) {
-        self.disk_modified = modified_time(&self.path);
         // Their version is the new starting point for any later merge.
         if let Ok(disk_text) = self.read_disk_text() {
+            self.disk_modified = vfs::stamp_of(&self.path, disk_text.as_bytes());
             self.base_text = disk_text;
+        } else {
+            self.disk_modified = vfs::current_stamp(&self.path).ok().flatten();
         }
         self.saved_hash = None;
         self.dirty = true;
@@ -309,11 +327,6 @@ fn hash_text(text: &str) -> u64 {
 /// A revision number no document has used yet.
 fn next_revision() -> u64 {
     NEXT_REVISION.fetch_add(1, Ordering::Relaxed)
-}
-
-/// The file's modification time, `None` when it is missing or unknown.
-fn modified_time(path: &Path) -> Option<SystemTime> {
-    fs::metadata(path).and_then(|metadata| metadata.modified()).ok()
 }
 
 /// Replace `target` with `contents` so that a crash leaves either the old or
@@ -449,7 +462,7 @@ mod tests {
 
         // Force a different mtime even on filesystems with coarse timestamps.
         let file = fs::File::options().write(true).open(&path).unwrap();
-        file.set_modified(SystemTime::UNIX_EPOCH).unwrap();
+        file.set_modified(std::time::SystemTime::UNIX_EPOCH).unwrap();
         assert_eq!(document.disk_state(), DiskState::Modified);
 
         document.acknowledge_disk_change();

@@ -271,7 +271,7 @@ mod tests {
         temp.write("drafts/junk.draft", "not a draft");
         let moved = format(&draft("/notes/a.md", "", "x"));
         temp.write("drafts/0000000000000000.draft", moved);
-        assert_eq!(DraftStore::new(folder).all(None), []);
+        assert_eq!(DraftStore::new(folder).all(None), Vec::<Draft>::new());
     }
 
     #[test]

@@ -80,7 +80,9 @@ impl RubriqueApp {
                 None => {}
             }
         }
-        let mut orphans: Vec<Draft> = drafts.into_values().collect();
+        let remote_on = self.settings.remote.enabled;
+        let mut orphans: Vec<Draft> =
+            drafts.into_values().filter(|draft| remote_on || !crate::remote::is_mirror(&draft.path)).collect();
         orphans.sort_by(|a, b| a.path.cmp(&b.path));
         for found in orphans {
             restored.extend(self.open_with_draft(found));
