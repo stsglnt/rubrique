@@ -8,6 +8,11 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Fixed
+
+- Scrolling a page to its end with a trackpad no longer overshoots and
+  springs back (the "jump" at the bottom of the preview).
+
 ### Added
 
 - **Agents**: named helpers with their own personality, skills, AI tool and
