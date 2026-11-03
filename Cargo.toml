@@ -2,7 +2,7 @@
 name = "rubrique"
 version = "0.4.4"
 edition = "2024"
-description = "An agentic Markdown editor for macOS and Linux"
+description = "A fast editor, agentic on demand."
 publish = false
 # Minimum supported Rust (MSRV), matching the README.
 rust-version = "1.95"
@@ -66,7 +66,7 @@ panic = "abort"
 [package.metadata.deb]
 maintainer = "witseko"
 section = "editors"
-extended-description = "An agentic Markdown editor. Put Claude Code, Codex, Grok or a local model to work on your notes, compare their answers, and review every change in a merge screen before it is applied. No API keys."
+extended-description = "A fast editor, agentic on demand. This version edits Markdown and other text, runs Claude Code, Codex, Grok or a local model, and reviews every change in a merge screen."
 assets = [
     ["target/release/rubrique", "usr/bin/", "755"],
     ["packaging/linux/rubrique.desktop", "usr/share/applications/", "644"],
