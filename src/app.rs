@@ -1229,7 +1229,8 @@ impl RubriqueApp {
                 } else {
                     let was_dirty = document.is_dirty();
                     let markdown = is_markdown_path(&document.path);
-                    if let Some(stats) = show_editor(ui, document, markdown) {
+                    let line_numbers = self.settings.accessibility.line_numbers;
+                    if let Some(stats) = show_editor(ui, document, markdown, line_numbers) {
                         self.stats = Some(stats);
                     }
                     // Any edit invalidates the cached preview.

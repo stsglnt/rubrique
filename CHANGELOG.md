@@ -10,6 +10,9 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Added
 
+- **Line numbers** in the source editor: Settings → Accessibility → **Line
+  numbers**. A wrapped line is numbered once.
+
 - **Agents**: named helpers with their own personality, skills, AI tool and
   model. Each one is a folder with an `AGENT.md` file in the agents folder.
   Claude Code's agents in `~/.claude/agents` work too.
