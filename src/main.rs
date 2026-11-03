@@ -7,6 +7,7 @@ mod app;
 mod date;
 mod document;
 mod explorer;
+mod find;
 mod format;
 mod icons;
 mod install;

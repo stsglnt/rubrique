@@ -212,6 +212,7 @@ mod tests {
                 editor_font_size: 15,
                 reduce_motion: true,
                 strong_focus: true,
+                line_numbers: true,
             },
             scratch_folder: Some(PathBuf::from("/home/a/scratch")),
             ai: {
