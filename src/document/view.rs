@@ -7,7 +7,7 @@ use eframe::egui::text::{CCursor, CCursorRange};
 use eframe::egui::text_edit::{TextEditOutput, TextEditState};
 use eframe::egui::{self, Align, Align2, Color32, Context, FontId, Id, Key, Modifiers, TextBuffer, Ui, pos2};
 
-use super::highlighting::{HighlightStyle, highlighted};
+use super::highlighting::{HighlightStyle, Syntax, highlighted};
 use super::line_ops::{Direction, Selection, duplicate_lines, insert_text, move_lines};
 use super::text_file::Document;
 use super::text_stats::{TextStats, text_stats};
@@ -75,13 +75,12 @@ pub fn restore_editor_state(ctx: &Context, state: Option<EditorState>) {
     }
 }
 
-/// Draw the text editor, coloring Markdown syntax when `markdown` is set
-/// and numbering the lines when `line_numbers` is set, and tinting the
-/// `find` matches. Returns status-bar stats for the cursor.
+/// Draw the text editor, coloring `syntax` when there is one, numbering
+/// the lines when `line_numbers` is set, and tinting the `find` matches. Returns status-bar stats for the cursor.
 pub fn show_editor(
     ui: &mut Ui,
     document: &mut Document,
-    markdown: bool,
+    syntax: Option<Syntax>,
     line_numbers: bool,
     find: Option<FindHighlight<'_>>,
 ) -> Option<TextStats> {
@@ -93,11 +92,6 @@ pub fn show_editor(
         right: EDITOR_MARGIN.0,
         top: EDITOR_MARGIN.1,
         bottom: EDITOR_MARGIN.1,
-    };
-    let mut layouter = |ui: &Ui, buffer: &dyn TextBuffer, wrap_width: f32| {
-        let mut job = highlighted(ui.ctx(), buffer.as_str(), &style);
-        job.wrap.max_width = wrap_width;
-        ui.ctx().fonts_mut(|fonts| fonts.layout_job(job))
     };
     let output = egui::ScrollArea::both()
         // One scroll position per file, so each tab keeps its place.
@@ -112,7 +106,17 @@ pub fn show_editor(
                 .lock_focus(true)
                 .desired_width(f32::INFINITY)
                 .min_size(available);
-            let output = if markdown { editor.layouter(&mut layouter).show(ui) } else { editor.show(ui) };
+            let output = match syntax {
+                Some(syntax) => {
+                    let mut layouter = |ui: &Ui, buffer: &dyn TextBuffer, wrap_width: f32| {
+                        let mut job = highlighted(ui.ctx(), buffer.as_str(), &style, syntax);
+                        job.wrap.max_width = wrap_width;
+                        ui.ctx().fonts_mut(|fonts| fonts.layout_job(job))
+                    };
+                    editor.layouter(&mut layouter).show(ui)
+                }
+                None => editor.show(ui),
+            };
             if let Some(gutter) = &gutter {
                 gutter.paint(ui, &output);
             }

@@ -17,6 +17,15 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Added
 
+- **Helm charts**: `.yaml`, `.yml` and `.tpl` files (and a chart's
+  `templates/NOTES.txt`) get syntax colors: keys, `#` comments, list dashes,
+  anchors, block scalars, and Helm template actions (`{{ }}`, `{{- -}}`,
+  `{{/* */}}`), also when they span lines. In a chart folder (one with
+  `Chart.yaml`), the **Helm** button in the status bar runs `helm template`
+  and shows the rendered files, colored, in a panel below the page; **Lint**
+  runs `helm lint`. With a `values-*.yaml` file of the chart open, it is
+  passed with `--values`. helm reads the saved files, so the panel says when
+  files in the chart have unsaved changes. Not available for remote folders.
 - **Encrypted scratches**: Settings → **Privacy** → **Encrypt new scratches**
   asks for a password, and every new scratch is saved encrypted with it
   (XChaCha20-Poly1305, key from Argon2id). They open after you enter the

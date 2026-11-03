@@ -71,6 +71,10 @@ read-only sandbox. Cloud agents run only in folders you allowed.
   `Cmd/Ctrl+L` locks it now. The PIN only covers the window, it does not
   encrypt your files. Locking also locks encrypted scratches again.
 - **Format** (`Cmd/Ctrl+Shift+F`): pretty-print JSON, SQL or XML.
+- **Helm charts**: YAML and Helm templates get colors for keys, comments
+  and `{{ }}` actions. In a chart (a folder with `Chart.yaml`), the **Helm**
+  button runs `helm template` or `helm lint` and shows the result below the
+  page. Open a `values-*.yaml` file first to render with it.
 
 ## Files
 
@@ -145,6 +149,7 @@ rubrique finds these programs on your `PATH`. Install the ones you want:
 | Codex | `codex` | Ask, Compare, Notes |
 | Grok | `grok` | Ask, Compare, Notes |
 | Ollama | `ollama` | Local summaries, file names |
+| Helm | `helm` | Render and lint Helm charts |
 | whisper.cpp | `whisper-cli` | Transcribing memos |
 
 Settings → AI shows which ones were found and lets you change each command.

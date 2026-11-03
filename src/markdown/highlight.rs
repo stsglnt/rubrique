@@ -21,8 +21,12 @@ pub enum Kind {
     Url,
     /// Text inside a block quote.
     Quote,
-    /// `<!-- ... -->` comments, including notes.
+    /// `<!-- ... -->` comments, including notes; `#` comments in YAML.
     Comment,
+    /// A YAML mapping key.
+    Key,
+    /// The inside of a Helm (Go template) action, `{{ ... }}`.
+    Template,
 }
 
 /// A labeled byte range of the text.
@@ -49,14 +53,14 @@ pub fn highlight(text: &str) -> Vec<Span> {
 
 /// Spans built front to back: each call labels everything up to a position.
 #[derive(Default)]
-struct Spans {
-    spans: Vec<Span>,
+pub(crate) struct Spans {
+    pub(crate) spans: Vec<Span>,
     end: usize,
 }
 
 impl Spans {
     /// Label the bytes from the current end up to `upto` with `kind`.
-    fn to(&mut self, upto: usize, kind: Kind) {
+    pub(crate) fn to(&mut self, upto: usize, kind: Kind) {
         if upto <= self.end {
             return;
         }
