@@ -3,6 +3,7 @@
 //!
 //! One file per document, named after a hash of its absolute path. It holds
 //! a short header, then the text the edits started from, then the edited text.
+//! Drafts of encrypted scratches are sealed whole with the same key.
 
 use std::fs;
 use std::io;
@@ -10,6 +11,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use super::text_file::{Document, write_atomically};
+use crate::crypto::{self, Vault};
 
 /// First line of every draft file; a different one is not read.
 const HEADER: &str = "rubrique draft 1";
@@ -25,12 +27,19 @@ pub struct Draft {
     pub base_text: String,
     /// The edited text.
     pub text: String,
+    /// Kept encrypted, because the document is.
+    pub sealed: bool,
 }
 
 impl Draft {
     /// The draft of `document` as it is now.
     pub fn of(document: &Document) -> Self {
-        Draft { path: key(&document.path), base_text: document.base_text().to_string(), text: document.text.clone() }
+        Draft {
+            path: key(&document.path),
+            base_text: document.base_text().to_string(),
+            text: document.text.clone(),
+            sealed: document.is_encrypted(),
+        }
     }
 }
 
@@ -109,6 +118,7 @@ pub fn parse(bytes: &[u8]) -> Option<Draft> {
         path,
         base_text: String::from_utf8(base.to_vec()).ok()?,
         text: String::from_utf8(text.to_vec()).ok()?,
+        sealed: false,
     })
 }
 
@@ -129,18 +139,25 @@ impl DraftStore {
         self.folder.join(file_name(path))
     }
 
-    /// Keep `draft`, replacing an older one atomically.
+    /// Keep `draft`, replacing an older one atomically. A sealed draft is
+    /// encrypted with `vault`.
     ///
     /// # Errors
     ///
-    /// Fails when the folder or the file cannot be written, or the path has
-    /// a line break (the header could not hold it).
-    pub fn write(&self, draft: &Draft) -> io::Result<()> {
+    /// Fails when the folder or the file cannot be written, the path has
+    /// a line break (the header could not hold it), or a sealed draft has
+    /// no key (it is never written in the clear).
+    pub fn write(&self, draft: &Draft, vault: Option<&Vault>) -> io::Result<()> {
         if draft.path.as_os_str().as_bytes().contains(&b'\n') {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "file name has a line break"));
         }
+        let bytes = match (draft.sealed, vault) {
+            (false, _) => format(draft),
+            (true, Some(vault)) => vault.encrypt(&format(draft)),
+            (true, None) => return Err(io::Error::new(io::ErrorKind::InvalidInput, "no key for an encrypted draft")),
+        };
         fs::create_dir_all(&self.folder)?;
-        write_atomically(&self.file_for(&draft.path), &format(draft))
+        write_atomically(&self.file_for(&draft.path), &bytes)
     }
 
     /// Delete the draft for `path`; a missing one is fine.
@@ -155,8 +172,9 @@ impl DraftStore {
         }
     }
 
-    /// Every readable draft, sorted by path. Unreadable files are left alone.
-    pub fn all(&self) -> Vec<Draft> {
+    /// Every readable draft, sorted by path. Unreadable files are left
+    /// alone, and so are encrypted ones without `vault`.
+    pub fn all(&self, vault: Option<&Vault>) -> Vec<Draft> {
         let Ok(entries) = fs::read_dir(&self.folder) else {
             return Vec::new();
         };
@@ -166,7 +184,12 @@ impl DraftStore {
             .filter(|file| file.extension().is_some_and(|extension| extension == EXTENSION))
             // A file renamed by hand, or a hash collision: not this path's draft.
             .filter_map(|file| {
-                let draft = parse(&fs::read(&file).ok()?)?;
+                let bytes = fs::read(&file).ok()?;
+                let draft = if crypto::is_encrypted(&bytes) {
+                    Draft { sealed: true, ..parse(&vault?.decrypt(&bytes).ok()?)? }
+                } else {
+                    parse(&bytes)?
+                };
                 (file.file_name()? == file_name(&draft.path).as_str()).then_some(draft)
             })
             .collect();
@@ -181,7 +204,7 @@ mod tests {
     use crate::test_support::TempFolder;
 
     fn draft(path: &str, base_text: &str, text: &str) -> Draft {
-        Draft { path: PathBuf::from(path), base_text: base_text.to_string(), text: text.to_string() }
+        Draft { path: PathBuf::from(path), base_text: base_text.to_string(), text: text.to_string(), sealed: false }
     }
 
     #[test]
@@ -225,18 +248,18 @@ mod tests {
     fn store_writes_lists_and_removes() {
         let temp = TempFolder::new();
         let store = DraftStore::new(temp.path().join("drafts"));
-        assert!(store.all().is_empty(), "no folder yet");
+        assert!(store.all(None).is_empty(), "no folder yet");
 
         let first = draft("/notes/b.md", "1", "2");
         let second = draft("/notes/a.md", "x", "y");
-        store.write(&first).unwrap();
-        store.write(&second).unwrap();
-        store.write(&draft("/notes/b.md", "1", "3")).unwrap();
-        assert_eq!(store.all(), vec![second.clone(), draft("/notes/b.md", "1", "3")]);
+        store.write(&first, None).unwrap();
+        store.write(&second, None).unwrap();
+        store.write(&draft("/notes/b.md", "1", "3"), None).unwrap();
+        assert_eq!(store.all(None), vec![second.clone(), draft("/notes/b.md", "1", "3")]);
 
         store.remove(Path::new("/notes/b.md")).unwrap();
         store.remove(Path::new("/notes/b.md")).unwrap();
-        assert_eq!(store.all(), vec![second]);
+        assert_eq!(store.all(None), vec![second]);
         // Only the draft itself: no temp files left behind.
         assert_eq!(fs::read_dir(temp.path().join("drafts")).unwrap().count(), 1);
     }
@@ -248,13 +271,27 @@ mod tests {
         temp.write("drafts/junk.draft", "not a draft");
         let moved = format(&draft("/notes/a.md", "", "x"));
         temp.write("drafts/0000000000000000.draft", moved);
-        assert_eq!(DraftStore::new(folder).all(), Vec::<Draft>::new());
+        assert_eq!(DraftStore::new(folder).all(None), Vec::<Draft>::new());
     }
 
     #[test]
     fn store_refuses_paths_with_line_breaks() {
         let temp = TempFolder::new();
         let store = DraftStore::new(temp.path().to_path_buf());
-        assert!(store.write(&draft("/notes/a\nb.md", "", "x")).is_err());
+        assert!(store.write(&draft("/notes/a\nb.md", "", "x"), None).is_err());
+    }
+
+    #[test]
+    fn sealed_drafts_are_encrypted() {
+        let temp = TempFolder::new();
+        let store = DraftStore::new(temp.path().to_path_buf());
+        let vault = Vault::create("pw").0;
+        let secret = Draft { sealed: true, ..draft("/s/secret.md", "old", "hidden words") };
+        assert!(store.write(&secret, None).is_err(), "never in the clear");
+        store.write(&secret, Some(&vault)).unwrap();
+        let bytes = fs::read(store.file_for(Path::new("/s/secret.md"))).unwrap();
+        assert!(!bytes.windows(6).any(|window| window == b"hidden"));
+        assert!(store.all(None).is_empty(), "left alone while locked");
+        assert_eq!(store.all(Some(&vault)), vec![secret]);
     }
 }

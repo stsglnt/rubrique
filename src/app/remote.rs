@@ -401,7 +401,7 @@ mod tests {
         let temp = TempFolder::new();
         let real = temp.write("a.md", "first");
         let mirror = mirror_of("doc-host", &real);
-        let Opened::Text(mut document) = Document::open(&mirror).unwrap() else {
+        let Opened::Text(mut document) = Document::open(&mirror, None).unwrap() else {
             panic!("text expected");
         };
         assert_eq!(document.text, "first");

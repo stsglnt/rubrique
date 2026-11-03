@@ -17,6 +17,20 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Added
 
+- **Encrypted scratches**: Settings → **Privacy** → **Encrypt new scratches**
+  asks for a password, and every new scratch is saved encrypted with it
+  (XChaCha20-Poly1305, key from Argon2id). They open after you enter the
+  password, once per session; a tab waiting for it shows a password field.
+  Unsaved edits of an encrypted scratch are kept as an encrypted draft. AI
+  never gets their text: Ask, Compare, Notes, summaries and name suggestions
+  are off for them, and search across files matches only their names. Also
+  **Lock scratches**, **Change password…** and **Encrypt existing scratches**.
+  The settings file keeps only a salt and a check value, never the password.
+- **App PIN**: Settings → **Privacy** → **Set PIN…**. rubrique asks for it at
+  start and after it sits idle (**Lock after** 1, 5, 15 or 30 minutes, or
+  off); `Cmd/Ctrl+L` locks now. After five wrong PINs it waits 30 seconds.
+  The PIN locks the window only, it does not encrypt files. Locking also
+  locks encrypted scratches again.
 - **Remote folders over SSH** (optional, off by default): Settings → Files →
   **Open folders on other computers over SSH**, then **Add remote folder**
   in the explorer. rubrique runs the system `ssh` (your `~/.ssh/config`,

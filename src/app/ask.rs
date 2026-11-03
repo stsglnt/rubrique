@@ -128,7 +128,7 @@ impl RubriqueApp {
     /// Open the Ask bar for the selection, or the whole file when nothing is selected.
     pub(super) fn open_ask(&mut self, ctx: &Context) {
         self.finish_block_edit();
-        if self.merging.is_some() {
+        if self.merging.is_some() || self.ai_blocked() {
             return;
         }
         if self.ask.job.as_ref().is_some_and(AiJob::is_running) {
@@ -257,6 +257,9 @@ impl RubriqueApp {
     }
 
     fn start_run(&mut self, ctx: &Context, pending: PendingRun) {
+        if self.ai_blocked() {
+            return;
+        }
         let target = &pending.target;
         let agent = pending.agent.as_deref();
         let (skills, missing) = run_skills(&self.skills, agent, pending.skill.as_deref());
@@ -412,6 +415,9 @@ impl PendingRun {
 impl RubriqueApp {
     /// Ask the default tool to resolve one note (or all), on the whole file.
     pub(super) fn resolve_notes(&mut self, ctx: &Context, which: Resolving) {
+        if self.ai_blocked() {
+            return;
+        }
         if self.ask.job.as_ref().is_some_and(AiJob::is_running) {
             self.show_status("Wait for the AI tool to finish, or press Stop".to_string());
             return;

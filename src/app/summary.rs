@@ -87,7 +87,8 @@ impl RubriqueApp {
     /// The cache key for `path`, reading the file only when it changed.
     fn summary_key(&mut self, path: &Path, command: &str) -> Option<(String, SystemTime)> {
         let metadata = std::fs::metadata(path).ok()?;
-        if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
+        // Encrypted scratches are never summarized (nor cached).
+        if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES || crate::crypto::file_is_encrypted(path) {
             return None;
         }
         let modified = metadata.modified().ok()?;

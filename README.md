@@ -60,6 +60,16 @@ read-only sandbox. Cloud agents run only in folders you allowed.
   empty space under the last one to add a new block.
 - **Scratch files** (`Cmd/Ctrl+N`): an empty note for later. A local model
   can suggest a name once you save it.
+- **Encrypted scratches** (optional): Settings → Privacy → **Encrypt new
+  scratches**. New scratches are saved encrypted with your password
+  (XChaCha20-Poly1305, key from Argon2id) and open only after you enter it,
+  once per session. No agent or local model ever gets their text, and search
+  matches only their names. Images and audio dropped into one are not
+  encrypted. If you forget the password, they cannot be read.
+- **App PIN** (optional): Settings → Privacy → **Set PIN**. rubrique asks for
+  it when it opens and after it sits idle (1 to 30 minutes, or never);
+  `Cmd/Ctrl+L` locks it now. The PIN only covers the window, it does not
+  encrypt your files. Locking also locks encrypted scratches again.
 - **Format** (`Cmd/Ctrl+Shift+F`): pretty-print JSON, SQL or XML.
 
 ## Files
@@ -121,6 +131,7 @@ editor font size, line numbers, reduced motion and a stronger focus outline.
 | Alt+Up / Alt+Down | Move lines |
 | Cmd+D | Duplicate lines |
 | Cmd+Shift+D | Insert today's date |
+| Cmd+L | Lock the window (with a PIN set) |
 
 </details>
 
