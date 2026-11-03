@@ -378,9 +378,9 @@ mod tests {
             image_paths(folder, "my%20cat.png"),
             [PathBuf::from("/m/host/notes/my%20cat.png"), PathBuf::from("/m/host/notes/my cat.png")]
         );
-        assert!(image_paths(folder, "https://x.org/a.png").is_empty());
-        assert!(image_paths(folder, "/etc/a.png").is_empty());
-        assert!(image_paths(folder, "notes.md").is_empty());
+        assert_eq!(image_paths(folder, "https://x.org/a.png"), Vec::<PathBuf>::new());
+        assert_eq!(image_paths(folder, "/etc/a.png"), Vec::<PathBuf>::new());
+        assert_eq!(image_paths(folder, "notes.md"), Vec::<PathBuf>::new());
     }
 
     #[test]
