@@ -8,10 +8,12 @@ use std::path::{Path, PathBuf};
 use crate::ai::AiSettings;
 use crate::remote::settings_text;
 use crate::settings::accessibility::AccessibilitySettings;
+use crate::settings::privacy::PrivacySettings;
 use crate::theme::catalog::ThemeChoice;
 use crate::voice::VoiceSettings;
 
 pub mod accessibility;
+pub mod privacy;
 pub mod view;
 
 /// Everything rubrique remembers between runs.
@@ -39,6 +41,8 @@ pub struct Settings {
     pub ai: AiSettings,
     /// Voice memos: folder, dropped files, transcription.
     pub voice: VoiceSettings,
+    /// Encrypted scratches and the app PIN.
+    pub privacy: PrivacySettings,
     /// Remote folders over SSH.
     pub remote: crate::remote::RemoteSettings,
 }
@@ -83,6 +87,7 @@ impl Settings {
             if settings.ai.parse_line(key.trim(), value)
                 || settings.voice.parse_line(key.trim(), value)
                 || settings.accessibility.parse_line(key.trim(), value)
+                || settings.privacy.parse_line(key.trim(), value)
                 || settings.remote.parse_line(key.trim(), value)
             {
                 continue;
@@ -128,7 +133,7 @@ impl Settings {
         let folder_lines = path_lines("folder", &self.folders);
         let tab_lines = path_lines("tab", &self.open_tabs);
         format!(
-            "{folder_lines}{tab_lines}last_file={}\nmarkdown_only={}\nnote_marks={}\ntheme={}\nscratch_folder={}\n{window_lines}{}{}{}{}",
+            "{folder_lines}{tab_lines}last_file={}\nmarkdown_only={}\nnote_marks={}\ntheme={}\nscratch_folder={}\n{window_lines}{}{}{}{}{}",
             last_file,
             self.markdown_only,
             self.note_marks,
@@ -137,6 +142,7 @@ impl Settings {
             self.accessibility.to_lines(),
             self.ai.to_lines(),
             self.voice.to_lines(),
+            self.privacy.to_lines(),
             self.remote.to_lines(),
         )
     }
@@ -244,6 +250,12 @@ mod tests {
                 copy_dropped: false,
                 auto_transcribe: false,
                 command: "yap transcribe {audio}".to_string(),
+            },
+            privacy: privacy::PrivacySettings {
+                encrypt_scratches: true,
+                vault: Some(crate::crypto::Vault::create("pw").1),
+                pin_hash: Some(crate::crypto::pin_hash("1234")),
+                lock_after_minutes: 15,
             },
             remote: crate::remote::RemoteSettings { enabled: true, ssh_program: "/opt/ssh".to_string() },
         };

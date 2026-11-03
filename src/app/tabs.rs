@@ -50,7 +50,7 @@ enum TabAction {
 
 impl RubriqueApp {
     /// The file in tab `index`.
-    fn tab(&self, index: usize) -> &OpenFile {
+    pub(super) fn tab(&self, index: usize) -> &OpenFile {
         if index == self.active_tab { &self.open_file } else { &self.tabs[index] }
     }
 
@@ -148,7 +148,7 @@ impl RubriqueApp {
 
     /// Set up the tab that just came on screen, and look for changes made
     /// to its file while it was hidden.
-    fn enter_tab(&mut self) {
+    pub(super) fn enter_tab(&mut self) {
         let state = match &mut self.open_file {
             OpenFile::Text { editor, .. } => editor.take(),
             _ => None,

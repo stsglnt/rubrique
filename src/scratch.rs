@@ -1,11 +1,15 @@
 //! Scratch files: quick, empty notes with a random readable name, like
-//! `2026-10-28-brave-otter.md`, in one folder.
+//! `2026-10-28-brave-otter.md`, in one folder. With encryption on they are
+//! sealed with the scratch password (see [`crate::crypto`]).
 
 use std::collections::hash_map::RandomState;
 use std::fs::{self, OpenOptions};
 use std::hash::{BuildHasher, Hasher};
-use std::io::{self, ErrorKind};
+use std::io::{self, ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
+
+use crate::crypto::{self, Vault};
+use crate::document::text_file::write_atomically;
 
 /// First word of a scratch name.
 const ADJECTIVES: [&str; 32] = [
@@ -50,22 +54,79 @@ fn random_seed(attempt: u32) -> u64 {
 }
 
 /// Create an empty scratch file in `folder` (made if missing) and return its
-/// path. Never overwrites: a taken name just gets another try.
+/// path; encrypted with `vault` when given. Never overwrites: a taken name
+/// just gets another try.
 ///
 /// # Errors
 ///
 /// Fails when the folder cannot be created or written, or every tried name exists.
-pub fn create_scratch(folder: &Path, date: &str) -> io::Result<PathBuf> {
+pub fn create_scratch(folder: &Path, date: &str, vault: Option<&Vault>) -> io::Result<PathBuf> {
     fs::create_dir_all(folder)?;
     for attempt in 0..MAX_ATTEMPTS {
         let path = folder.join(scratch_name(date, random_seed(attempt)));
         match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(_) => return Ok(path),
+            Ok(mut file) => {
+                if let Some(vault) = vault {
+                    file.write_all(&vault.encrypt(b""))?;
+                }
+                return Ok(path);
+            }
             Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error),
         }
     }
     Err(io::Error::new(ErrorKind::AlreadyExists, "no free scratch name, clean up the scratches folder"))
+}
+
+/// The Markdown files directly in the scratch folder.
+fn scratch_files(folder: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(folder) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && path.extension().is_some_and(|extension| extension == "md"))
+        .collect();
+    files.sort();
+    files
+}
+
+/// Encrypt every plain scratch in `folder` with `vault`; returns the paths
+/// that changed. Stops at the first file that cannot be read or written.
+///
+/// # Errors
+///
+/// The first read or write error.
+pub fn encrypt_scratches(folder: &Path, vault: &Vault) -> io::Result<Vec<PathBuf>> {
+    let mut changed = Vec::new();
+    for path in scratch_files(folder) {
+        let bytes = fs::read(&path)?;
+        if !crypto::is_encrypted(&bytes) {
+            write_atomically(&path, &vault.encrypt(&bytes))?;
+            changed.push(path);
+        }
+    }
+    Ok(changed)
+}
+
+/// Seal every scratch encrypted with `old` again with `new` (a new
+/// password); returns the paths that changed. Files sealed with another
+/// key are left as they are.
+///
+/// # Errors
+///
+/// The first read or write error.
+pub fn reencrypt_scratches(folder: &Path, old: &Vault, new: &Vault) -> io::Result<Vec<PathBuf>> {
+    let mut changed = Vec::new();
+    for path in scratch_files(folder) {
+        let bytes = fs::read(&path)?;
+        if let Ok(plain) = old.decrypt(&bytes) {
+            write_atomically(&path, &new.encrypt(&plain))?;
+            changed.push(path);
+        }
+    }
+    Ok(changed)
 }
 
 /// The new path for renaming `path` to `new_name` in the same folder.
@@ -114,7 +175,7 @@ mod tests {
     fn creates_an_empty_file_and_the_folder() {
         let temp = TempFolder::new();
         let folder = temp.path().join("scratches");
-        let path = create_scratch(&folder, "2026-10-28").unwrap();
+        let path = create_scratch(&folder, "2026-10-28", None).unwrap();
         assert_eq!(path.parent(), Some(folder.as_path()));
         assert_eq!(fs::read_to_string(&path).unwrap(), "");
         let name = path.file_name().unwrap().to_str().unwrap();
@@ -127,7 +188,7 @@ mod tests {
         let temp = TempFolder::new();
         let mut paths = Vec::new();
         for _ in 0..20 {
-            paths.push(create_scratch(temp.path(), "2026-10-28").unwrap());
+            paths.push(create_scratch(temp.path(), "2026-10-28", None).unwrap());
         }
         paths.sort();
         paths.dedup();
@@ -145,5 +206,25 @@ mod tests {
         assert!(rename_target(&file, "sub/x.md").is_err());
         assert!(rename_target(&file, "..").is_err());
         assert_eq!(rename_target(&file, "taken.md"), Err("taken.md already exists".to_string()));
+    }
+
+    #[test]
+    fn encrypted_scratches_and_new_passwords() {
+        let temp = TempFolder::new();
+        let old = Vault::create("one").0;
+        let new = Vault::create("two").0;
+        let sealed = create_scratch(temp.path(), "2026-10-28", Some(&old)).unwrap();
+        assert_eq!(old.decrypt(&fs::read(&sealed).unwrap()).unwrap(), b"");
+        let plain = temp.write("plain.md", "words");
+        temp.write("image.png", "not a scratch");
+
+        assert_eq!(encrypt_scratches(temp.path(), &old).unwrap(), vec![plain.clone()]);
+        assert_eq!(old.decrypt(&fs::read(&plain).unwrap()).unwrap(), b"words");
+        assert_eq!(fs::read(temp.path().join("image.png")).unwrap(), b"not a scratch");
+        assert!(encrypt_scratches(temp.path(), &old).unwrap().is_empty(), "already done");
+
+        assert_eq!(reencrypt_scratches(temp.path(), &old, &new).unwrap().len(), 2);
+        assert_eq!(new.decrypt(&fs::read(&plain).unwrap()).unwrap(), b"words");
+        assert!(old.decrypt(&fs::read(&plain).unwrap()).is_err());
     }
 }

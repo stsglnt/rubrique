@@ -12,6 +12,7 @@ mod helm;
 mod images;
 mod install;
 mod naming;
+mod privacy;
 mod remote;
 mod summary;
 mod tabs;
@@ -45,7 +46,9 @@ use crate::markdown::render::CodeAction;
 use crate::media::{MediaKind, format_name, image_uri, media_kind, open_with_system, size_text};
 use crate::scratch::{create_scratch, rename_target};
 use crate::settings::accessibility::TextSize;
-use crate::settings::view::{AiInfo, ScratchInfo, SettingsAction, SettingsGroup, VoiceInfo, show_settings};
+use crate::settings::view::{
+    AiInfo, PrivacyInfo, ScratchInfo, SettingsAction, SettingsGroup, VoiceInfo, show_settings,
+};
 use crate::settings::{Settings, default_agents_folder, default_scratch_folder, default_skills_folder, themes_folder};
 use crate::theme::catalog::Themes;
 use crate::theme::style::{apply_accessibility, apply_theme, page_fill};
@@ -98,6 +101,7 @@ const TEXT_LARGER: [KeyboardShortcut; 2] =
     [KeyboardShortcut::new(Modifiers::COMMAND, Key::Plus), KeyboardShortcut::new(Modifiers::COMMAND, Key::Equals)];
 const TEXT_SMALLER: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Minus);
 const TEXT_DEFAULT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Num0);
+const LOCK: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::L);
 
 /// What a tab shows (and, for the active tab, the right panel).
 #[derive(Debug)]
@@ -130,6 +134,10 @@ enum OpenFile {
         path: PathBuf,
         reason: Unsupported,
     },
+    /// An encrypted scratch waiting for the scratch password.
+    Locked {
+        path: PathBuf,
+    },
 }
 
 impl OpenFile {
@@ -138,7 +146,7 @@ impl OpenFile {
         match self {
             OpenFile::Nothing => None,
             OpenFile::Text { document, .. } => Some(&document.path),
-            OpenFile::Media { path, .. } | OpenFile::Unsupported { path, .. } => Some(path),
+            OpenFile::Media { path, .. } | OpenFile::Unsupported { path, .. } | OpenFile::Locked { path } => Some(path),
         }
     }
 
@@ -147,7 +155,9 @@ impl OpenFile {
         match self {
             OpenFile::Nothing => {}
             OpenFile::Text { document, .. } => document.path = target.to_path_buf(),
-            OpenFile::Media { path, .. } | OpenFile::Unsupported { path, .. } => *path = target.to_path_buf(),
+            OpenFile::Media { path, .. } | OpenFile::Unsupported { path, .. } | OpenFile::Locked { path } => {
+                *path = target.to_path_buf();
+            }
         }
     }
 
@@ -243,6 +253,8 @@ pub struct RubriqueApp {
     install: install::InstallState,
     /// Unsaved edits kept between runs.
     drafts: drafts::DraftState,
+    /// Scratch key for this session, PIN lock screen and their dialogs.
+    privacy: privacy::PrivacyState,
     /// Remote folders: change checks, image downloads, the add dialog.
     remote: remote::RemoteState,
     /// The open file's Helm chart and the Helm panel.
@@ -283,6 +295,7 @@ impl RubriqueApp {
         apply_accessibility(ctx, &settings.accessibility);
         // rubrique steps through its own text sizes instead (see `handle_text_size_keys`).
         ctx.options_mut(|options| options.zoom_with_keyboard = false);
+        let privacy = privacy::PrivacyState::new(settings.privacy.pin_hash.is_some());
         let mut app = RubriqueApp {
             settings,
             roots: roots.into_iter().map(FsNode::new_root).collect(),
@@ -314,6 +327,7 @@ impl RubriqueApp {
             voice: voice::VoiceState::default(),
             install: install::InstallState::default(),
             drafts: drafts::DraftState::default(),
+            privacy,
             remote: remote::RemoteState::default(),
             helm: helm::HelmState::default(),
         };
@@ -392,7 +406,7 @@ impl RubriqueApp {
                 }
             };
         }
-        match Document::open(&path) {
+        match Document::open(&path, self.privacy.vault.as_ref()) {
             Ok(Opened::Text(document)) => {
                 if crate::remote::is_mirror(&document.path) {
                     self.fetch_remote_images(&document.path, &document.text);
@@ -400,6 +414,7 @@ impl RubriqueApp {
                 Some(OpenFile::Text { document, preview: None, disk_notice: None, editor: None, source: false })
             }
             Ok(Opened::Unsupported(reason)) => Some(OpenFile::Unsupported { path, reason }),
+            Ok(Opened::Locked) => Some(OpenFile::Locked { path }),
             Err(error) => {
                 self.show_status(format!("Cannot open {}: {error}", crate::remote::display(&path)));
                 None
@@ -614,6 +629,13 @@ impl RubriqueApp {
             let text = absolute_path_text(path);
             self.copy_to_clipboard(ctx, text);
         }
+        if ctx.input_mut(|input| input.consume_shortcut(&LOCK)) {
+            if self.settings.privacy.pin_hash.is_some() {
+                self.lock_app();
+            } else {
+                self.show_status("Set a PIN in Settings → Privacy to lock the window".to_string());
+            }
+        }
         if ctx.input_mut(|input| input.consume_shortcut(&TOGGLE_SETTINGS)) {
             self.toggle_settings();
         }
@@ -717,7 +739,7 @@ impl RubriqueApp {
 
     /// "name - rubrique", with the dirty marker; sent only when it changes.
     fn update_title(&mut self, ctx: &Context) {
-        let name = self.open_file.path().map(name_text);
+        let name = if self.app_locked() { None } else { self.open_file.path().map(name_text) };
         let dirty = if self.open_file.is_dirty() { DIRTY_MARKER } else { "" };
         let title = match name {
             Some(name) => format!("{dirty}{name} - rubrique"),
@@ -862,6 +884,7 @@ impl RubriqueApp {
             local_model: self.install.local_model.as_ref(),
             install: &install,
         };
+        let privacy = PrivacyInfo { settings: &mut self.settings.privacy, unlocked: self.privacy.vault.is_some() };
         let voice = VoiceInfo {
             settings: &mut self.settings.voice,
             found: self.voice.program_found.as_deref(),
@@ -878,6 +901,7 @@ impl RubriqueApp {
             &mut self.settings.accessibility,
             scratch,
             &mut self.settings.note_marks,
+            privacy,
             ai,
             voice,
         );
@@ -931,6 +955,8 @@ impl RubriqueApp {
             }
             SettingsAction::Install(action) => self.install_action(ui.ctx(), action),
             SettingsAction::Close => self.settings_open = false,
+            // The Privacy buttons (privacy.rs).
+            _ => self.privacy_action(&action),
         }
     }
 
@@ -939,6 +965,11 @@ impl RubriqueApp {
     /// changes show too.
     fn open_in_browser(&mut self, ctx: &Context) {
         self.finish_block_edit();
+        if matches!(&self.open_file, OpenFile::Text { document, .. } if document.is_encrypted()) {
+            // The browser needs a plain copy on disk.
+            self.show_status("Encrypted scratches do not open in the browser".to_string());
+            return;
+        }
         let OpenFile::Text { document, .. } = &self.open_file else {
             return;
         };
@@ -1077,7 +1108,11 @@ impl RubriqueApp {
             self.show_status("No folder for scratch files: set one in Settings".to_string());
             return;
         };
-        let path = match create_scratch(&folder, &crate::date::today_iso()) {
+        let Ok(vault) = self.new_scratch_vault() else {
+            // The password dialog opens and makes the scratch after.
+            return;
+        };
+        let path = match create_scratch(&folder, &crate::date::today_iso(), vault.as_deref()) {
             Ok(path) => path,
             Err(error) => {
                 self.show_status(format!("Cannot create a scratch in {}: {error}", folder.display()));
@@ -1258,7 +1293,13 @@ impl RubriqueApp {
         let mut merge_action = None;
         let mut preview_event = None;
         let mut media_event = None;
+        if let OpenFile::Locked { path } = &self.open_file {
+            let path = path.clone();
+            self.locked_tab(ui, &path);
+            return;
+        }
         match &mut self.open_file {
+            OpenFile::Locked { .. } => {}
             OpenFile::Nothing => {
                 ui.centered_and_justified(|ui| ui.label(RichText::new("Pick a file in the explorer").weak()));
             }
@@ -2050,6 +2091,16 @@ impl eframe::App for RubriqueApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.handle_window_events(&ctx);
+        self.track_activity(&ctx);
+        if self.app_locked() {
+            // Only the PIN screen; drafts and background work go on.
+            self.poll_drafts(&ctx);
+            self.poll_voice(&ctx);
+            self.poll_install(&ctx);
+            self.lock_screen(ui);
+            self.update_title(&ctx);
+            return;
+        }
         self.handle_shortcuts(&ctx);
         self.poll_disk(&ctx);
         self.poll_drafts(&ctx);
@@ -2112,6 +2163,7 @@ impl eframe::App for RubriqueApp {
         self.note_dialog(&ctx);
         self.rename_dialog(&ctx);
         self.add_remote_dialog(&ctx);
+        self.secret_dialog(&ctx);
         self.update_title(&ctx);
     }
 

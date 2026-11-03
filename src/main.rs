@@ -3,6 +3,7 @@
 
 mod ai;
 mod app;
+mod crypto;
 mod date;
 mod document;
 mod explorer;

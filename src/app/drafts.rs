@@ -5,11 +5,13 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use eframe::egui::Context;
 
 use super::{OpenFile, RubriqueApp};
+use crate::crypto::Vault;
 use crate::document::draft::{self, Draft, DraftStore, Restore};
 use crate::document::text_file::{DiskState, Document};
 use crate::explorer::paths::name_text;
@@ -42,6 +44,14 @@ impl Default for DraftState {
     }
 }
 
+impl DraftState {
+    /// Stop tracking the draft of `path` without deleting it: its tab now
+    /// waits for the scratch password, and the draft is restored after.
+    pub(super) fn release(&mut self, path: &Path) {
+        self.written.remove(&draft::key(path));
+    }
+}
+
 /// How one draft came back at start.
 enum Restored {
     Continued,
@@ -56,7 +66,7 @@ impl RubriqueApp {
     /// only have a draft (opened after the last clean quit, before a crash).
     pub(super) fn reopen_tabs(&mut self, saved_tabs: Vec<PathBuf>) {
         let mut drafts: HashMap<PathBuf, Draft> = match &self.drafts.store {
-            Some(store) => store.all().into_iter().map(|draft| (draft.path.clone(), draft)).collect(),
+            Some(store) => store.all(None).into_iter().map(|draft| (draft.path.clone(), draft)).collect(),
             None => HashMap::new(),
         };
         let mut restored = Vec::new();
@@ -85,7 +95,11 @@ impl RubriqueApp {
     fn open_with_draft(&mut self, found: Draft) -> Option<Restored> {
         let path = found.path.clone();
         if !path.exists() {
-            let document = Document::missing(&path, found.text, found.base_text);
+            let vault = if found.sealed { self.privacy.vault.clone() } else { None };
+            if found.sealed && vault.is_none() {
+                return None;
+            }
+            let document = Document::missing(&path, found.text, found.base_text, vault);
             self.remember_draft(&document);
             self.add_tab(OpenFile::Text {
                 document,
@@ -124,6 +138,34 @@ impl RubriqueApp {
             let _ = store.remove(&path);
         }
         restored
+    }
+
+    /// After the scratch password is entered: put back the edits of
+    /// encrypted scratches kept while they were locked.
+    pub(super) fn restore_sealed_drafts(&mut self) {
+        let (Some(store), Some(vault)) = (&self.drafts.store, &self.privacy.vault) else {
+            return;
+        };
+        let sealed: Vec<Draft> = store.all(Some(vault)).into_iter().filter(|found| found.sealed).collect();
+        let mut restored = Vec::new();
+        for found in sealed {
+            if !self.drafts.written.contains_key(&found.path) {
+                restored.extend(self.open_with_draft(found));
+            }
+        }
+        self.report_restored(&restored);
+    }
+
+    /// Seal the drafts kept with `old` again with `new` (a new password).
+    pub(super) fn reseal_drafts(&mut self, old: &Vault, new: &Arc<Vault>) {
+        let Some(store) = &self.drafts.store else {
+            return;
+        };
+        for found in store.all(Some(old)).into_iter().filter(|found| found.sealed) {
+            if let Err(error) = store.write(&found, Some(new)) {
+                eprintln!("rubrique: could not seal the draft of {} again: {error}", found.path.display());
+            }
+        }
     }
 
     /// Note that the draft on disk holds `document` as it is now.
@@ -209,7 +251,7 @@ impl RubriqueApp {
             if !document.is_dirty() {
                 forget(store, written, &key);
             } else if write && written.get(&key) != Some(&document.revision()) {
-                match store.write(&Draft::of(document)) {
+                match store.write(&Draft::of(document), document.vault()) {
                     Ok(()) => {
                         written.insert(key.clone(), document.revision());
                     }
