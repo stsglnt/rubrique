@@ -17,6 +17,10 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Added
 
+- **Tables** (`| a | b |` with a `| --- | --- |` row) show as a grid in the
+  preview, in AI answers and in **Open in browser**, with bold headers,
+  striped rows and the column alignment from the colons. A table can follow
+  a paragraph line directly, as on GitHub.
 - **Find** (`Cmd/Ctrl+F`): a bar at the top right of the page. Matches in
   the open file are tinted, the current one in the accent color; Enter,
   Shift+Enter, `Cmd/Ctrl+G` and `Cmd/Ctrl+Shift+G` step through them, and

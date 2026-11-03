@@ -4,7 +4,7 @@ use eframe::egui::{self, Align, Color32, Layout, Margin, RichText, Sense, Stroke
 
 use std::path::{Path, PathBuf};
 
-use super::blocks::{Block, List, parse_blocks};
+use super::blocks::{Block, ColumnAlign, List, Table, parse_blocks};
 use super::inlines::{Inline, is_openable_url, parse_inlines};
 use crate::media::{MediaKind, image_uri, media_kind_of_url};
 
@@ -91,6 +91,9 @@ const PREVIEW_IMAGE_MAX_HEIGHT: f32 = 720.0;
 const IMAGE_RADIUS: u8 = 4;
 /// Total space a thematic break takes, its line in the middle.
 const RULE_SPACING: f32 = 20.0;
+/// Space between table columns, and between table rows.
+const TABLE_COLUMN_GAP: f32 = 18.0;
+const TABLE_ROW_GAP: f32 = 6.0;
 
 /// Render blocks inside `depth` lists (bullets change shape with depth),
 /// `gap` apart. List items use a smaller gap so nested lists stay tight.
@@ -157,6 +160,7 @@ fn render_block(ui: &mut Ui, look: &Look, block: &Block, depth: usize) {
         Block::Code { info, code } => render_code(ui, look, info, code),
         Block::Quote(blocks) => render_quote(ui, look, blocks, depth),
         Block::List(list) => render_list(ui, look, list, depth),
+        Block::Table(table) => render_table(ui, look, table),
         Block::ThematicBreak => {
             ui.add(egui::Separator::default().spacing(RULE_SPACING));
         }
@@ -291,6 +295,41 @@ fn render_list(ui: &mut Ui, look: &Look, list: &List, depth: usize) {
             });
         }
     });
+}
+
+/// A table: bold header cells over striped rows, a line under the header.
+fn render_table(ui: &mut Ui, look: &Look, table: &Table) {
+    let body = TextStyle::body(look);
+    let header = TextStyle { strong: true, ..body.clone() };
+    let mut header_bottom = 0.0_f32;
+    let grid = egui::Grid::new(ui.next_auto_id()).striped(true).spacing(vec2(TABLE_COLUMN_GAP, TABLE_ROW_GAP));
+    ui.skip_ahead_auto_ids(1);
+    let response = grid.show(ui, |ui| {
+        for (column, cell) in table.header.iter().enumerate() {
+            table_cell(ui, cell, &header, table.align[column]);
+            header_bottom = header_bottom.max(ui.min_rect().bottom());
+        }
+        ui.end_row();
+        for row in &table.rows {
+            for (column, cell) in row.iter().enumerate() {
+                table_cell(ui, cell, &body, table.align[column]);
+            }
+            ui.end_row();
+        }
+    });
+    let rect = response.response.rect;
+    let y = header_bottom + TABLE_ROW_GAP / 2.0;
+    ui.painter().hline(rect.x_range(), y, ui.visuals().widgets.noninteractive.bg_stroke);
+}
+
+/// One cell, aligned as its column asks.
+fn table_cell(ui: &mut Ui, cell: &[Inline], style: &TextStyle, align: ColumnAlign) {
+    let layout = match align {
+        ColumnAlign::Left => Layout::left_to_right(Align::TOP),
+        ColumnAlign::Center => Layout::top_down(Align::Center),
+        ColumnAlign::Right => Layout::right_to_left(Align::TOP),
+    };
+    ui.with_layout(layout, |ui| render_inlines(ui, cell, style));
 }
 
 /// Room for a list marker, one text line tall.
