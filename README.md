@@ -55,7 +55,8 @@ read-only sandbox. Cloud agents run only in folders you allowed.
   **Transcribe** it with whisper.cpp on your computer.
 - **Drop images and audio** on the page: they are copied next to the note
   and linked where the cursor is.
-- **Edit in the preview**: click a block to edit just that block.
+- **Edit in the preview**: click a block to edit just that block, or the
+  empty space under the last one to add a new block.
 - **Scratch files** (`Cmd/Ctrl+N`): an empty note for later. A local model
   can suggest a name once you save it.
 - **Encrypted scratches** (optional): Settings → Privacy → **Encrypt new
@@ -73,7 +74,9 @@ read-only sandbox. Cloud agents run only in folders you allowed.
 ## Files
 
 - **Explorer**: several folders at once. **Markdown only** hides other files.
+  A speech bubble can mark files that have notes (Settings → Files).
 - **Tabs**: each tab keeps its unsaved changes, cursor and undo history.
+  Files with unsaved changes are green in the explorer.
 - **Images and videos** open in their own view.
 - **Safe saves**: rubrique never reformats your file. If another program
   changes it, you get a side-by-side merge. Quitting keeps unsaved edits

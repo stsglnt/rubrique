@@ -422,9 +422,12 @@ fn show_tab(ui: &mut Ui, tab: &TabView, index: usize, count: usize) -> Option<Ta
     if tab.dirty && !hovered {
         ui.painter().circle_filled(close_rect.center(), DIRTY_DOT, visuals.text_color());
     } else if hovered || tab.active {
-        let close = ui.put(close_rect, |ui: &mut Ui| {
-            small_icon_button(ui, Icon::Close, CLOSE_SIZE, "Close tab", "Close (Cmd+W)")
-        });
+        // A child ui at the cross's rect, not `ui.put`: `put` moves the row's
+        // cursor back to the cross's right edge, which shifted the tabs after
+        // this one 6 points left whenever the cross appeared.
+        let layout = egui::Layout::centered_and_justified(egui::Direction::TopDown);
+        let mut cross = ui.new_child(egui::UiBuilder::new().max_rect(close_rect).layout(layout));
+        let close = small_icon_button(&mut cross, Icon::Close, CLOSE_SIZE, "Close tab", "Close (Cmd+W)");
         if close.clicked() {
             action = Some(TabAction::Close(index));
         }
@@ -454,4 +457,58 @@ fn show_tab(ui: &mut Ui, tab: &TabView, index: usize, count: usize) -> Option<Ta
         }
     });
     action
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+    use eframe::egui::{Context, Event, Pos2, RawInput, Rect, Vec2};
+
+    /// Lay out three tabs (the middle one active) and return where each one
+    /// starts and the top of the row, after a few frames so hover settles.
+    fn tab_positions(pointer: Option<Pos2>) -> Vec<(f32, f32)> {
+        let ctx = Context::default();
+        let mut positions = Vec::new();
+        for _ in 0..3 {
+            let mut input = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                ..Default::default()
+            };
+            if let Some(pos) = pointer {
+                input.events.push(Event::PointerMoved(pos));
+            }
+            positions.clear();
+            let mut output = ctx.run_ui(input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        for index in 0..3 {
+                            let tab = TabView {
+                                name: format!("file-{index}.md"),
+                                path: String::new(),
+                                dirty: index == 2,
+                                active: index == 1,
+                            };
+                            let left = ui.cursor().left();
+                            show_tab(ui, &tab, index, 3);
+                            positions.push((left, ui.min_rect().top()));
+                        }
+                    });
+                });
+            });
+            // No screen here: the font texture is never uploaded.
+            output.textures_delta.clear();
+        }
+        positions
+    }
+
+    #[test]
+    fn hovering_a_tab_moves_no_tab() {
+        let still = tab_positions(None);
+        // Over the first tab, then over the dirty third one.
+        let first = tab_positions(Some(pos2(20.0, 20.0)));
+        let third = tab_positions(Some(pos2(still[2].0 + 20.0, 20.0)));
+        assert_eq!(still, first);
+        assert_eq!(still, third);
+    }
 }

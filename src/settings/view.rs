@@ -219,6 +219,7 @@ pub fn show_settings(
     themes_folder: Option<&Path>,
     accessibility: &mut AccessibilitySettings,
     scratch: ScratchInfo,
+    note_marks: &mut bool,
     privacy: PrivacyInfo,
     ai: AiInfo,
     voice: VoiceInfo,
@@ -262,7 +263,7 @@ pub fn show_settings(
                 let picked = match *group {
                     SettingsGroup::Appearance => appearance_section(ui, themes, current, themes_folder),
                     SettingsGroup::Accessibility => accessibility_section(ui, accessibility),
-                    SettingsGroup::Files => files_section(ui, scratch),
+                    SettingsGroup::Files => files_section(ui, scratch, note_marks),
                     SettingsGroup::Privacy => privacy_section(ui, privacy),
                     SettingsGroup::Ai => ai_section(ui, ai),
                     SettingsGroup::Skills => {
@@ -363,9 +364,14 @@ fn accessibility_section(ui: &mut Ui, settings: &mut AccessibilitySettings) -> O
     changed.then_some(SettingsAction::AccessibilityChanged)
 }
 
-/// Files: where scratch files go.
-fn files_section(ui: &mut Ui, scratch: ScratchInfo) -> Option<SettingsAction> {
+/// Files: where scratch files go, and the explorer's note marker.
+fn files_section(ui: &mut Ui, scratch: ScratchInfo, note_marks: &mut bool) -> Option<SettingsAction> {
     let mut action = None;
+    ui.label(RichText::new("Explorer").strong());
+    ui.checkbox(note_marks, "Mark files that have notes")
+        .on_hover_text("A small speech bubble before the name of a Markdown file with notes");
+    ui.add_space(6.0);
+    ui.separator();
     ui.label(RichText::new("Scratches").strong());
     ui.label(RichText::new("New scratch files (Cmd+N) go to this folder.").weak());
     if let Some(folder) = scratch.folder {

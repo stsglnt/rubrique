@@ -8,6 +8,13 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Fixed
+
+- Scrolling a page to its end with a trackpad no longer overshoots and
+  springs back (the "jump" at the bottom of the preview).
+- Hovering a tab shifted the tabs to its right by a few pixels while the
+  close cross was shown; the tabs after the active one sat too close too.
+
 ### Added
 
 - **Encrypted scratches**: Settings → **Privacy** → **Encrypt new scratches**
@@ -24,7 +31,20 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   off); `Cmd/Ctrl+L` locks now. After five wrong PINs it waits 30 seconds.
   The PIN locks the window only, it does not encrypt files. Locking also
   locks encrypted scratches again.
-
+- **Unsaved files are green in the explorer**, with a dot after the name,
+  for every tab with unsaved changes, not only the open one.
+- **Double-click a file in the explorer to rename it.** A single click
+  still opens it.
+- **Files with notes get a speech bubble** before their name in the
+  explorer. Turn it on in Settings → Files → **Mark files that have notes**.
+  Files are checked when shown and read again only after they change.
+- **Click the empty space under the last block** in the preview to type a
+  new block there. It goes to the end of the file after a blank line; an
+  empty box adds nothing.
+- **Tables** (`| a | b |` with a `| --- | --- |` row) show as a grid in the
+  preview, in AI answers and in **Open in browser**, with bold headers,
+  striped rows and the column alignment from the colons. A table can follow
+  a paragraph line directly, as on GitHub.
 - **Find** (`Cmd/Ctrl+F`): a bar at the top right of the page. Matches in
   the open file are tinted, the current one in the accent color; Enter,
   Shift+Enter, `Cmd/Ctrl+G` and `Cmd/Ctrl+Shift+G` step through them, and
