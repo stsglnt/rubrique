@@ -8,6 +8,7 @@ use eframe::egui::{self, Context, Key, KeyboardShortcut, Modifiers, RichText, Ui
 mod ask;
 mod drafts;
 mod find;
+mod helm;
 mod images;
 mod install;
 mod naming;
@@ -19,6 +20,7 @@ mod voice;
 use crate::ai::agents::{self, Agent};
 use crate::ai::skills::{self, Skill};
 use crate::ai::{self, AiTool};
+use crate::document::highlighting::Syntax;
 use crate::document::media_view::{MediaEvent, image_pixels, show_image, show_video};
 use crate::document::merge::MergeSession;
 use crate::document::merge_view::{MergeAction, show_merge};
@@ -243,6 +245,8 @@ pub struct RubriqueApp {
     drafts: drafts::DraftState,
     /// Remote folders: change checks, image downloads, the add dialog.
     remote: remote::RemoteState,
+    /// The open file's Helm chart and the Helm panel.
+    helm: helm::HelmState,
 }
 
 /// A note in the making (new, or an existing one being edited).
@@ -311,6 +315,7 @@ impl RubriqueApp {
             install: install::InstallState::default(),
             drafts: drafts::DraftState::default(),
             remote: remote::RemoteState::default(),
+            helm: helm::HelmState::default(),
         };
         preview_selection::install(ctx);
         egui_extras::install_image_loaders(ctx);
@@ -1292,10 +1297,10 @@ impl RubriqueApp {
                     self.voice.preview_hover = output.hovered;
                 } else {
                     let was_dirty = document.is_dirty();
-                    let markdown = is_markdown_path(&document.path);
+                    let syntax = Syntax::of(&document.path);
                     let line_numbers = self.settings.accessibility.line_numbers;
                     let find = find::highlight(&mut self.find);
-                    if let Some(stats) = show_editor(ui, document, markdown, line_numbers, find) {
+                    if let Some(stats) = show_editor(ui, document, syntax, line_numbers, find) {
                         self.stats = Some(stats);
                     }
                     // Any edit invalidates the cached preview.
@@ -1829,6 +1834,9 @@ impl RubriqueApp {
             {
                 self.format_text(ui.ctx());
             }
+            if is_text {
+                self.helm_button(ui);
+            }
             if is_text && (is_markdown || is_html) {
                 let browser =
                     ui.small_button("Open in browser").on_hover_text("Show it in your web browser (Cmd+Shift+B)");
@@ -2084,6 +2092,13 @@ impl eframe::App for RubriqueApp {
                 .default_size(AI_OUTPUT_HEIGHT)
                 .frame(egui::Frame::side_top_panel(&style).inner_margin(0))
                 .show(ui, |ui| self.ai_output_panel(ui));
+        }
+        if self.helm.panel.is_some() && self.merging.is_none() {
+            egui::Panel::bottom("helm-output")
+                .resizable(true)
+                .default_size(AI_OUTPUT_HEIGHT)
+                .frame(egui::Frame::side_top_panel(&style).inner_margin(0))
+                .show(ui, |ui| self.helm_panel(ui));
         }
         egui::CentralPanel::default().frame(page_frame).show(ui, |ui| self.document_area(ui));
         self.handle_dropped_files(&ctx);

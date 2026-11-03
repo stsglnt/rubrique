@@ -8,6 +8,7 @@ mod document;
 mod explorer;
 mod find;
 mod format;
+mod helm;
 mod icons;
 mod install;
 mod markdown;
