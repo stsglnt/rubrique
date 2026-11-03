@@ -22,9 +22,10 @@ Download the latest version from [Releases](https://github.com/witseko/rubrique/
 | Debian, Ubuntu | `sudo apt install ./rubrique_X.Y.Z-1_amd64.deb` |
 | Other Linux | Unpack the `.tar.gz`, run `./install.sh` (to `~/.local`) |
 
-From 0.5.0 the macOS app is signed and notarized. For 0.4.x and older,
-macOS blocks it on first open: run
-`xattr -dr com.apple.quarantine /Applications/rubrique.app` once.
+The macOS app is not notarized yet (a signed version is coming), so macOS
+blocks it on first open: run
+`xattr -dr com.apple.quarantine /Applications/rubrique.app` once, or click
+**Open Anyway** in System Settings → Privacy & Security.
 
 ## Agents
 
