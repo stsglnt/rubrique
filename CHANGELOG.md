@@ -56,12 +56,11 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Changed
 
-- rubrique is now described as an **agentic Markdown editor**: a Markdown
-  editor built around the agents you already run (Claude Code, Codex, Grok
-  or a local model), with every change reviewed before it is applied. The
-  README, the package descriptions and the repository description say so,
-  and [`docs/positioning.md`](docs/positioning.md) keeps the wording in one
-  place. Nothing in the app changed.
+- rubrique is now described as **a fast editor, agentic on demand**.
+  Markdown is what it does best, not what it is. Which agents, and on which
+  systems, are details that may change. The README, the package descriptions
+  and the repository description say so; [`docs/positioning.md`](docs/positioning.md)
+  keeps the wording in one place. Nothing in the app changed.
 
 ## [0.4.4] - 2026-10-31
 
