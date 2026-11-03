@@ -17,6 +17,9 @@ impl RubriqueApp {
     /// Add an image file to the open note: copied into the `images` folder
     /// next to it (unless it is already there) and linked at the cursor.
     pub(super) fn add_image_file(&mut self, ctx: &Context, image: &Path) {
+        if self.refuse_remote_note("images") {
+            return;
+        }
         let Some((note, _)) = self.memo_note() else {
             self.show_status("Open a Markdown or HTML file to add images".to_string());
             return;

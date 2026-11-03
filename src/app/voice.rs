@@ -132,6 +132,9 @@ impl RubriqueApp {
     }
 
     fn start_recording(&mut self) {
+        if self.refuse_remote_note("voice memos") {
+            return;
+        }
         let Some((note, _)) = self.memo_note() else {
             self.show_status("Open a Markdown or HTML file to record a voice memo".to_string());
             return;
@@ -228,6 +231,9 @@ impl RubriqueApp {
     /// Add an audio file to the open note: copied into the memos folder
     /// when it comes from elsewhere (unless Settings says to link it in place).
     fn add_audio_file(&mut self, ctx: &Context, audio: &Path) {
+        if self.refuse_remote_note("audio") {
+            return;
+        }
         let Some((note, _)) = self.memo_note() else {
             self.show_status("Open a Markdown or HTML file to add audio".to_string());
             return;
@@ -257,6 +263,9 @@ impl RubriqueApp {
 
     /// Pick an audio file in the system dialog and add it.
     pub(super) fn choose_audio_file(&mut self, ctx: &Context) {
+        if self.refuse_remote_note("audio") {
+            return;
+        }
         let Some((note, _)) = self.memo_note() else {
             self.show_status("Open a Markdown or HTML file to add audio".to_string());
             return;

@@ -23,6 +23,16 @@ pub fn is_markdown_path(path: &Path) -> bool {
     MARKDOWN_BARE_NAMES.iter().any(|known| name.eq_ignore_ascii_case(known))
 }
 
+/// The name shown for a root folder: the folder's name, and the host for a
+/// remote folder ("notes on server").
+pub fn root_name(path: &Path) -> String {
+    let name = super::paths::name_text(path);
+    match crate::remote::from_mirror(path) {
+        Some(remote) => format!("{name} on {}", remote.host),
+        None => name,
+    }
+}
+
 /// Children of a folder, once someone expanded it.
 #[derive(Debug)]
 pub enum Children {
@@ -66,7 +76,7 @@ pub struct FsNode {
 impl FsNode {
     /// Root node for a folder; starts expanded with its children loaded.
     pub fn new_root(path: PathBuf) -> Self {
-        let name = super::paths::name_text(&path);
+        let name = root_name(&path);
         let mut root = FsNode {
             path,
             name,
@@ -135,6 +145,9 @@ impl FsNode {
 ///
 /// Fails when the folder cannot be listed (missing, permissions, ...).
 pub fn read_folder(folder: &Path) -> std::io::Result<Vec<FsNode>> {
+    if let Some(remote) = crate::remote::from_mirror(folder) {
+        return read_remote_folder(folder, &remote);
+    }
     // Canonical path of the folder being read, used for symlink loop checks.
     let canonical_folder = fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
     let mut nodes = Vec::new();
@@ -142,6 +155,32 @@ pub fn read_folder(folder: &Path) -> std::io::Result<Vec<FsNode>> {
         let entry = entry?;
         nodes.push(node_from_entry(&entry, &canonical_folder));
     }
+    nodes.sort_by(compare_nodes);
+    Ok(nodes)
+}
+
+/// Read a folder on a host. Entries get mirror paths under `folder`.
+fn read_remote_folder(folder: &Path, remote: &crate::remote::RemotePath) -> std::io::Result<Vec<FsNode>> {
+    let entries = crate::remote::commands::list(&remote.host, &remote.path)?;
+    // The mirror folder is where agents run and images are kept.
+    let _ = fs::create_dir_all(folder);
+    let mut nodes: Vec<FsNode> = entries
+        .into_iter()
+        .map(|entry| FsNode {
+            path: folder.join(&entry.name),
+            kind: if entry.is_loop {
+                NodeKind::SymlinkLoop
+            } else if entry.is_folder {
+                NodeKind::Folder
+            } else {
+                NodeKind::File
+            },
+            is_symlink: entry.is_symlink,
+            name: entry.name,
+            expanded: false,
+            children: Children::NotLoaded,
+        })
+        .collect();
     nodes.sort_by(compare_nodes);
     Ok(nodes)
 }
@@ -268,6 +307,25 @@ mod tests {
         assert!(matches!(node.children, Children::Failed(_)));
         node.refresh();
         assert!(matches!(node.children, Children::Failed(_)));
+    }
+
+    #[test]
+    fn remote_folders_list_like_local_ones() {
+        let temp = TempFolder::new();
+        temp.write("b.md", "");
+        temp.write("A.txt", "");
+        temp.make_folder("zeta");
+        temp.write("docs/inner.md", "");
+        let mirror = crate::remote::testing::mirror_of("tree-host", temp.path());
+        let mut root = FsNode::new_root(mirror.clone());
+        assert!(root.name.ends_with(" on tree-host"), "{}", root.name);
+        assert_eq!(names(loaded(&root)), ["docs", "zeta", "A.txt", "b.md"]);
+        assert_eq!(loaded(&root)[3].path, mirror.join("b.md"));
+        if let Children::Loaded(children) = &mut root.children {
+            children[0].toggle_expanded();
+        }
+        assert_eq!(names(loaded(&loaded(&root)[0])), ["inner.md"]);
+        assert!(mirror.is_dir());
     }
 
     #[test]

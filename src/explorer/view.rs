@@ -22,6 +22,8 @@ pub enum ExplorerAction {
     RemoveRoot(PathBuf),
     /// Ask the system for a folder to add as a root.
     AddFolder,
+    /// Ask for a folder on another computer to add as a root.
+    AddRemoteFolder,
     /// Create a new scratch file and open it.
     NewScratch,
     /// Ask for a new name for this file.
@@ -56,6 +58,7 @@ fn hovered_id() -> egui::Id {
 
 /// Read-only facts the tree needs while drawing.
 #[derive(Clone, Copy, Debug)]
+#[expect(clippy::struct_excessive_bools, reason = "independent display switches, not a state machine")]
 pub struct TreeContext<'a> {
     /// Root folder of the entry being drawn, for "Copy relative path".
     pub root: &'a Path,
@@ -67,6 +70,8 @@ pub struct TreeContext<'a> {
     pub open_file: Option<&'a Path>,
     /// The open file has unsaved changes (shows a dot after its name).
     pub open_file_dirty: bool,
+    /// Remote folders are turned on (shows "Add remote folder").
+    pub remote_enabled: bool,
 }
 
 /// Draw the explorer panel: "Add folder…", refresh, the Markdown filter and one tree per root folder.
@@ -80,6 +85,12 @@ pub fn show_explorer(
     ui.horizontal(|ui| {
         if icon_button(ui, Icon::FolderPlus, "Add folder", "Add a folder to the explorer", false).clicked() {
             action = Some(ExplorerAction::AddFolder);
+        }
+        if context.remote_enabled
+            && icon_button(ui, Icon::ServerPlus, "Add remote folder", "Add a folder on another computer (SSH)", false)
+                .clicked()
+        {
+            action = Some(ExplorerAction::AddRemoteFolder);
         }
         if icon_button(ui, Icon::NewScratch, "New scratch", "New scratch file for quick notes (Cmd+N)", false).clicked()
         {

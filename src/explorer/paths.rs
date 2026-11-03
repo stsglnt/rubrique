@@ -2,9 +2,10 @@
 
 use std::path::Path;
 
-/// Full path as shown to the user, e.g. `/home/a/notes/todo.md`.
+/// Full path as shown to the user, e.g. `/home/a/notes/todo.md`, or
+/// `server:/home/a/notes/todo.md` for a remote file.
 pub fn absolute_path_text(path: &Path) -> String {
-    path.display().to_string()
+    crate::remote::display(path)
 }
 
 /// Path relative to the explorer root, e.g. `docs/todo.md`.

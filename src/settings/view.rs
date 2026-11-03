@@ -28,6 +28,8 @@ pub enum SettingsAction {
     ChooseScratchFolder,
     /// Go back to the default scratch folder.
     ResetScratchFolder,
+    /// Remote folders were turned on or off, or the ssh program changed.
+    RemoteChanged,
     /// An AI command changed, so which tools are installed may have too.
     AiCommandChanged,
     /// Pick another skills folder.
@@ -92,12 +94,14 @@ pub struct AiInfo<'a> {
     pub install: &'a InstallStatus,
 }
 
-/// Where scratch files go, for the Scratches section.
-#[derive(Clone, Copy, Debug)]
+/// Where scratch files go, and remote folder settings, for the Files section.
+#[derive(Debug)]
 pub struct ScratchInfo<'a> {
     pub folder: Option<&'a Path>,
     /// The folder is the default one (so "Use default" has nothing to do).
     pub is_default: bool,
+    /// Remote folders over SSH.
+    pub remote: &'a mut crate::remote::RemoteSettings,
 }
 
 const TITLE_SIZE: f32 = 16.0;
@@ -342,6 +346,28 @@ fn files_section(ui: &mut Ui, scratch: ScratchInfo) -> Option<SettingsAction> {
             action = Some(SettingsAction::ResetScratchFolder);
         }
     });
+    ui.add_space(16.0);
+    ui.label(RichText::new("Remote folders").strong());
+    let remote = scratch.remote;
+    if ui.checkbox(&mut remote.enabled, "Open folders on other computers over SSH").changed() {
+        action = Some(SettingsAction::RemoteChanged);
+    }
+    ui.label(
+        RichText::new(
+            "Adds \"Add remote folder\" to the explorer. Uses your ssh setup (~/.ssh/config, keys, ssh-agent). \
+             Password logins are not supported: use a key or ssh-agent.",
+        )
+        .weak(),
+    );
+    if remote.enabled {
+        ui.horizontal(|ui| {
+            ui.label("ssh program");
+            let field = ui.add(egui::TextEdit::singleline(&mut remote.ssh_program).desired_width(220.0));
+            if field.lost_focus() || (field.changed() && !field.has_focus()) {
+                action = Some(SettingsAction::RemoteChanged);
+            }
+        });
+    }
     action
 }
 
@@ -889,6 +915,9 @@ fn paint_check(painter: &egui::Painter, center: egui::Pos2, color: Color32) {
 
 /// `folder` with the home folder shown as `~`, to keep it short.
 pub fn home_relative(folder: &Path) -> String {
+    if crate::remote::is_mirror(folder) {
+        return format!("local copy of {}", crate::remote::display(folder));
+    }
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     match home.as_deref().and_then(|home| folder.strip_prefix(home).ok()) {
         Some(rest) => Path::new("~").join(rest).display().to_string(),

@@ -83,7 +83,7 @@ pub fn rename_target(path: &Path, new_name: &str) -> Result<PathBuf, String> {
         return Err(format!("Not a valid file name: {name}"));
     }
     let target = path.with_file_name(name);
-    if target != path && target.exists() {
+    if target != path && crate::vfs::exists(&target) {
         return Err(format!("{name} already exists"));
     }
     Ok(target)

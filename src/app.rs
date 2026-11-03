@@ -11,6 +11,7 @@ mod find;
 mod images;
 mod install;
 mod naming;
+mod remote;
 mod summary;
 mod tabs;
 mod voice;
@@ -237,6 +238,8 @@ pub struct RubriqueApp {
     install: install::InstallState,
     /// Unsaved edits kept between runs.
     drafts: drafts::DraftState,
+    /// Remote folders: change checks, image downloads, the add dialog.
+    remote: remote::RemoteState,
 }
 
 /// A note in the making (new, or an existing one being edited).
@@ -303,6 +306,7 @@ impl RubriqueApp {
             voice: voice::VoiceState::default(),
             install: install::InstallState::default(),
             drafts: drafts::DraftState::default(),
+            remote: remote::RemoteState::default(),
         };
         preview_selection::install(ctx);
         egui_extras::install_image_loaders(ctx);
@@ -357,6 +361,14 @@ impl RubriqueApp {
     /// cannot be shown. `None` (with a status message) when it cannot be read.
     fn load_file(&mut self, path: PathBuf) -> Option<OpenFile> {
         if let Some(kind) = media_kind(&path) {
+            // A remote image or video is shown from its mirror copy.
+            if let Err(error) = crate::vfs::fetch_to_mirror(&path, remote::MAX_MEDIA_BYTES) {
+                self.show_status(format!("Cannot open {}: {error}", crate::remote::display(&path)));
+                return None;
+            }
+            if crate::remote::is_mirror(&path) {
+                self.repaint.forget_image(&image_uri(&path));
+            }
             return match std::fs::metadata(&path) {
                 Ok(metadata) => Some(OpenFile::Media {
                     path,
@@ -366,18 +378,21 @@ impl RubriqueApp {
                     actual_size: false,
                 }),
                 Err(error) => {
-                    self.show_status(format!("Cannot open {}: {error}", path.display()));
+                    self.show_status(format!("Cannot open {}: {error}", crate::remote::display(&path)));
                     None
                 }
             };
         }
         match Document::open(&path) {
             Ok(Opened::Text(document)) => {
+                if crate::remote::is_mirror(&document.path) {
+                    self.fetch_remote_images(&document.path, &document.text);
+                }
                 Some(OpenFile::Text { document, preview: None, disk_notice: None, editor: None, source: false })
             }
             Ok(Opened::Unsupported(reason)) => Some(OpenFile::Unsupported { path, reason }),
             Err(error) => {
-                self.show_status(format!("Cannot open {}: {error}", path.display()));
+                self.show_status(format!("Cannot open {}: {error}", crate::remote::display(&path)));
                 None
             }
         }
@@ -404,7 +419,7 @@ impl RubriqueApp {
     /// Add `path` as one more explorer root, unless it is already one.
     fn add_folder(&mut self, path: PathBuf) {
         if self.roots.iter().any(|root| root.path == path) {
-            self.show_status(format!("Already in the explorer: {}", path.display()));
+            self.show_status(format!("Already in the explorer: {}", crate::remote::display(&path)));
             return;
         }
         self.roots.push(FsNode::new_root(path));
@@ -429,11 +444,6 @@ impl RubriqueApp {
         self.remember_roots();
     }
 
-    /// Keep the settings' folder list in step with the explorer.
-    fn remember_roots(&mut self) {
-        self.settings.folders = self.roots.iter().map(|root| root.path.clone()).collect();
-    }
-
     /// Save the open document; returns false when saving failed.
     fn save(&mut self) -> bool {
         self.finish_block_edit();
@@ -443,7 +453,7 @@ impl RubriqueApp {
         match document.save() {
             Ok(()) => {
                 *disk_notice = None;
-                let message = format!("Saved {}", document.path.display());
+                let message = format!("Saved {}", crate::remote::display(&document.path));
                 self.show_status(message);
                 self.maybe_suggest_scratch_name();
                 true
@@ -485,6 +495,20 @@ impl RubriqueApp {
 
     /// When the window regains focus, look for changes made by other programs.
     fn check_disk(&mut self) {
+        // Remote files: a new version of an image shows when it is opened
+        // again; a text file is checked in the background.
+        if let OpenFile::Media { path, .. } = &self.open_file
+            && crate::remote::is_mirror(path)
+        {
+            return;
+        }
+        if let OpenFile::Text { document, .. } = &self.open_file
+            && crate::remote::is_mirror(&document.path)
+        {
+            let path = document.path.clone();
+            self.start_remote_check(&path);
+            return;
+        }
         if let OpenFile::Media { path, kind, bytes, modified, .. } = &mut self.open_file {
             // A new version of an image is shown at once; nothing is ever unsaved here.
             let metadata = std::fs::metadata(&*path).ok();
@@ -498,10 +522,20 @@ impl RubriqueApp {
             }
             return;
         }
+        let OpenFile::Text { document, .. } = &self.open_file else {
+            return;
+        };
+        let state = document.disk_state();
+        self.apply_disk_state(&state);
+    }
+
+    /// Act on what changed on disk for the open text file: nothing, a
+    /// notice, or a silent reload when nothing of ours would be lost.
+    fn apply_disk_state(&mut self, state: &DiskState) {
         let OpenFile::Text { document, disk_notice, .. } = &mut self.open_file else {
             return;
         };
-        match document.disk_state() {
+        match state {
             DiskState::Unchanged => {}
             DiskState::Deleted => *disk_notice = Some(DiskState::Deleted),
             DiskState::Modified => {
@@ -800,13 +834,14 @@ impl RubriqueApp {
     fn settings_panel(&mut self, ui: &mut Ui) {
         let folder = themes_folder();
         let scratch_folder = self.settings.scratch_folder_or_default();
+        let install = self.install_status();
         let scratch = ScratchInfo {
             folder: scratch_folder.as_deref(),
             is_default: self.settings.scratch_folder.is_none() || scratch_folder == default_scratch_folder(),
+            remote: &mut self.settings.remote,
         };
         let skills_folder = self.settings.ai.skills_folder.clone().or_else(default_skills_folder);
         let agents_folder = self.settings.ai.agents_folder.clone().or_else(default_agents_folder);
-        let install = self.install_status();
         let ai = AiInfo {
             settings: &mut self.settings.ai,
             found: &self.ai_found,
@@ -861,6 +896,7 @@ impl RubriqueApp {
                 }
             }
             SettingsAction::ResetScratchFolder => self.settings.scratch_folder = None,
+            SettingsAction::RemoteChanged => self.remote_settings_changed(),
             SettingsAction::AiCommandChanged => self.check_ai_tools(),
             SettingsAction::ForgetAllowedFolders => {
                 self.settings.ai.allowed_folders.clear();
@@ -1064,7 +1100,7 @@ impl RubriqueApp {
         if target == path {
             return Ok(());
         }
-        std::fs::rename(path, &target).map_err(|error| format!("Cannot rename: {error}"))?;
+        crate::vfs::rename(path, &target).map_err(|error| format!("Cannot rename: {error}"))?;
         let uri = image_uri(path);
         for tab in self.all_tabs_mut() {
             if tab.path() == Some(path) {
@@ -1169,6 +1205,7 @@ impl RubriqueApp {
             markdown_only: self.settings.markdown_only,
             open_file: open_path.as_deref(),
             open_file_dirty: self.open_file.is_dirty(),
+            remote_enabled: self.settings.remote.enabled,
         };
         let action = show_explorer(ui, &mut self.roots, &mut self.settings.markdown_only, &context);
         match action {
@@ -1178,6 +1215,7 @@ impl RubriqueApp {
             Some(ExplorerAction::Refresh) => self.roots.iter_mut().for_each(FsNode::refresh),
             Some(ExplorerAction::RemoveRoot(path)) => self.request_remove_root(path),
             Some(ExplorerAction::AddFolder) => self.choose_folder_to_add(),
+            Some(ExplorerAction::AddRemoteFolder) => self.open_add_remote(),
             Some(ExplorerAction::NewScratch) => self.new_scratch(ui.ctx()),
             Some(ExplorerAction::Rename(path)) => self.start_rename(path),
             None => {}
@@ -1742,7 +1780,7 @@ impl RubriqueApp {
             return;
         };
         let dirty = if self.open_file.is_dirty() { DIRTY_MARKER } else { "" };
-        let path_text = format!("{dirty}{}", path.display());
+        let path_text = format!("{dirty}{}", crate::remote::display(path));
         let is_text = matches!(self.open_file, OpenFile::Text { .. });
         let showing_preview = self.showing_preview();
         let is_markdown = self.open_file.path().is_some_and(is_markdown_path);
@@ -1961,6 +1999,7 @@ impl eframe::App for RubriqueApp {
         self.poll_naming();
         self.poll_voice(&ctx);
         self.poll_install(&ctx);
+        self.poll_remote();
 
         let style = ctx.global_style();
         let bar_frame =
@@ -2008,6 +2047,7 @@ impl eframe::App for RubriqueApp {
         self.unsaved_dialog(&ctx);
         self.note_dialog(&ctx);
         self.rename_dialog(&ctx);
+        self.add_remote_dialog(&ctx);
         self.update_title(&ctx);
     }
 

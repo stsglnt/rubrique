@@ -142,28 +142,92 @@ fn search_folder(folder: &Path, root: &Path, query: &str, limit: usize, results:
             }
             continue;
         }
-        if name.to_lowercase().contains(query) {
-            push_hit(results, FileHit { path: path.clone(), root: root.to_path_buf(), kind: HitKind::Name }, limit);
+        let text = if metadata.len() > MAX_FILE_BYTES { None } else { fs::read_to_string(&path).ok() };
+        search_file(&path, root, text.as_deref(), query, limit, results);
+    }
+}
+
+/// Add the hits of one file: its name, then its text (when it was read and
+/// is text). `query` is in lower case.
+fn search_file(path: &Path, root: &Path, text: Option<&str>, query: &str, limit: usize, results: &mut SearchResults) {
+    let name = path.file_name().map(|name| name.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if name.contains(query) {
+        push_hit(results, FileHit { path: path.to_path_buf(), root: root.to_path_buf(), kind: HitKind::Name }, limit);
+    }
+    let Some(text) = text.filter(|text| !text.contains('\0')) else {
+        return;
+    };
+    results.files_searched += 1;
+    for range in find_all(text, query) {
+        if results.truncated {
+            return;
         }
-        if metadata.len() > MAX_FILE_BYTES {
-            continue;
-        }
-        let Ok(text) = fs::read_to_string(&path) else {
-            continue;
-        };
-        if text.contains('\0') {
-            continue;
-        }
-        results.files_searched += 1;
-        for range in find_all(&text, query) {
-            if results.truncated {
-                return;
-            }
-            let (line, excerpt) = line_of(&text, range.start);
-            let kind = HitKind::Text { line, excerpt, range };
-            push_hit(results, FileHit { path: path.clone(), root: root.to_path_buf(), kind }, limit);
+        let (line, excerpt) = line_of(text, range.start);
+        let kind = HitKind::Text { line, excerpt, range };
+        push_hit(results, FileHit { path: path.to_path_buf(), root: root.to_path_buf(), kind }, limit);
+    }
+}
+
+/// Most files whose text is downloaded for one remote search.
+const MAX_REMOTE_TEXT_FILES: usize = 200;
+
+/// [`search_files`] for remote folders (mirror paths): the host lists the
+/// files and finds the ones containing the query, then those are
+/// downloaded and searched here, so hits look the same as local ones.
+///
+/// # Errors
+///
+/// A host cannot be reached.
+pub fn search_remote_files(roots: &[PathBuf], query: &str, limit: usize) -> std::io::Result<SearchResults> {
+    use crate::remote::{self, commands};
+    let mut results = SearchResults::default();
+    if query.trim().is_empty() {
+        return Ok(results);
+    }
+    let lower = query.to_lowercase();
+    let remote_roots: Vec<(PathBuf, remote::RemotePath)> =
+        roots.iter().filter_map(|root| Some((root.clone(), remote::from_mirror(root)?))).collect();
+    let mut hosts: Vec<&str> = Vec::new();
+    for (_, found) in &remote_roots {
+        if !hosts.contains(&found.host.as_str()) {
+            hosts.push(&found.host);
         }
     }
+    for host in hosts {
+        let folders: Vec<&(PathBuf, remote::RemotePath)> =
+            remote_roots.iter().filter(|(_, found)| found.host == host).collect();
+        let remote_folders: Vec<PathBuf> = folders.iter().map(|(_, found)| found.path.clone()).collect();
+        let found = commands::search(host, &remote_folders, query, MAX_FILE_BYTES)?;
+        let mut matching = found.text_matches;
+        matching.truncate(MAX_REMOTE_TEXT_FILES);
+        let texts = commands::read_many(host, &matching, MAX_FILE_BYTES)?;
+        let mut files = found.files;
+        files.sort_by_key(|file| file.to_string_lossy().to_lowercase());
+        files.dedup();
+        for file in files {
+            if results.truncated {
+                return Ok(results);
+            }
+            // The longest folder holding the file is its explorer root.
+            let Some((root, _)) = folders
+                .iter()
+                .filter(|(_, folder)| file.starts_with(&folder.path))
+                .max_by_key(|(_, folder)| folder.path.as_os_str().len())
+            else {
+                continue;
+            };
+            let Some(mirror) = remote::to_mirror(host, &file) else {
+                continue;
+            };
+            let text = matching
+                .iter()
+                .position(|candidate| *candidate == file)
+                .and_then(|index| texts.get(index).cloned().flatten())
+                .and_then(|bytes| String::from_utf8(bytes).ok());
+            search_file(&mirror, root, text.as_deref(), &lower, limit, &mut results);
+        }
+    }
+    Ok(results)
 }
 
 fn push_hit(results: &mut SearchResults, hit: FileHit, limit: usize) {
@@ -192,6 +256,27 @@ pub fn char_index(text: &str, at: usize) -> usize {
 mod tests {
     use super::*;
     use crate::test_support::TempFolder;
+
+    #[test]
+    fn remote_search_finds_names_and_text_like_local_search() {
+        let temp = TempFolder::new();
+        temp.write("Plan.md", "nothing");
+        temp.write("docs/b.md", "line one\nthe PLAN is here\n");
+        temp.write(".git/plan", "plan");
+        let mirror = crate::remote::testing::mirror_of("find-host", temp.path());
+        let results = search_remote_files(std::slice::from_ref(&mirror), "plan", 50).unwrap();
+        assert_eq!(results.hits.len(), 2);
+        // Same order as a local search: `docs` sorts before `Plan.md`.
+        assert_eq!(
+            results.hits[1],
+            FileHit { path: mirror.join("Plan.md"), root: mirror.clone(), kind: HitKind::Name }
+        );
+        let HitKind::Text { line, excerpt, range } = &results.hits[0].kind else {
+            panic!("text hit expected");
+        };
+        assert_eq!(results.hits[0].path, mirror.join("docs/b.md"));
+        assert_eq!((*line, excerpt.as_str(), range.clone()), (2, "the PLAN is here", 13..17));
+    }
 
     #[test]
     fn finds_without_case_and_without_overlaps() {
