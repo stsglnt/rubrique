@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui::text::{CCursor, CCursorRange};
 use eframe::egui::text_edit::{TextEditOutput, TextEditState};
-use eframe::egui::{self, Align, Context, Id, Key, Modifiers, TextBuffer, Ui};
+use eframe::egui::{self, Align, Align2, Color32, Context, FontId, Id, Key, Modifiers, TextBuffer, Ui, pos2};
 
 use super::highlighting::{HighlightStyle, highlighted};
 use super::line_ops::{Direction, Selection, duplicate_lines, insert_text, move_lines};
@@ -23,6 +23,10 @@ const PREVIEW_MAX_WIDTH: f32 = 760.0;
 const EDITOR_MARGIN: (i8, i8) = (16, 12);
 /// Space (x, y) between the page edge and the preview text.
 const PREVIEW_MARGIN: (i8, i8) = (32, 24);
+/// Space between the line numbers and the editor text.
+const GUTTER_GAP: f32 = 12.0;
+/// Widest the line-number gutter gets (an egui margin is at most 127).
+const GUTTER_MAX_WIDTH: f32 = 100.0;
 /// Opacity of the warning color behind a find match, and of the accent
 /// behind the current one.
 const MATCH_TINT: f32 = 0.35;
@@ -72,15 +76,24 @@ pub fn restore_editor_state(ctx: &Context, state: Option<EditorState>) {
 }
 
 /// Draw the text editor, coloring Markdown syntax when `markdown` is set
-/// and tinting the `find` matches. Returns status-bar stats for the cursor.
+/// and numbering the lines when `line_numbers` is set, and tinting the
+/// `find` matches. Returns status-bar stats for the cursor.
 pub fn show_editor(
     ui: &mut Ui,
     document: &mut Document,
     markdown: bool,
+    line_numbers: bool,
     find: Option<FindHighlight<'_>>,
 ) -> Option<TextStats> {
     let available = ui.available_size();
     let style = HighlightStyle::from_ui(ui);
+    let gutter = line_numbers.then(|| Gutter::measure(ui, &document.text));
+    let margin = egui::Margin {
+        left: EDITOR_MARGIN.0 + gutter.as_ref().map_or(0, |gutter| gutter.width),
+        right: EDITOR_MARGIN.0,
+        top: EDITOR_MARGIN.1,
+        bottom: EDITOR_MARGIN.1,
+    };
     let mut layouter = |ui: &Ui, buffer: &dyn TextBuffer, wrap_width: f32| {
         let mut job = highlighted(ui.ctx(), buffer.as_str(), &style);
         job.wrap.max_width = wrap_width;
@@ -95,11 +108,14 @@ pub fn show_editor(
                 .id(editor_id())
                 .code_editor()
                 // No border: the editor is the page itself.
-                .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(EDITOR_MARGIN.0, EDITOR_MARGIN.1)))
+                .frame(egui::Frame::NONE.inner_margin(margin))
                 .lock_focus(true)
                 .desired_width(f32::INFINITY)
                 .min_size(available);
             let output = if markdown { editor.layouter(&mut layouter).show(ui) } else { editor.show(ui) };
+            if let Some(gutter) = &gutter {
+                gutter.paint(ui, &output);
+            }
             if let Some(find) = find {
                 paint_matches(ui, &output, &document.text, find);
             }
@@ -180,6 +196,59 @@ fn match_rects(galley: &egui::Galley, start: usize, end: usize) -> Vec<egui::Rec
         rects.push(egui::Rect::from_min_max(egui::pos2(left, rect.top()), egui::pos2(right, rect.bottom())));
     }
     rects
+}
+
+/// Line numbers to the left of the editor text, one per line of the file.
+/// A wrapped line is numbered once, on its first row.
+struct Gutter {
+    font: FontId,
+    color: Color32,
+    /// Extra left margin for the numbers and the gap after them.
+    width: i8,
+}
+
+impl Gutter {
+    fn measure(ui: &Ui, text: &str) -> Gutter {
+        let font = egui::TextStyle::Monospace.resolve(ui.style());
+        let digit = ui.ctx().fonts_mut(|fonts| fonts.glyph_width(&font, '0'));
+        let width = gutter_width(digit, line_count(text));
+        // Clamped to 0..=100 first, so the cast cannot truncate.
+        #[expect(clippy::cast_possible_truncation, reason = "clamped to the range")]
+        let width = width.clamp(0.0, GUTTER_MAX_WIDTH) as i8;
+        Gutter { font, color: ui.visuals().weak_text_color(), width }
+    }
+
+    /// Paint the numbers next to the rows that start a line.
+    fn paint(&self, ui: &Ui, output: &TextEditOutput) {
+        let right = output.galley_pos.x - GUTTER_GAP;
+        let clip = ui.clip_rect();
+        let painter = ui.painter();
+        let mut number = 1_usize;
+        let mut starts_line = true;
+        for row in &output.galley.rows {
+            let top = output.galley_pos.y + row.pos.y;
+            if starts_line && top <= clip.bottom() && top + row.row.size.y >= clip.top() {
+                painter.text(pos2(right, top), Align2::RIGHT_TOP, number, self.font.clone(), self.color);
+            }
+            starts_line = row.ends_with_newline;
+            if row.ends_with_newline {
+                number += 1;
+            }
+        }
+    }
+}
+
+/// Lines in `text`: one more than its line breaks.
+fn line_count(text: &str) -> usize {
+    text.bytes().filter(|byte| *byte == b'\n').count() + 1
+}
+
+/// Width of the numbers (at least two digits) and the gap after them.
+fn gutter_width(digit_width: f32, lines: usize) -> f32 {
+    let digits = lines.to_string().len().max(2);
+    #[expect(clippy::cast_precision_loss, reason = "a handful of digits")]
+    let numbers = digit_width * digits as f32;
+    (numbers + GUTTER_GAP).ceil()
 }
 
 /// A top-level block being edited as Markdown inside the preview.

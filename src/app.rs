@@ -1241,8 +1241,9 @@ impl RubriqueApp {
                 } else {
                     let was_dirty = document.is_dirty();
                     let markdown = is_markdown_path(&document.path);
+                    let line_numbers = self.settings.accessibility.line_numbers;
                     let find = find::highlight(&mut self.find);
-                    if let Some(stats) = show_editor(ui, document, markdown, find) {
+                    if let Some(stats) = show_editor(ui, document, markdown, line_numbers, find) {
                         self.stats = Some(stats);
                     }
                     // Any edit invalidates the cached preview.
