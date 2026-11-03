@@ -17,6 +17,13 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Added
 
+- **Unsaved files are green in the explorer**, with a dot after the name,
+  for every tab with unsaved changes, not only the open one.
+- **Double-click a file in the explorer to rename it.** A single click
+  still opens it.
+- **Files with notes get a speech bubble** before their name in the
+  explorer. Turn it on in Settings → Files → **Mark files that have notes**.
+  Files are checked when shown and read again only after they change.
 - **Click the empty space under the last block** in the preview to type a
   new block there. It goes to the end of the file after a blank line; an
   empty box adds nothing.

@@ -28,6 +28,7 @@ use crate::document::view::{
     BlockEdit, EditorState, PreviewEvent, editor_selection, focus_editor, handle_editor_shortcuts, set_editor_cursor,
     show_editor, show_preview,
 };
+use crate::explorer::note_marks::NoteMarks;
 use crate::explorer::paths::{absolute_path_text, name_text};
 use crate::explorer::tree::{FsNode, is_markdown_path};
 use crate::explorer::view::{ExplorerAction, TreeContext, show_explorer};
@@ -180,6 +181,8 @@ pub struct RubriqueApp {
     settings: Settings,
     /// Explorer root folders, in the order they were added. Never empty.
     roots: Vec<FsNode>,
+    /// Which files have notes, for the explorer's marker.
+    note_marks: NoteMarks,
     /// The active tab's file (see `tabs.rs`).
     open_file: OpenFile,
     /// Every open tab, left to right; the active one's slot holds
@@ -276,6 +279,7 @@ impl RubriqueApp {
         let mut app = RubriqueApp {
             settings,
             roots: roots.into_iter().map(FsNode::new_root).collect(),
+            note_marks: NoteMarks::default(),
             open_file: OpenFile::Nothing,
             tabs: Vec::new(),
             active_tab: 0,
@@ -833,6 +837,7 @@ impl RubriqueApp {
             folder.as_deref(),
             &mut self.settings.accessibility,
             scratch,
+            &mut self.settings.note_marks,
             ai,
             voice,
         );
@@ -1163,19 +1168,28 @@ impl RubriqueApp {
     /// Left panel: one file tree per root folder.
     fn explorer(&mut self, ui: &mut Ui) {
         let open_path = self.open_file.path().map(Path::to_path_buf);
+        let dirty_files: Vec<PathBuf> = std::iter::once(&self.open_file)
+            .chain(&self.tabs)
+            .filter(|file| file.is_dirty())
+            .filter_map(|file| file.path().map(Path::to_path_buf))
+            .collect();
         let context = TreeContext {
             root: Path::new(""),
             can_remove_roots: self.roots.len() > 1,
             markdown_only: self.settings.markdown_only,
             open_file: open_path.as_deref(),
-            open_file_dirty: self.open_file.is_dirty(),
+            dirty_files: &dirty_files,
+            note_marks: self.settings.note_marks.then_some(&self.note_marks),
         };
         let action = show_explorer(ui, &mut self.roots, &mut self.settings.markdown_only, &context);
         match action {
             // Opens a tab, or switches to the file's tab when it is open.
             Some(ExplorerAction::OpenFile(path)) => self.open_in_tab(path),
             Some(ExplorerAction::Copy(text)) => self.copy_to_clipboard(ui.ctx(), text),
-            Some(ExplorerAction::Refresh) => self.roots.iter_mut().for_each(FsNode::refresh),
+            Some(ExplorerAction::Refresh) => {
+                self.roots.iter_mut().for_each(FsNode::refresh);
+                self.note_marks.clear();
+            }
             Some(ExplorerAction::RemoveRoot(path)) => self.request_remove_root(path),
             Some(ExplorerAction::AddFolder) => self.choose_folder_to_add(),
             Some(ExplorerAction::NewScratch) => self.new_scratch(ui.ctx()),
