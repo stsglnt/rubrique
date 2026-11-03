@@ -8,11 +8,22 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Fixed
+
+- Scrolling a page to its end with a trackpad no longer overshoots and
+  springs back (the "jump" at the bottom of the preview).
+- Hovering a tab shifted the tabs to its right by a few pixels while the
+  close cross was shown; the tabs after the active one sat too close too.
+
 ### Added
 
 - **Click the empty space under the last block** in the preview to type a
   new block there. It goes to the end of the file after a blank line; an
   empty box adds nothing.
+- **Tables** (`| a | b |` with a `| --- | --- |` row) show as a grid in the
+  preview, in AI answers and in **Open in browser**, with bold headers,
+  striped rows and the column alignment from the colons. A table can follow
+  a paragraph line directly, as on GitHub.
 - **Find** (`Cmd/Ctrl+F`): a bar at the top right of the page. Matches in
   the open file are tinted, the current one in the accent color; Enter,
   Shift+Enter, `Cmd/Ctrl+G` and `Cmd/Ctrl+Shift+G` step through them, and
