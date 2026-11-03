@@ -269,6 +269,8 @@ pub struct BlockEdit {
 pub enum PreviewEvent {
     /// Clicked a block: edit it.
     StartEdit(usize),
+    /// Clicked the empty space under the last block: type a new block there.
+    StartNewBlock,
     /// Done with the block being edited (Esc, Cmd+Enter, Done, or a click elsewhere).
     FinishEdit,
     /// Copy or Prettify on a code block inside top-level block `index`.
@@ -289,6 +291,8 @@ pub struct PreviewOutput {
 
 /// Opacity of the accent behind a block under the mouse.
 const HOVER_TINT: f32 = 0.06;
+/// Least height of the clickable space under the last block.
+const NEW_BLOCK_SPACE: f32 = 48.0;
 /// Width of the outline around the block being edited.
 const EDIT_OUTLINE: f32 = 1.5;
 /// Space between a block and its hover / edit background.
@@ -326,9 +330,28 @@ pub fn show_preview(
                     event = found;
                 }
             }
+            // Under the last block: the new block being typed, or empty
+            // space that starts one when clicked.
+            let found = match editing {
+                Some(edit) if edit.index >= blocks.len() => edit_box(ui, edit),
+                Some(_) => None,
+                None => new_block_space(ui),
+            };
+            if event.is_none() {
+                event = found;
+            }
         });
     });
     PreviewOutput { event, hovered }
+}
+
+/// The rest of the page under the last block. A click there starts a new
+/// block at the end of the file.
+fn new_block_space(ui: &mut Ui) -> Option<PreviewEvent> {
+    let size = egui::vec2(ui.available_width(), ui.available_height().max(NEW_BLOCK_SPACE));
+    let (_, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::Text);
+    response.clicked().then_some(PreviewEvent::StartNewBlock)
 }
 
 /// A rendered block: tinted under the mouse, a click (not a text selection
@@ -379,7 +402,8 @@ fn edit_box(ui: &mut Ui, edit: &mut BlockEdit) -> Option<PreviewEvent> {
         .inner_margin(BLOCK_PAD + 2);
     let response = frame.show(ui, |ui| {
         ui.set_width(ui.available_width());
-        ui.label(egui::RichText::new("Editing this block (Markdown)").small().weak());
+        let title = if edit.range.is_empty() { "New block (Markdown)" } else { "Editing this block (Markdown)" };
+        ui.label(egui::RichText::new(title).small().weak());
         let rows = edit.text.lines().count().max(1);
         let output = egui::TextEdit::multiline(&mut edit.text)
             .id(block_editor_id())
