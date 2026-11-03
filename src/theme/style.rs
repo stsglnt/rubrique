@@ -83,6 +83,9 @@ fn style(theme: &Theme) -> Style {
     style.spacing.item_spacing = egui::vec2(8.0, 4.0);
     style.spacing.button_padding = egui::vec2(8.0, 3.0);
     style.spacing.menu_margin = egui::Margin::same(6);
+    // egui lets a trackpad scroll past the end of the content and spring
+    // back. In a page of text that reads as the page jumping; stop firmly.
+    style.spacing.scroll.kinetic.rubber_band = false;
     style
 }
 
@@ -156,6 +159,11 @@ mod tests {
         let dark = Theme::builtin(Base::Dark);
         assert!(!style(&light).visuals.dark_mode);
         assert!(style(&dark).visuals.dark_mode);
+    }
+
+    #[test]
+    fn scrolling_stops_at_the_edges() {
+        assert!(!style(&Theme::builtin(Base::Light)).spacing.scroll.kinetic.rubber_band);
     }
 
     #[test]

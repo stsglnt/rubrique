@@ -1,4 +1,5 @@
-//! Block-level Markdown: headings, paragraphs, code, quotes, lists, breaks.
+//! Block-level Markdown: headings, paragraphs, code, quotes, lists, tables,
+//! breaks.
 //!
 //! Works line by line. Containers (quotes, list items) strip their markers
 //! and parse their content recursively with the same function.
@@ -21,7 +22,28 @@ pub enum Block {
     },
     Quote(Vec<Block>),
     List(List),
+    Table(Table),
     ThematicBreak,
+}
+
+/// A pipe table (GitHub style): a header row, a delimiter row that sets
+/// each column's alignment, then rows.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Table {
+    /// One entry per column.
+    pub align: Vec<ColumnAlign>,
+    /// Header cells, one per column.
+    pub header: Vec<Vec<Inline>>,
+    /// Body rows; each has exactly one cell per column.
+    pub rows: Vec<Vec<Vec<Inline>>>,
+}
+
+/// How a column's cells are aligned, from the colons in the delimiter row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColumnAlign {
+    Left,
+    Center,
+    Right,
 }
 
 /// A bullet or ordered list.
@@ -138,6 +160,9 @@ fn parse_block(lines: &[&str], index: usize) -> (Option<Block>, usize) {
     if let Some(marker) = ListMarker::parse(line) {
         return parse_list(lines, index, marker);
     }
+    if let Some((table, next)) = parse_table(lines, index) {
+        return (Some(Block::Table(table)), next);
+    }
     parse_paragraph(lines, index)
 }
 
@@ -212,12 +237,99 @@ fn parse_paragraph(lines: &[&str], start: usize) -> (Option<Block>, usize) {
         if is_blank(line) || interrupts_paragraph(line) {
             break;
         }
+        // A delimiter row turns the line before it into a table header: the
+        // table starts there, and the paragraph ends before it.
+        if parse_table(lines, index - 1).is_some() {
+            text_lines.pop();
+            index -= 1;
+            break;
+        }
         text_lines.push(line.trim_start());
         index += 1;
+    }
+    if text_lines.is_empty() {
+        return (None, index);
     }
     // Trailing spaces on the last line are not a hard break.
     let text = text_lines.join("\n");
     (Some(Block::Paragraph(parse_inlines(text.trim_end()))), index)
+}
+
+// ---------- tables ----------
+
+/// A table starting at `lines[start]`: a header row, then a delimiter row
+/// with the same number of cells, then rows until a blank line or another
+/// block. Both first lines need a `|`, so `text` over `---` stays a heading.
+fn parse_table(lines: &[&str], start: usize) -> Option<(Table, usize)> {
+    let header_line = *lines.get(start)?;
+    let delimiter_line = *lines.get(start + 1)?;
+    if indentation(header_line) >= CODE_INDENT || !header_line.contains('|') || !delimiter_line.contains('|') {
+        return None;
+    }
+    let align: Vec<ColumnAlign> =
+        split_row(delimiter_line).iter().map(|cell| delimiter_align(cell)).collect::<Option<_>>()?;
+    let header: Vec<Vec<Inline>> = split_row(header_line).iter().map(|cell| parse_inlines(cell)).collect();
+    if header.len() != align.len() {
+        return None;
+    }
+    let columns = align.len();
+    let mut rows = Vec::new();
+    let mut index = start + 2;
+    while index < lines.len() {
+        let line = lines[index];
+        if is_blank(line) || interrupts_paragraph(line) {
+            break;
+        }
+        let mut cells: Vec<Vec<Inline>> = split_row(line).iter().map(|cell| parse_inlines(cell)).collect();
+        // Short rows are padded with empty cells; long rows are cut.
+        cells.resize_with(columns, Vec::new);
+        rows.push(cells);
+        index += 1;
+    }
+    Some((Table { align, header, rows }, index))
+}
+
+/// The alignment a delimiter cell like `:---:` sets, or `None` when the cell
+/// is not one.
+fn delimiter_align(cell: &str) -> Option<ColumnAlign> {
+    let left = cell.starts_with(':');
+    let right = cell.ends_with(':') && cell.len() > 1;
+    let dashes = cell.trim_start_matches(':').trim_end_matches(':');
+    if dashes.is_empty() || !dashes.bytes().all(|byte| byte == b'-') {
+        return None;
+    }
+    Some(match (left, right) {
+        (true, true) => ColumnAlign::Center,
+        (false, true) => ColumnAlign::Right,
+        _ => ColumnAlign::Left,
+    })
+}
+
+/// The cells of a table row: split at pipes that are not escaped, the
+/// optional pipes at both ends dropped, every cell trimmed. `\|` is a pipe.
+fn split_row(line: &str) -> Vec<String> {
+    let mut cells = Vec::new();
+    let mut cell = String::new();
+    let mut chars = line.trim().chars().peekable();
+    while let Some(character) = chars.next() {
+        match character {
+            '\\' if chars.peek() == Some(&'|') => {
+                cell.push('|');
+                chars.next();
+            }
+            '|' => cells.push(std::mem::take(&mut cell)),
+            _ => cell.push(character),
+        }
+    }
+    cells.push(cell);
+    // A leading pipe leaves an empty first cell; a trailing one an empty last cell.
+    if cells.first().is_some_and(|first| first.trim().is_empty()) && line.trim().starts_with('|') {
+        cells.remove(0);
+    }
+    if cells.len() > 1 && cells.last().is_some_and(|last| last.trim().is_empty()) && line.trim().ends_with('|') {
+        cells.pop();
+    }
+    cells.into_iter().map(|cell| cell.trim().to_string()).collect()
 }
 
 // ---------- code ----------
@@ -587,6 +699,47 @@ mod tests {
         let Block::List(list) = &blocks[0] else { panic!("{blocks:?}") };
         assert_eq!(list.items[0].blocks, vec![paragraph("step"), code("", "cmd")]);
         assert_eq!(list.items.len(), 2);
+    }
+
+    fn cells(row: &[&str]) -> Vec<Vec<Inline>> {
+        row.iter().map(|cell| parse_inlines(cell)).collect()
+    }
+
+    #[test]
+    fn pipe_table_with_alignment() {
+        let blocks = parse_blocks("| File | Size | Note |\n| :-- | --: | :-: |\n| a.md | 1 | *x* |\nb.md | 2\n");
+        assert_eq!(
+            blocks,
+            vec![Block::Table(Table {
+                align: vec![ColumnAlign::Left, ColumnAlign::Right, ColumnAlign::Center],
+                header: cells(&["File", "Size", "Note"]),
+                rows: vec![cells(&["a.md", "1", "*x*"]), cells(&["b.md", "2", ""])],
+            })]
+        );
+    }
+
+    #[test]
+    fn table_ends_at_blank_line_or_block_and_keeps_escaped_pipes() {
+        let blocks = parse_blocks("a | b\n--|--\n1 | x \\| y\n\nafter\n# H");
+        let Block::Table(table) = &blocks[0] else { panic!("{blocks:?}") };
+        assert_eq!(table.rows, vec![cells(&["1", "x | y"])]);
+        assert_eq!(&blocks[1..], &[paragraph("after"), heading(1, "H")]);
+    }
+
+    #[test]
+    fn table_can_follow_paragraph_text_directly() {
+        let blocks = parse_blocks("Intro\n| a | b |\n| - | - |\n| 1 | 2 |");
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0], paragraph("Intro"));
+        assert!(matches!(&blocks[1], Block::Table(table) if table.rows.len() == 1));
+    }
+
+    #[test]
+    fn not_a_table_without_pipes_or_with_wrong_cell_count() {
+        assert_eq!(parse_blocks("Title\n---"), vec![heading(2, "Title")]);
+        assert_eq!(parse_blocks("a | b\n---"), vec![heading(2, "a | b")]);
+        assert_eq!(parse_blocks("a | b\n| - |"), vec![paragraph("a | b\n| - |")]);
+        assert_eq!(parse_blocks("a | b\n| -x- | - |"), vec![paragraph("a | b\n| -x- | - |")]);
     }
 
     #[test]

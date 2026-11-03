@@ -7,6 +7,7 @@ use eframe::egui::{self, Context, Key, KeyboardShortcut, Modifiers, RichText, Ui
 
 mod ask;
 mod drafts;
+mod find;
 mod images;
 mod install;
 mod naming;
@@ -27,6 +28,7 @@ use crate::document::view::{
     BlockEdit, EditorState, PreviewEvent, editor_selection, focus_editor, handle_editor_shortcuts, set_editor_cursor,
     show_editor, show_preview,
 };
+use crate::explorer::note_marks::NoteMarks;
 use crate::explorer::paths::{absolute_path_text, name_text};
 use crate::explorer::tree::{FsNode, is_markdown_path};
 use crate::explorer::view::{ExplorerAction, TreeContext, show_explorer};
@@ -84,6 +86,9 @@ const ASK: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::K);
 const RECORD: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::R);
 const COPY_OPEN_PATH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::C);
 const CLOSE_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::W);
+const FIND: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::F);
+const FIND_NEXT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::G);
+const FIND_PREVIOUS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::G);
 const NEXT_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::Tab);
 const PREVIOUS_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::SHIFT), Key::Tab);
 const TEXT_LARGER: [KeyboardShortcut; 2] =
@@ -176,6 +181,8 @@ pub struct RubriqueApp {
     settings: Settings,
     /// Explorer root folders, in the order they were added. Never empty.
     roots: Vec<FsNode>,
+    /// Which files have notes, for the explorer's marker.
+    note_marks: NoteMarks,
     /// The active tab's file (see `tabs.rs`).
     open_file: OpenFile,
     /// Every open tab, left to right; the active one's slot holds
@@ -198,6 +205,8 @@ pub struct RubriqueApp {
     themes: Themes,
     /// The settings panel is shown on the right.
     settings_open: bool,
+    /// The find bar, while it is open.
+    find: Option<find::FindBar>,
     /// The group open in the settings window.
     settings_group: SettingsGroup,
     /// Ask bar, AI run and its output panel.
@@ -270,6 +279,7 @@ impl RubriqueApp {
         let mut app = RubriqueApp {
             settings,
             roots: roots.into_iter().map(FsNode::new_root).collect(),
+            note_marks: NoteMarks::default(),
             open_file: OpenFile::Nothing,
             tabs: Vec::new(),
             active_tab: 0,
@@ -280,6 +290,7 @@ impl RubriqueApp {
             window_title: String::new(),
             themes,
             settings_open: false,
+            find: None,
             settings_group: SettingsGroup::default(),
             ask: ask::AskState::default(),
             skills: Vec::new(),
@@ -572,6 +583,10 @@ impl RubriqueApp {
             self.load_skills_and_agents();
             self.open_ask(ctx);
         }
+        if ctx.input_mut(|input| input.consume_shortcut(&FIND)) {
+            self.open_find();
+        }
+        self.find_shortcuts(ctx);
         if ctx.input_mut(|input| input.consume_shortcut(&ADD_NOTE)) {
             self.start_note(ctx);
         }
@@ -608,6 +623,7 @@ impl RubriqueApp {
         {
             *preview = None;
         }
+        self.prepare_find(ctx);
     }
 
     /// Cmd/Ctrl + plus, minus and 0: the next text size, the one before, the default.
@@ -821,6 +837,7 @@ impl RubriqueApp {
             folder.as_deref(),
             &mut self.settings.accessibility,
             scratch,
+            &mut self.settings.note_marks,
             ai,
             voice,
         );
@@ -1151,19 +1168,28 @@ impl RubriqueApp {
     /// Left panel: one file tree per root folder.
     fn explorer(&mut self, ui: &mut Ui) {
         let open_path = self.open_file.path().map(Path::to_path_buf);
+        let dirty_files: Vec<PathBuf> = std::iter::once(&self.open_file)
+            .chain(&self.tabs)
+            .filter(|file| file.is_dirty())
+            .filter_map(|file| file.path().map(Path::to_path_buf))
+            .collect();
         let context = TreeContext {
             root: Path::new(""),
             can_remove_roots: self.roots.len() > 1,
             markdown_only: self.settings.markdown_only,
             open_file: open_path.as_deref(),
-            open_file_dirty: self.open_file.is_dirty(),
+            dirty_files: &dirty_files,
+            note_marks: self.settings.note_marks.then_some(&self.note_marks),
         };
         let action = show_explorer(ui, &mut self.roots, &mut self.settings.markdown_only, &context);
         match action {
             // Opens a tab, or switches to the file's tab when it is open.
             Some(ExplorerAction::OpenFile(path)) => self.open_in_tab(path),
             Some(ExplorerAction::Copy(text)) => self.copy_to_clipboard(ui.ctx(), text),
-            Some(ExplorerAction::Refresh) => self.roots.iter_mut().for_each(FsNode::refresh),
+            Some(ExplorerAction::Refresh) => {
+                self.roots.iter_mut().for_each(FsNode::refresh);
+                self.note_marks.clear();
+            }
             Some(ExplorerAction::RemoveRoot(path)) => self.request_remove_root(path),
             Some(ExplorerAction::AddFolder) => self.choose_folder_to_add(),
             Some(ExplorerAction::NewScratch) => self.new_scratch(ui.ctx()),
@@ -1229,7 +1255,9 @@ impl RubriqueApp {
                 } else {
                     let was_dirty = document.is_dirty();
                     let markdown = is_markdown_path(&document.path);
-                    if let Some(stats) = show_editor(ui, document, markdown) {
+                    let line_numbers = self.settings.accessibility.line_numbers;
+                    let find = find::highlight(&mut self.find);
+                    if let Some(stats) = show_editor(ui, document, markdown, line_numbers, find) {
                         self.stats = Some(stats);
                     }
                     // Any edit invalidates the cached preview.
@@ -1250,6 +1278,7 @@ impl RubriqueApp {
         }
         match preview_event {
             Some(PreviewEvent::StartEdit(index)) => self.start_block_edit(index),
+            Some(PreviewEvent::StartNewBlock) => self.start_new_block(),
             Some(PreviewEvent::FinishEdit) => self.finish_block_edit(),
             Some(PreviewEvent::Code { index, action }) => self.code_block_action(ui.ctx(), index, action),
             Some(PreviewEvent::Memo(action)) => self.memo_action(ui.ctx(), action),
@@ -1359,6 +1388,17 @@ impl RubriqueApp {
         self.block_edit = Some(BlockEdit { index, range, text: text.to_string(), focused: false });
     }
 
+    /// Edit an empty new block at the end of the file. The blank line before
+    /// it is added when the edit is finished with text in it.
+    fn start_new_block(&mut self) {
+        self.finish_block_edit();
+        let OpenFile::Text { document, preview: Some(blocks), .. } = &self.open_file else {
+            return;
+        };
+        let end = document.text.len();
+        self.block_edit = Some(BlockEdit { index: blocks.len(), range: end..end, text: String::new(), focused: false });
+    }
+
     /// Put the edited block's Markdown into the document.
     fn finish_block_edit(&mut self) {
         self.finish_block_edit_with_shift();
@@ -1374,9 +1414,14 @@ impl RubriqueApp {
         if document.text.get(edit.range.clone()) == Some(edit.text.as_str()) {
             return None;
         }
+        let appended = edit.range.is_empty() && edit.range.start == document.text.len();
+        let new_text = if appended { appended_block(&document.text, &edit.text) } else { edit.text };
+        if new_text.is_empty() {
+            return None;
+        }
         let old_length = isize::try_from(edit.range.len()).unwrap_or(0);
-        let new_length = isize::try_from(edit.text.len()).unwrap_or(0);
-        document.text.replace_range(edit.range.clone(), &edit.text);
+        let new_length = isize::try_from(new_text.len()).unwrap_or(0);
+        document.text.replace_range(edit.range.clone(), &new_text);
         document.on_text_changed();
         *preview = None;
         Some((edit.range.start, new_length - old_length))
@@ -1813,6 +1858,24 @@ impl RubriqueApp {
 }
 
 /// `value` moved by `delta` bytes.
+/// A block typed at the end of the file: a blank line before it unless the
+/// file is empty or already ends with one, and a line break after it. Empty
+/// input gives an empty string, so nothing is added.
+fn appended_block(text: &str, block: &str) -> String {
+    let block = block.trim_end();
+    if block.trim().is_empty() {
+        return String::new();
+    }
+    let separator = if text.is_empty() || text.ends_with("\n\n") {
+        ""
+    } else if text.ends_with('\n') {
+        "\n"
+    } else {
+        "\n\n"
+    };
+    format!("{separator}{block}\n")
+}
+
 fn shift(value: usize, delta: isize) -> usize {
     value.saturating_add_signed(delta)
 }
@@ -1985,6 +2048,7 @@ impl eframe::App for RubriqueApp {
         }
         egui::CentralPanel::default().frame(page_frame).show(ui, |ui| self.document_area(ui));
         self.handle_dropped_files(&ctx);
+        self.find_bar(&ctx);
 
         self.ask_dialogs(&ctx);
         self.install_dialog(&ctx);
@@ -2001,5 +2065,19 @@ impl eframe::App for RubriqueApp {
         self.keep_drafts();
         self.remember_tabs();
         self.write_settings();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::appended_block;
+
+    #[test]
+    fn appended_block_gets_a_blank_line_before_it() {
+        assert_eq!(appended_block("", "New"), "New\n");
+        assert_eq!(appended_block("Old", "New"), "\n\nNew\n");
+        assert_eq!(appended_block("Old\n", "New"), "\nNew\n");
+        assert_eq!(appended_block("Old\n\n", "New\n"), "New\n");
+        assert_eq!(appended_block("Old\n", "  \n"), "");
     }
 }
