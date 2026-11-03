@@ -8,6 +8,11 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Fixed
+
+- Hovering a tab shifted the tabs to its right by a few pixels while the
+  close cross was shown; the tabs after the active one sat too close too.
+
 ### Added
 
 - **Find** (`Cmd/Ctrl+F`): a bar at the top right of the page. Matches in
