@@ -94,6 +94,8 @@ const RULE_SPACING: f32 = 20.0;
 /// Space between table columns, and between table rows.
 const TABLE_COLUMN_GAP: f32 = 18.0;
 const TABLE_ROW_GAP: f32 = 6.0;
+/// Wide table columns are not narrowed below this, so text never wraps one word at a time.
+const TABLE_COLUMN_MIN_WIDTH: f32 = 120.0;
 
 /// Render blocks inside `depth` lists (bullets change shape with depth),
 /// `gap` apart. List items use a smaller gap so nested lists stay tight.
@@ -301,18 +303,19 @@ fn render_list(ui: &mut Ui, look: &Look, list: &List, depth: usize) {
 fn render_table(ui: &mut Ui, look: &Look, table: &Table) {
     let body = TextStyle::body(look);
     let header = TextStyle { strong: true, ..body.clone() };
+    let widths = column_widths(ui, table, &header, &body);
     let mut header_bottom = 0.0_f32;
     let grid = egui::Grid::new(ui.next_auto_id()).striped(true).spacing(vec2(TABLE_COLUMN_GAP, TABLE_ROW_GAP));
     ui.skip_ahead_auto_ids(1);
     let response = grid.show(ui, |ui| {
         for (column, cell) in table.header.iter().enumerate() {
-            table_cell(ui, cell, &header, table.align[column]);
+            table_cell(ui, cell, &header, table.align[column], widths[column]);
             header_bottom = header_bottom.max(ui.min_rect().bottom());
         }
         ui.end_row();
         for row in &table.rows {
             for (column, cell) in row.iter().enumerate() {
-                table_cell(ui, cell, &body, table.align[column]);
+                table_cell(ui, cell, &body, table.align[column], widths[column]);
             }
             ui.end_row();
         }
@@ -322,14 +325,93 @@ fn render_table(ui: &mut Ui, look: &Look, table: &Table) {
     ui.painter().hline(rect.x_range(), y, ui.visuals().widgets.noninteractive.bg_stroke);
 }
 
-/// One cell, aligned as its column asks.
-fn table_cell(ui: &mut Ui, cell: &[Inline], style: &TextStyle, align: ColumnAlign) {
+/// The width of each table column for the room the preview has.
+///
+/// egui's `Grid` sizes a column from what was drawn in it last frame, and
+/// starts narrow. Wrapped text then fits the narrow column and the column
+/// never grows, so the widths are chosen here from the text instead.
+fn column_widths(ui: &Ui, table: &Table, header: &TextStyle, body: &TextStyle) -> Vec<f32> {
+    let mut natural: Vec<f32> = table.header.iter().map(|cell| cell_natural_width(ui, cell, header)).collect();
+    for row in &table.rows {
+        for (column, cell) in row.iter().enumerate() {
+            natural[column] = natural[column].max(cell_natural_width(ui, cell, body));
+        }
+    }
+    #[expect(clippy::cast_precision_loss, reason = "a table has a handful of columns")]
+    let gaps = TABLE_COLUMN_GAP * natural.len().saturating_sub(1) as f32;
+    fit_column_widths(&natural, ui.available_width() - gaps)
+}
+
+/// Shrink column widths to fit `budget` when their sum is larger.
+///
+/// Narrow columns keep their width; the widest columns are cut down to one
+/// shared cap, so long text wraps and short labels stay on one line. No
+/// column is cut below `TABLE_COLUMN_MIN_WIDTH`: a table that still does
+/// not fit is drawn wider than the page.
+fn fit_column_widths(natural: &[f32], budget: f32) -> Vec<f32> {
+    if natural.iter().sum::<f32>() <= budget {
+        return natural.to_vec();
+    }
+    let mut sorted = natural.to_vec();
+    sorted.sort_by(f32::total_cmp);
+    // Walk from the narrowest column up: a column narrower than an even share
+    // of what is left keeps its width; the first wider one sets the cap.
+    let mut remaining = budget;
+    let mut cap = 0.0_f32;
+    for (index, width) in sorted.iter().enumerate() {
+        #[expect(clippy::cast_precision_loss, reason = "a table has a handful of columns")]
+        let share = remaining / (sorted.len() - index) as f32;
+        if *width > share {
+            cap = share;
+            break;
+        }
+        remaining -= width;
+    }
+    let cap = cap.max(TABLE_COLUMN_MIN_WIDTH);
+    natural.iter().map(|width| width.min(cap)).collect()
+}
+
+/// How wide a cell's longest line is when nothing wraps.
+fn cell_natural_width(ui: &Ui, cell: &[Inline], style: &TextStyle) -> f32 {
+    let mut spans = Vec::new();
+    collect_spans(cell, style, &mut spans);
+    let mut widest = 0.0_f32;
+    let mut line = 0.0_f32;
+    for span in spans {
+        match span {
+            Span::Text(text, style) => {
+                let galley = egui::WidgetText::from(span_rich_text(text, &style)).into_galley(
+                    ui,
+                    Some(egui::TextWrapMode::Extend),
+                    f32::INFINITY,
+                    egui::FontSelection::Default,
+                );
+                line += galley.size().x;
+            }
+            // Images size themselves to the cell, so ask only for a usable width.
+            Span::Image { .. } => line += TABLE_COLUMN_MIN_WIDTH,
+            Span::LineBreak => {
+                widest = widest.max(line);
+                line = 0.0;
+            }
+        }
+    }
+    widest.max(line)
+}
+
+/// One cell, `width` wide, aligned as its column asks.
+fn table_cell(ui: &mut Ui, cell: &[Inline], style: &TextStyle, align: ColumnAlign, width: f32) {
     let layout = match align {
         ColumnAlign::Left => Layout::left_to_right(Align::TOP),
         ColumnAlign::Center => Layout::top_down(Align::Center),
         ColumnAlign::Right => Layout::right_to_left(Align::TOP),
     };
-    ui.with_layout(layout, |ui| render_inlines(ui, cell, style));
+    // Fix the width in a plain top-down scope first, so it grows to the
+    // right even for right-aligned cells; the grid then remembers it.
+    ui.vertical(|ui| {
+        ui.set_width(width);
+        ui.with_layout(layout, |ui| render_inlines(ui, cell, style));
+    });
 }
 
 /// Room for a list marker, one text line tall.
@@ -451,24 +533,7 @@ fn render_inlines(ui: &mut Ui, inlines: &[Inline], style: &TextStyle) {
 
 /// One styled run of text; links become clickable.
 fn render_span(ui: &mut Ui, text: String, style: &TextStyle) {
-    // egui draws strike and underline lines from the line box, so a tall
-    // line height pushes them too low: those spans keep the font's own height.
-    let decorated = style.strikethrough || style.link.as_ref().is_some_and(|url| !is_openable_url(url));
-    let line_height = (!decorated).then_some(style.line_height);
-    let size = if style.code { style.size * INLINE_CODE_SCALE } else { style.size };
-    let mut rich = RichText::new(text).size(size).line_height(line_height);
-    if style.strong {
-        rich = rich.strong();
-    }
-    if style.italic {
-        rich = rich.italics();
-    }
-    if style.strikethrough {
-        rich = rich.strikethrough();
-    }
-    if style.code {
-        rich = rich.code();
-    }
+    let mut rich = span_rich_text(text, style);
     if style.note.is_some() {
         rich = rich.background_color(ui.visuals().warn_fg_color.gamma_multiply(NOTE_TINT));
     }
@@ -490,6 +555,29 @@ fn render_span(ui: &mut Ui, text: String, style: &TextStyle) {
             note_tip(ui.label(rich));
         }
     }
+}
+
+/// The font, size and emphasis of one span, as drawn and as measured for tables.
+fn span_rich_text(text: String, style: &TextStyle) -> RichText {
+    // egui draws strike and underline lines from the line box, so a tall
+    // line height pushes them too low: those spans keep the font's own height.
+    let decorated = style.strikethrough || style.link.as_ref().is_some_and(|url| !is_openable_url(url));
+    let line_height = (!decorated).then_some(style.line_height);
+    let size = if style.code { style.size * INLINE_CODE_SCALE } else { style.size };
+    let mut rich = RichText::new(text).size(size).line_height(line_height);
+    if style.strong {
+        rich = rich.strong();
+    }
+    if style.italic {
+        rich = rich.italics();
+    }
+    if style.strikethrough {
+        rich = rich.strikethrough();
+    }
+    if style.code {
+        rich = rich.code();
+    }
+    rich
 }
 
 /// Set the folder that relative image paths in the preview resolve against
@@ -659,5 +747,33 @@ fn collect_spans(inlines: &[Inline], style: &TextStyle, spans: &mut Vec<Span>) {
             Inline::LineBreak => spans.push(Span::LineBreak),
             Inline::Note { quote, text } => mark_note(spans, quote, text),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TABLE_COLUMN_MIN_WIDTH, fit_column_widths};
+
+    #[test]
+    fn columns_that_fit_keep_their_width() {
+        assert_eq!(fit_column_widths(&[80.0, 300.0], 500.0), vec![80.0, 300.0]);
+    }
+
+    #[test]
+    fn a_long_column_wraps_while_a_short_one_keeps_its_width() {
+        // The file-name and description table from the screenshot: the short
+        // column stays whole, the long one takes the rest of the page.
+        assert_eq!(fit_column_widths(&[180.0, 2000.0], 900.0), vec![180.0, 720.0]);
+    }
+
+    #[test]
+    fn several_wide_columns_share_the_room_evenly() {
+        assert_eq!(fit_column_widths(&[100.0, 900.0, 600.0], 700.0), vec![100.0, 300.0, 300.0]);
+    }
+
+    #[test]
+    fn wide_columns_are_not_cut_below_the_minimum() {
+        let widths = fit_column_widths(&[50.0, 1000.0, 1000.0], 200.0);
+        assert_eq!(widths, vec![50.0, TABLE_COLUMN_MIN_WIDTH, TABLE_COLUMN_MIN_WIDTH]);
     }
 }
