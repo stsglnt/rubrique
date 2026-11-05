@@ -2,7 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-use eframe::egui::{self, RichText, Ui};
+use eframe::egui::{self, Key, RichText, Ui};
+use egui::text::{CCursor, CCursorRange};
 
 use super::note_marks::NoteMarks;
 use crate::icons::{Icon, icon_button, paint_icon};
@@ -27,8 +28,41 @@ pub enum ExplorerAction {
     AddRemoteFolder,
     /// Create a new scratch file and open it.
     NewScratch,
-    /// Ask for a new name for this file.
+    /// Ask for a new name for this file in the "Rename" dialog.
     Rename(PathBuf),
+    /// Turn this file's row into a name field (a double click).
+    RenameInTree(PathBuf),
+    /// Ask, then move this file to the Trash.
+    Delete(PathBuf),
+}
+
+/// A file being renamed right in its tree row.
+#[derive(Debug)]
+pub struct TreeRename {
+    pub path: PathBuf,
+    /// The name being typed.
+    pub name: String,
+    /// Why the last attempt failed, shown under the row.
+    pub error: Option<String>,
+    /// Enter was pressed or the field was left: the app should rename now.
+    pub submitted: bool,
+    /// The field still needs focus and its name selected (on the first
+    /// frame, and again after a failed attempt).
+    needs_focus: bool,
+}
+
+impl TreeRename {
+    pub fn new(path: PathBuf) -> Self {
+        let name = name_text(&path);
+        TreeRename { path, name, error: None, submitted: false, needs_focus: true }
+    }
+
+    /// Show `error` under the field and give the field back its focus.
+    pub fn failed(&mut self, error: String) {
+        self.error = Some(error);
+        self.submitted = false;
+        self.needs_focus = true;
+    }
 }
 
 /// The file row under the pointer, for the hover summary.
@@ -78,11 +112,13 @@ pub struct TreeContext<'a> {
 }
 
 /// Draw the explorer panel: "Add folder…", refresh, the Markdown filter and one tree per root folder.
+/// `rename` is the file being renamed in its row, if any; Esc in the field clears it.
 pub fn show_explorer(
     ui: &mut Ui,
     roots: &mut [FsNode],
     markdown_only: &mut bool,
     context: &TreeContext,
+    rename: &mut Option<TreeRename>,
 ) -> Option<ExplorerAction> {
     let mut action = None;
     ui.horizontal(|ui| {
@@ -117,14 +153,20 @@ pub fn show_explorer(
         for root in roots.iter_mut() {
             let root_path = root.path.clone();
             let context = TreeContext { root: &root_path, ..context };
-            show_root(ui, root, &context, &mut action);
+            show_root(ui, root, &context, rename, &mut action);
         }
     });
     action
 }
 
 /// A root folder: a bold row that folds its tree open and closed.
-fn show_root(ui: &mut Ui, root: &mut FsNode, context: &TreeContext, action: &mut Option<ExplorerAction>) {
+fn show_root(
+    ui: &mut Ui,
+    root: &mut FsNode,
+    context: &TreeContext,
+    rename: &mut Option<TreeRename>,
+    action: &mut Option<ExplorerAction>,
+) {
     let label = RichText::new(format!("{ICON_GAP}{}", root.name)).strong();
     let response = tree_row(ui, false, label).on_hover_text(absolute_path_text(&root.path));
     paint_arrow(ui, &response, root.expanded);
@@ -134,12 +176,18 @@ fn show_root(ui: &mut Ui, root: &mut FsNode, context: &TreeContext, action: &mut
     root_menu(&response, &root.path, context, action);
     if root.expanded {
         let indent_id = root.path.clone();
-        ui.indent(indent_id, |ui| show_children(ui, root, context, action));
+        ui.indent(indent_id, |ui| show_children(ui, root, context, rename, action));
     }
 }
 
 /// Draw a folder's entries, or why they could not be read.
-fn show_children(ui: &mut Ui, folder: &mut FsNode, context: &TreeContext, action: &mut Option<ExplorerAction>) {
+fn show_children(
+    ui: &mut Ui,
+    folder: &mut FsNode,
+    context: &TreeContext,
+    rename: &mut Option<TreeRename>,
+    action: &mut Option<ExplorerAction>,
+) {
     match &mut folder.children {
         Children::NotLoaded => {}
         Children::Failed(error) => {
@@ -148,9 +196,9 @@ fn show_children(ui: &mut Ui, folder: &mut FsNode, context: &TreeContext, action
         Children::Loaded(children) => {
             for child in children.iter_mut() {
                 if child.is_folder() {
-                    show_folder(ui, child, context, action);
+                    show_folder(ui, child, context, rename, action);
                 } else if !context.markdown_only || is_markdown_path(&child.path) {
-                    show_file(ui, child, context, action);
+                    show_file(ui, child, context, rename, action);
                 }
             }
         }
@@ -158,7 +206,13 @@ fn show_children(ui: &mut Ui, folder: &mut FsNode, context: &TreeContext, action
 }
 
 /// Draw one folder row and, when expanded, its contents indented below.
-fn show_folder(ui: &mut Ui, folder: &mut FsNode, context: &TreeContext, action: &mut Option<ExplorerAction>) {
+fn show_folder(
+    ui: &mut Ui,
+    folder: &mut FsNode,
+    context: &TreeContext,
+    rename: &mut Option<TreeRename>,
+    action: &mut Option<ExplorerAction>,
+) {
     let label = format!("{ICON_GAP}{}{}", folder.name, link_marker(folder));
     let response = tree_row(ui, false, label);
     if folder.kind == NodeKind::SymlinkLoop {
@@ -172,12 +226,23 @@ fn show_folder(ui: &mut Ui, folder: &mut FsNode, context: &TreeContext, action: 
     path_menu(&response, &folder.path, context, action);
     if folder.expanded {
         let indent_id = folder.path.clone();
-        ui.indent(indent_id, |ui| show_children(ui, folder, context, action));
+        ui.indent(indent_id, |ui| show_children(ui, folder, context, rename, action));
     }
 }
 
-/// Draw one file row; a click opens the file, a double click renames it.
-fn show_file(ui: &mut Ui, file: &FsNode, context: &TreeContext, action: &mut Option<ExplorerAction>) {
+/// Draw one file row; a click opens the file, a double click renames it
+/// in place.
+fn show_file(
+    ui: &mut Ui,
+    file: &FsNode,
+    context: &TreeContext,
+    rename: &mut Option<TreeRename>,
+    action: &mut Option<ExplorerAction>,
+) {
+    if rename.as_ref().is_some_and(|rename| rename.path == file.path) {
+        rename_row(ui, rename);
+        return;
+    }
     let is_open = context.open_file == Some(file.path.as_path());
     let dirty = context.dirty_files.iter().any(|path| path == &file.path);
     let dirty_marker = if dirty { " •" } else { "" };
@@ -191,7 +256,7 @@ fn show_file(ui: &mut Ui, file: &FsNode, context: &TreeContext, action: &mut Opt
         paint_note_mark(ui, &response);
     }
     if response.double_clicked() {
-        *action = Some(ExplorerAction::Rename(file.path.clone()));
+        *action = Some(ExplorerAction::RenameInTree(file.path.clone()));
     } else if response.clicked() {
         *action = Some(ExplorerAction::OpenFile(file.path.clone()));
     }
@@ -199,6 +264,49 @@ fn show_file(ui: &mut Ui, file: &FsNode, context: &TreeContext, action: &mut Opt
         set_hovered(ui, HoveredFile { path: file.path.clone(), rect: response.rect });
     }
     file_menu(&response, &file.path, context, action);
+}
+
+/// The row of the file being renamed: a name field, with the name before
+/// the extension selected. Enter or leaving the field renames; Esc cancels.
+fn rename_row(ui: &mut Ui, slot: &mut Option<TreeRename>) {
+    let Some(rename) = slot.as_mut() else {
+        return;
+    };
+    let id = egui::Id::unique("explorer-rename-field");
+    let output = ui
+        .horizontal(|ui| {
+            // Line the field up with the file names in the other rows.
+            ui.add_space(ui.spacing().button_padding.x + NOTE_MARK_SIZE);
+            egui::TextEdit::singleline(&mut rename.name).id(id).desired_width(RENAME_FIELD_WIDTH).show(ui)
+        })
+        .inner;
+    if rename.needs_focus {
+        rename.needs_focus = false;
+        output.response.request_focus();
+        let mut state = output.state;
+        let stem_chars = name_stem_chars(&rename.name);
+        state.cursor.set_char_range(Some(CCursorRange::two(CCursor::new(0), CCursor::new(stem_chars))));
+        state.store(ui.ctx(), id);
+    }
+    if let Some(error) = &rename.error {
+        ui.label(RichText::new(error).small().color(ui.visuals().error_fg_color));
+    }
+    if output.response.lost_focus() {
+        if ui.input(|input| input.key_pressed(Key::Escape)) {
+            *slot = None;
+        } else {
+            rename.submitted = true;
+        }
+    }
+}
+
+/// How many characters of `name` come before its extension: all of them
+/// when there is none, or when the name only starts with a dot (".env").
+fn name_stem_chars(name: &str) -> usize {
+    match name.rfind('.') {
+        Some(dot) if dot > 0 => name[..dot].chars().count(),
+        _ => name.chars().count(),
+    }
 }
 
 /// One explorer row on a single line (the tree scrolls sideways for long names).
@@ -216,6 +324,8 @@ const ICON_GAP: &str = "     ";
 const ARROW_SIZE: f32 = 7.0;
 /// Width of the note marker's icon box, in points.
 const NOTE_MARK_SIZE: f32 = 14.0;
+/// Width of the name field of a file being renamed in the tree.
+const RENAME_FIELD_WIDTH: f32 = 220.0;
 
 /// Paint the speech bubble in the gap before a file name, where folders
 /// have their arrow.
@@ -273,13 +383,17 @@ fn root_menu(response: &egui::Response, path: &Path, context: &TreeContext, acti
     });
 }
 
-/// Right-click menu of a file: the copy actions, then "Rename…".
+/// Right-click menu of a file: the copy actions, then "Rename…" and "Delete…".
 fn file_menu(response: &egui::Response, path: &Path, context: &TreeContext, action: &mut Option<ExplorerAction>) {
     response.context_menu(|ui| {
         copy_items(ui, path, context, action);
         ui.separator();
         if ui.button("Rename…").clicked() {
             *action = Some(ExplorerAction::Rename(path.to_path_buf()));
+            ui.close();
+        }
+        if ui.button("Delete…").clicked() {
+            *action = Some(ExplorerAction::Delete(path.to_path_buf()));
             ui.close();
         }
     });
@@ -302,5 +416,19 @@ fn copy_items(ui: &mut Ui, path: &Path, context: &TreeContext, action: &mut Opti
             *action = Some(ExplorerAction::Copy(text));
             ui.close();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::name_stem_chars;
+
+    #[test]
+    fn selects_the_name_before_the_extension() {
+        assert_eq!(name_stem_chars("notes.md"), 5);
+        assert_eq!(name_stem_chars("archive.tar.gz"), 11);
+        assert_eq!(name_stem_chars("README"), 6);
+        assert_eq!(name_stem_chars(".env"), 4);
+        assert_eq!(name_stem_chars("café.md"), 4);
     }
 }

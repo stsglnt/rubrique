@@ -6,6 +6,7 @@ use std::time::Duration;
 use eframe::egui::{self, Context, Key, KeyboardShortcut, Modifiers, RichText, Ui, ViewportCommand};
 
 mod ask;
+mod delete;
 mod drafts;
 mod find;
 mod helm;
@@ -19,6 +20,7 @@ mod tabs;
 mod voice;
 
 use crate::ai::agents::{self, Agent};
+use crate::ai::mention_list;
 use crate::ai::skills::{self, Skill};
 use crate::ai::{self, AiTool};
 use crate::document::highlighting::Syntax;
@@ -35,7 +37,7 @@ use crate::document::view::{
 use crate::explorer::note_marks::NoteMarks;
 use crate::explorer::paths::{absolute_path_text, name_text};
 use crate::explorer::tree::{FsNode, is_markdown_path};
-use crate::explorer::view::{ExplorerAction, TreeContext, show_explorer};
+use crate::explorer::view::{ExplorerAction, TreeContext, TreeRename, show_explorer};
 use crate::format::{Language, format};
 use crate::icons::icon_text_button;
 use crate::icons::{Icon, icon_button};
@@ -226,7 +228,7 @@ pub struct RubriqueApp {
     ask: ask::AskState,
     /// Skills from the skills folders, read when Settings or Ask opens.
     skills: Vec<Skill>,
-    /// Agents from the agents folders, read when Settings or Ask opens.
+    /// Agents from the agents folders, read at start and when Settings or Ask opens.
     agents: Vec<Agent>,
     /// Hover summaries in the explorer.
     summaries: summary::SummaryState,
@@ -239,6 +241,10 @@ pub struct RubriqueApp {
     ai_found: [Option<PathBuf>; 4],
     /// The "Rename" dialog, while it is open.
     renaming: Option<Renaming>,
+    /// The file being renamed in its explorer row (after a double click).
+    tree_rename: Option<TreeRename>,
+    /// The file the "Delete" dialog asks about, while it is open.
+    deleting: Option<PathBuf>,
     /// The merge screen for the open file, while it is open.
     merging: Option<MergeSession>,
     /// egui time of the last check for outside changes.
@@ -320,6 +326,8 @@ impl RubriqueApp {
             repaint: ctx.clone(),
             ai_found: [None, None, None, None],
             renaming: None,
+            tree_rename: None,
+            deleting: None,
             merging: None,
             last_disk_check: 0.0,
             block_edit: None,
@@ -334,6 +342,9 @@ impl RubriqueApp {
         preview_selection::install(ctx);
         egui_extras::install_image_loaders(ctx);
         app.remember_roots();
+        // The editor suggests agents when typing `@ai-`, so read them now
+        // rather than waiting for Settings or Ask to open.
+        app.load_skills_and_agents();
         // Reopen last session's tabs (with their unsaved edits), then the file asked for.
         let saved_tabs = std::mem::take(&mut app.settings.open_tabs);
         app.reopen_tabs(saved_tabs);
@@ -666,6 +677,8 @@ impl RubriqueApp {
         if self.settings_open
             && self.pending.is_none()
             && self.renaming.is_none()
+            && self.tree_rename.is_none()
+            && self.deleting.is_none()
             && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
         {
             self.settings_open = false;
@@ -1161,6 +1174,18 @@ impl RubriqueApp {
         Ok(())
     }
 
+    /// Rename the file whose tree row was just submitted; on failure the
+    /// row stays a field and shows why.
+    fn finish_tree_rename(&mut self) {
+        let Some(mut rename) = self.tree_rename.take_if(|rename| rename.submitted) else {
+            return;
+        };
+        if let Err(error) = self.finish_rename(&rename.path, &rename.name) {
+            rename.failed(error);
+            self.tree_rename = Some(rename);
+        }
+    }
+
     /// Draw the "Rename" dialog while it is open.
     fn rename_dialog(&mut self, ctx: &Context) {
         let waiting = self.naming.dialog_waiting();
@@ -1258,7 +1283,9 @@ impl RubriqueApp {
             note_marks: self.settings.note_marks.then_some(&self.note_marks),
             remote_enabled: self.settings.remote.enabled,
         };
-        let action = show_explorer(ui, &mut self.roots, &mut self.settings.markdown_only, &context);
+        let action =
+            show_explorer(ui, &mut self.roots, &mut self.settings.markdown_only, &context, &mut self.tree_rename);
+        self.finish_tree_rename();
         match action {
             // Opens a tab, or switches to the file's tab when it is open.
             Some(ExplorerAction::OpenFile(path)) => self.open_in_tab(path),
@@ -1272,6 +1299,8 @@ impl RubriqueApp {
             Some(ExplorerAction::AddRemoteFolder) => self.open_add_remote(),
             Some(ExplorerAction::NewScratch) => self.new_scratch(ui.ctx()),
             Some(ExplorerAction::Rename(path)) => self.start_rename(path),
+            Some(ExplorerAction::RenameInTree(path)) => self.tree_rename = Some(TreeRename::new(path)),
+            Some(ExplorerAction::Delete(path)) => self.request_delete(path),
             None => {}
         }
     }
@@ -1333,7 +1362,7 @@ impl RubriqueApp {
                     let blocks = preview.get_or_insert_with(|| parse_source_blocks(&document.text));
                     let folder = document.path.parent().unwrap_or(Path::new("/"));
                     set_memo_states(ui.ctx(), self.voice.memo_states(folder, blocks));
-                    let output = show_preview(ui, &document.path, blocks, self.block_edit.as_mut());
+                    let output = show_preview(ui, &document.path, blocks, self.block_edit.as_mut(), &self.agents);
                     preview_event = output.event;
                     self.voice.preview_hover = output.hovered;
                 } else {
@@ -1341,7 +1370,7 @@ impl RubriqueApp {
                     let syntax = Syntax::of(&document.path);
                     let line_numbers = self.settings.accessibility.line_numbers;
                     let find = find::highlight(&mut self.find);
-                    if let Some(stats) = show_editor(ui, document, syntax, line_numbers, find) {
+                    if let Some(stats) = show_editor(ui, document, syntax, line_numbers, find, &self.agents) {
                         self.stats = Some(stats);
                     }
                     // Any edit invalidates the cached preview.
@@ -1600,12 +1629,16 @@ impl RubriqueApp {
                     .italics(),
             );
             ui.add_space(4.0);
-            let field = ui.add(
-                egui::TextEdit::multiline(&mut draft.text)
-                    .desired_rows(3)
-                    .desired_width(f32::INFINITY)
-                    .hint_text("Your note"),
-            );
+            let field_id = egui::Id::unique("note-dialog-field");
+            let list_key = mention_list::take_key(ui.ctx(), field_id);
+            let output = egui::TextEdit::multiline(&mut draft.text)
+                .id(field_id)
+                .desired_rows(3)
+                .desired_width(f32::INFINITY)
+                .hint_text("Your note")
+                .show(ui);
+            mention_list::show(ui, field_id, &output, &mut draft.text, &self.agents, list_key);
+            let field = output.response;
             if !field.has_focus() && draft.text.is_empty() && draft.error.is_none() {
                 field.request_focus();
             }
@@ -2162,6 +2195,7 @@ impl eframe::App for RubriqueApp {
         self.unsaved_dialog(&ctx);
         self.note_dialog(&ctx);
         self.rename_dialog(&ctx);
+        self.delete_dialog(&ctx);
         self.add_remote_dialog(&ctx);
         self.secret_dialog(&ctx);
         self.update_title(&ctx);

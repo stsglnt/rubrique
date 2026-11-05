@@ -143,6 +143,18 @@ pub fn rename(host: &str, from: &Path, to: &Path) -> io::Result<()> {
     run(host, RENAME, &[from.as_os_str(), to.as_os_str()], None, COMMAND_TIMEOUT).map(|_| ())
 }
 
+const DELETE: &str = "[ -e \"$1\" ] || [ -L \"$1\" ] || exit 3; rm -f -- \"$1\"";
+
+/// Delete the file at `path` for good: hosts have no shared Trash. `rm`
+/// without `-r` refuses folders.
+///
+/// # Errors
+///
+/// `NotFound`, a folder, connection and permission errors.
+pub fn delete(host: &str, path: &Path) -> io::Result<()> {
+    run(host, DELETE, &[path.as_os_str()], None, COMMAND_TIMEOUT).map(|_| ())
+}
+
 const EXISTS: &str = "[ -e \"$1\" ] || [ -L \"$1\" ] || exit 3";
 
 /// True when something is at `path` (false when it cannot be checked).
@@ -382,6 +394,19 @@ mod tests {
         assert!(error.to_string().contains("cut off"), "{error}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
         assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn deletes_files_but_not_folders() {
+        use_fake_ssh();
+        let temp = TempFolder::new();
+        let file = temp.write("a.md", "a");
+        delete(HOST, &file).unwrap();
+        assert!(!exists(HOST, &file));
+        assert_eq!(delete(HOST, &file).unwrap_err().kind(), io::ErrorKind::NotFound);
+        temp.make_folder("docs");
+        assert!(delete(HOST, &temp.path().join("docs")).is_err());
+        assert!(temp.path().join("docs").is_dir());
     }
 
     #[test]
