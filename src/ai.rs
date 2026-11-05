@@ -8,6 +8,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 pub mod agents;
+pub mod mention_list;
 pub mod naming;
 pub mod preview;
 pub mod run;

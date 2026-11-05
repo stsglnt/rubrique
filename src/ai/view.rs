@@ -4,9 +4,11 @@
 
 use std::path::{Path, PathBuf};
 
+use eframe::egui::text_edit::TextEditState;
 use eframe::egui::{self, Align, Context, Key, Layout, Pos2, Response, RichText, Sense, Ui};
 
 use super::agents::{self, Agent, MENTION_PREFIX};
+use super::mention_list::{self, TypedMention};
 use super::preview::PromptParts;
 use super::skills::Skill;
 use super::{AiTool, AskKind, QuickAction, format_elapsed};
@@ -97,6 +99,25 @@ impl AskBar {
         (rest.is_empty() && !self.request.ends_with(char::is_whitespace)).then_some(word)
     }
 
+    /// The `@` word to suggest agents for: one at the start of the field
+    /// (any `@`), or an `@ai-…` word at `cursor` (a char index) anywhere else.
+    fn suggesting_for(&self, cursor: Option<usize>) -> Option<TypedMention> {
+        if self.agent.is_some() {
+            return None;
+        }
+        if let Some(word) = self.typing_mention() {
+            let start = self.request.len() - self.request.trim_start().len();
+            return Some(TypedMention { range: start..self.request.len(), typed: word.to_string() });
+        }
+        mention_list::typed_mention(&self.request, cursor?)
+    }
+
+    /// Use the suggested `agent` and take its `@` word out of the request.
+    fn pick_suggested(&mut self, agent: &Agent, mention: &TypedMention, installed: [bool; 4]) {
+        self.pick_agent(agent, installed);
+        self.request = mention_list::remove_mention(&self.request, mention.range.clone());
+    }
+
     /// Turn a finished `@ai-name ` at the start of the field into the
     /// agent chip. An unknown `@ai-` name leaves the text and sets an error.
     fn take_mention(&mut self, agents: &[Agent], installed: [bool; 4]) {
@@ -177,8 +198,13 @@ pub struct AskBarInfo<'a> {
 pub fn show_ask_bar(ctx: &Context, at: Pos2, bar: &mut AskBar, info: &AskBarInfo, open: &mut bool) -> Option<AskEvent> {
     let mut event = None;
     bar.take_mention(info.agents, info.installed);
+    // The cursor from the last frame: the field is drawn below.
+    let cursor = TextEditState::load(ctx, ask_field_id())
+        .and_then(|state| state.cursor.char_range())
+        .map(|range| range.primary.index.0);
+    let typing = bar.suggesting_for(cursor);
     let suggestions: Vec<&Agent> =
-        bar.typing_mention().map(|word| agents::matching(info.agents, word)).unwrap_or_default();
+        typing.as_ref().map(|mention| agents::matching(info.agents, &mention.typed)).unwrap_or_default();
     egui::Area::new(egui::Id::unique("ask-bar")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
         let visuals = ui.visuals().clone();
         egui::Frame::popup(ui.style()).fill(visuals.extreme_bg_color).corner_radius(ASK_RADIUS).inner_margin(10).show(
@@ -202,8 +228,12 @@ pub fn show_ask_bar(ctx: &Context, at: Pos2, bar: &mut AskBar, info: &AskBarInfo
                         || "What should change? Type @ for agents".to_string(),
                         |agent| format!("What should {} do?", agent.name),
                     );
-                    let field =
-                        ui.add(egui::TextEdit::singleline(&mut bar.request).hint_text(hint).desired_width(field_width));
+                    let field = ui.add(
+                        egui::TextEdit::singleline(&mut bar.request)
+                            .id(ask_field_id())
+                            .hint_text(hint)
+                            .desired_width(field_width),
+                    );
                     if bar.focus {
                         field.request_focus();
                         bar.focus = false;
@@ -212,11 +242,13 @@ pub fn show_ask_bar(ctx: &Context, at: Pos2, bar: &mut AskBar, info: &AskBarInfo
                         bar.waiting = None;
                     }
                     let entered = field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
-                    if entered && let Some(first) = suggestions.first() {
+                    if entered
+                        && let Some(first) = suggestions.first()
+                        && let Some(mention) = &typing
+                    {
                         // Enter while typing @… picks the first agent listed.
-                        bar.pick_agent(first, info.installed);
-                        bar.request.clear();
-                    } else if entered && (bar.error.is_some() || bar.typing_mention().is_some()) {
+                        bar.pick_suggested(first, mention, info.installed);
+                    } else if entered && (bar.error.is_some() || typing.is_some()) {
                         bar.focus = true;
                     } else if entered && let Some(ask) = runnable(bar) {
                         event = Some(AskEvent::Run { ask, confirmed: true });
@@ -225,9 +257,10 @@ pub fn show_ask_bar(ctx: &Context, at: Pos2, bar: &mut AskBar, info: &AskBarInfo
                     }
                     tool_picker(ui, &mut bar.tool, info.installed);
                 });
-                if let Some(picked) = agent_suggestions(ui, bar.typing_mention(), &suggestions) {
-                    bar.pick_agent(picked, info.installed);
-                    bar.request.clear();
+                if let Some(mention) = &typing
+                    && let Some(picked) = agent_suggestions(ui, &mention.typed, &suggestions)
+                {
+                    bar.pick_suggested(picked, mention, info.installed);
                 }
                 if let Some(error) = &bar.error {
                     ui.label(RichText::new(error).size(SMALL_TEXT).color(ui.visuals().error_fg_color));
@@ -258,6 +291,11 @@ pub fn show_ask_bar(ctx: &Context, at: Pos2, bar: &mut AskBar, info: &AskBarInfo
         event = Some(AskEvent::Close);
     }
     event
+}
+
+/// The Ask bar's request field, so its cursor can be read before it is drawn.
+fn ask_field_id() -> egui::Id {
+    egui::Id::unique("ask-bar-request")
 }
 
 /// What Run or Enter would run, if there is a request.
@@ -294,8 +332,7 @@ fn action_row(ui: &mut Ui, bar: &mut AskBar, info: &AskBarInfo) -> Option<AskEve
 }
 
 /// The agents matching the `@word` being typed, one per row; a click picks one.
-fn agent_suggestions<'a>(ui: &mut Ui, typing: Option<&str>, matches: &[&'a Agent]) -> Option<&'a Agent> {
-    let typing = typing?;
+fn agent_suggestions<'a>(ui: &mut Ui, typing: &str, matches: &[&'a Agent]) -> Option<&'a Agent> {
     let mut picked = None;
     if matches.is_empty() {
         let text = format!("No agent matches @{typing}. Add agents in Settings → Agents.");

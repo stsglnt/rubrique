@@ -123,6 +123,22 @@ pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
+/// Delete a file: local files go to the system Trash, so it can be undone;
+/// remote files are deleted for good (a host has no Trash we can reach).
+///
+/// # Errors
+///
+/// The file is gone, permissions, no Trash on this system, or no connection.
+pub fn delete(path: &Path) -> io::Result<()> {
+    let Some(remote) = remote::from_mirror(path) else {
+        return trash::delete(path).map_err(io::Error::other);
+    };
+    commands::delete(&remote.host, &remote.path)?;
+    // The mirror copy is only a cache, so failing here is fine.
+    let _ = fs::remove_file(path);
+    Ok(())
+}
+
 /// True when something is at `path`.
 pub fn exists(path: &Path) -> bool {
     match remote::from_mirror(path) {
@@ -199,6 +215,17 @@ mod tests {
         assert!(temp.path().join("b.md").is_file());
         let local = temp.path().join("c.md");
         assert_eq!(rename(&to, &local).unwrap_err().kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test]
+    fn remote_delete_removes_the_file_and_its_mirror_copy() {
+        let temp = TempFolder::new();
+        let real = temp.write("a.md", "x");
+        let mirror = mirror_of("vfs-host", &real);
+        read_file(&mirror, 1000).unwrap();
+        assert!(mirror.is_file());
+        delete(&mirror).unwrap();
+        assert!(!real.exists() && !mirror.exists());
     }
 
     #[test]

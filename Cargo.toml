@@ -1,6 +1,6 @@
 [package]
 name = "rubrique"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 description = "A fast editor, agentic on demand."
 publish = false
@@ -34,6 +34,9 @@ cpal = "0.18.2"
 chacha20poly1305 = "0.10"
 argon2 = { version = "0.5", features = ["zeroize"] }
 zeroize = "1"
+# "Delete" in the explorer moves local files to the system Trash (macOS
+# Finder Trash, the freedesktop.org trash on Linux), so a delete can be undone.
+trash = "5.3"
 
 # Lint levels from the Rust guide. `unsafe_code` is `deny` rather than
 # `forbid` because date.rs needs one FFI call (`localtime_r`); that single

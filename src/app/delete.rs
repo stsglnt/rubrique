@@ -1,0 +1,78 @@
+//! "Delete…" in the explorer: ask first, then move the file to the Trash
+//! (or delete it for good on a remote folder) and close its tab.
+
+use std::path::{Path, PathBuf};
+
+use eframe::egui::{self, Context, Key, RichText};
+
+use super::RubriqueApp;
+use crate::explorer::paths::name_text;
+use crate::explorer::tree::FsNode;
+use crate::media::image_uri;
+use crate::remote;
+
+/// Width of the "Delete" dialog.
+const DIALOG_WIDTH: f32 = 360.0;
+
+impl RubriqueApp {
+    /// Ask whether to delete `path` (the dialog runs in [`Self::delete_dialog`]).
+    pub(super) fn request_delete(&mut self, path: PathBuf) {
+        self.deleting = Some(path);
+    }
+
+    /// Draw the "Delete" dialog while it is open.
+    pub(super) fn delete_dialog(&mut self, ctx: &Context) {
+        let Some(path) = self.deleting.clone() else {
+            return;
+        };
+        let is_remote = remote::is_mirror(&path);
+        let has_unsaved = self.all_tabs_mut().any(|tab| tab.path() == Some(path.as_path()) && tab.is_dirty());
+        let confirm_label = if is_remote { "Delete" } else { "Move to Trash" };
+        let modal = egui::Modal::new(egui::Id::unique("delete-file")).show(ctx, |ui| {
+            ui.set_width(DIALOG_WIDTH);
+            ui.heading(format!("Delete \u{201c}{}\u{201d}?", name_text(&path)));
+            ui.add_space(4.0);
+            let explanation = if is_remote {
+                "It is in a remote folder, which has no Trash: it is deleted for good."
+            } else {
+                "It goes to the Trash, where you can restore it."
+            };
+            ui.label(explanation);
+            if has_unsaved {
+                ui.colored_label(ui.visuals().warn_fg_color, "Its unsaved changes are lost too.");
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let confirmed = ui.button(RichText::new(confirm_label).color(ui.visuals().error_fg_color)).clicked()
+                    || ui.input(|input| input.key_pressed(Key::Enter));
+                let cancelled = ui.button("Cancel").clicked();
+                (confirmed, cancelled)
+            })
+            .inner
+        });
+        let (confirmed, cancelled) = modal.inner;
+        if cancelled || modal.should_close() {
+            self.deleting = None;
+        } else if confirmed {
+            self.deleting = None;
+            self.delete_now(&path);
+        }
+    }
+
+    /// Delete the file, close its tab and re-read the tree.
+    fn delete_now(&mut self, path: &Path) {
+        if let Err(error) = crate::vfs::delete(path) {
+            self.show_status(format!("Cannot delete {}: {error}", name_text(path)));
+            return;
+        }
+        // The tab would otherwise offer to save the file back.
+        self.close_tabs_inside(path);
+        self.repaint.forget_image(&image_uri(path));
+        if self.settings.last_file.as_deref() == Some(path) {
+            self.settings.last_file = None;
+        }
+        self.roots.iter_mut().for_each(FsNode::refresh);
+        let place = if remote::is_mirror(path) { "Deleted" } else { "Moved to the Trash:" };
+        self.show_status(format!("{place} {}", name_text(path)));
+    }
+}

@@ -8,6 +8,30 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-05
+
+### Added
+
+- **Delete files** from the explorer: right-click a file → **Delete…**. Local
+  files go to the Trash; files in remote folders are deleted for good, and the
+  dialog says so first. Its tab closes.
+- **Rename in place**: double-click a file in the explorer to edit its name
+  right in the tree. Enter or clicking away renames, Esc cancels. **Rename…**
+  in the right-click menu still opens the dialog with **Suggest**.
+- **Agent suggestions**: typing `@ai-` in the editor, the preview's block
+  editor or the note dialog lists matching agents under the cursor. Up and
+  Down choose, Enter or Tab inserts, Esc hides. In the Ask bar, suggestions
+  now also work after other words, not only at the start.
+
+### Fixed
+
+- Tables in the preview no longer squeeze every column to a word or two.
+  Short columns keep their width and long ones wrap to fit the page.
+
+### Changed
+
+- A shorter README.
+
 ## [0.5.0] - 2026-11-03
 
 ### Fixed
