@@ -360,6 +360,11 @@ fn show_folder(
     edits: &mut ExplorerEdits,
     action: &mut Option<ExplorerAction>,
 ) {
+    // A folder being renamed shows a name field in place of its row.
+    if edits.rename.as_ref().is_some_and(|rename| rename.target == folder.path) {
+        rename_row(ui, edits.rename);
+        return;
+    }
     let label = format!("{ICON_GAP}{}{}", folder.name, link_marker(folder));
     let response = tree_row(ui, is_revealed(context, &folder.path), label);
     scroll_if_revealed(ui, context, &folder.path, &response);
@@ -370,6 +375,9 @@ fn show_folder(
     }
     if toggles_fold(&response) {
         folder.toggle_expanded();
+    }
+    if response.double_clicked() {
+        *action = Some(ExplorerAction::RenameInTree(folder.path.clone()));
     }
     folder_menu(&response, &folder.path, context, action);
     if folder.expanded {
@@ -575,27 +583,58 @@ pub(super) fn file_menu(
     context: &TreeContext,
     action: &mut Option<ExplorerAction>,
 ) {
+    file_menu_with_exit(response, path, context, None, action);
+}
+
+/// [`file_menu`] for a `.tmux` file, which also offers "Exit terminal" for
+/// session, given as its name and whether it is running (the item is off when not).
+pub(super) fn file_menu_with_exit(
+    response: &egui::Response,
+    path: &Path,
+    context: &TreeContext,
+    exit: Option<(&str, bool)>,
+    action: &mut Option<ExplorerAction>,
+) {
     response.context_menu(|ui| {
+        if let Some((session, running)) = exit {
+            let exit_item = ui
+                .add_enabled(running, egui::Button::new("Exit terminal"))
+                .on_hover_text("End the session and everything running in it")
+                .on_disabled_hover_text("Not running");
+            if exit_item.clicked() {
+                *action = Some(ExplorerAction::ExitTerminal(session.to_string()));
+                ui.close();
+            }
+            ui.separator();
+        }
         copy_items(ui, path, context, action);
         ui.separator();
-        if ui.button("Rename…").clicked() {
-            *action = Some(ExplorerAction::Rename(path.to_path_buf()));
-            ui.close();
-        }
-        if ui.button("Delete…").clicked() {
-            *action = Some(ExplorerAction::Delete(path.to_path_buf()));
-            ui.close();
-        }
+        rename_delete_items(ui, path, action);
     });
 }
 
-/// Right-click menu of a folder: "New", then the three copy actions.
+/// "Rename…" (also a double click) and "Delete…" for a file or folder.
+fn rename_delete_items(ui: &mut Ui, path: &Path, action: &mut Option<ExplorerAction>) {
+    if ui.button("Rename…").on_hover_text("Or double-click it").clicked() {
+        *action = Some(ExplorerAction::Rename(path.to_path_buf()));
+        ui.close();
+    }
+    if ui.button("Delete…").clicked() {
+        *action = Some(ExplorerAction::Delete(path.to_path_buf()));
+        ui.close();
+    }
+}
+
+/// Right-click menu of a folder: "New", the three copy actions, then
+/// "Rename…" and "Delete…".
 fn folder_menu(response: &egui::Response, path: &Path, context: &TreeContext, action: &mut Option<ExplorerAction>) {
     response.context_menu(|ui| {
         if new_menu(ui, path, context, action) {
             ui.separator();
         }
         copy_items(ui, path, context, action);
+        ui.separator();
+        rename_delete_items(ui, path, action);
     });
 }
 

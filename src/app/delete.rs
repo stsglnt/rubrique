@@ -26,7 +26,8 @@ impl RubriqueApp {
             return;
         };
         let is_remote = remote::is_mirror(&path);
-        let has_unsaved = self.all_tabs_mut().any(|tab| tab.path() == Some(path.as_path()) && tab.is_dirty());
+        let has_unsaved =
+            self.all_tabs_mut().any(|tab| tab.path().is_some_and(|open| open.starts_with(&path)) && tab.is_dirty());
         let confirm_label = if is_remote { "Delete" } else { "Move to Trash" };
         let modal = egui::Modal::new(egui::Id::unique("delete-file")).show(ctx, |ui| {
             ui.set_width(DIALOG_WIDTH);
@@ -68,7 +69,7 @@ impl RubriqueApp {
         // The tab would otherwise offer to save the file back.
         self.close_tabs_inside(path);
         self.repaint.forget_image(&image_uri(path));
-        if self.settings.last_file.as_deref() == Some(path) {
+        if self.settings.last_file.as_deref().is_some_and(|last| last.starts_with(path)) {
             self.settings.last_file = None;
         }
         self.roots.iter_mut().for_each(FsNode::refresh);

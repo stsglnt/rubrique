@@ -1276,14 +1276,23 @@ impl RubriqueApp {
         }
         crate::vfs::rename(path, &target).map_err(|error| format!("Cannot rename: {error}"))?;
         let uri = image_uri(path);
+        // A renamed folder moves every open file inside it too.
+        let moved = |old: &Path| -> PathBuf {
+            match old.strip_prefix(path) {
+                Ok(rest) if rest.as_os_str().is_empty() => target.clone(),
+                Ok(rest) => target.join(rest),
+                Err(_) => old.to_path_buf(),
+            }
+        };
         for tab in self.all_tabs_mut() {
-            if tab.path() == Some(path) {
-                tab.set_path(&target);
+            if let Some(old) = tab.path().filter(|old| old.starts_with(path)) {
+                let new = moved(old);
+                tab.set_path(&new);
             }
         }
         self.repaint.forget_image(&uri);
-        if self.settings.last_file.as_deref() == Some(path) {
-            self.settings.last_file = Some(target.clone());
+        if let Some(last) = self.settings.last_file.as_deref().filter(|last| last.starts_with(path)) {
+            self.settings.last_file = Some(moved(last));
         }
         self.roots.iter_mut().for_each(FsNode::refresh);
         self.show_status(format!("Renamed to {}", name_text(&target)));
