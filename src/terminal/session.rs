@@ -135,6 +135,18 @@ impl LiveTerminal {
         }
     }
 
+    /// The folder it starts in.
+    pub fn folder(&self) -> &Path {
+        &self.folder
+    }
+
+    /// Follow the session after it was renamed from the Terminals list.
+    pub fn follow_session_rename(&mut self, name: &str) {
+        self.name = name.to_string();
+        // The mirroring thread watches the old name; a new one starts on the next frame.
+        self.worker = None;
+    }
+
     /// Follow a rename of the `.tmux` file: its session gets the new name.
     pub fn follow_rename(&mut self, file: &Path) {
         let name = session_name_for_file(file);

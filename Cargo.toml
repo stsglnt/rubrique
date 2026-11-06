@@ -1,6 +1,6 @@
 [package]
 name = "rubrique"
-version = "0.6.5"
+version = "0.7.0"
 edition = "2024"
 description = "A fast editor, agentic on demand."
 publish = false
@@ -31,9 +31,12 @@ cpal = "0.18.2"
 # Encrypted scratches and the app PIN: XChaCha20-Poly1305 for the files,
 # Argon2id to turn the password into a key and to store the PIN, and zeroize
 # to wipe the key from memory on lock. All from the audited RustCrypto set.
-chacha20poly1305 = "0.10"
-argon2 = { version = "0.5", features = ["zeroize"] }
+chacha20poly1305 = "0.11"
+argon2 = { version = "0.6", features = ["zeroize"] }
 zeroize = "1"
+# Random salts and nonces from the operating system (already used by the
+# two crates above; named here so the source is explicit).
+getrandom = "0.4"
 # "Delete" in the explorer moves local files to the system Trash (macOS
 # Finder Trash, the freedesktop.org trash on Linux), so a delete can be undone.
 trash = "5.3"

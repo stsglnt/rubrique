@@ -11,8 +11,7 @@ use super::highlighting::{HighlightStyle, Syntax, highlighted};
 use super::line_ops::{Direction, Selection, duplicate_lines, insert_text, move_lines};
 use super::text_file::Document;
 use super::text_stats::{TextStats, text_stats};
-use crate::ai::agents::Agent;
-use crate::ai::mention_list;
+use crate::ai::mention_list::{self, Suggestion};
 use crate::markdown::blocks::SourceBlock;
 use crate::markdown::render::{
     CodeAction, render_top_block, set_image_folder, take_code_action, take_play_request, top_gap,
@@ -79,14 +78,14 @@ pub fn restore_editor_state(ctx: &Context, state: Option<EditorState>) {
 
 /// Draw the text editor, coloring `syntax` when there is one, numbering
 /// the lines when `line_numbers` is set, and tinting the `find` matches.
-/// Typing `@ai-` suggests `agents`. Returns status-bar stats for the cursor.
+/// Typing `@ai-` or `@tmux-` suggests `mentions`. Returns status-bar stats for the cursor.
 pub fn show_editor(
     ui: &mut Ui,
     document: &mut Document,
     syntax: Option<Syntax>,
     line_numbers: bool,
     find: Option<FindHighlight<'_>>,
-    agents: &[Agent],
+    mentions: &[Suggestion],
 ) -> Option<TextStats> {
     let available = ui.available_size();
     let style = HighlightStyle::from_ui(ui);
@@ -136,7 +135,7 @@ pub fn show_editor(
             output
         })
         .inner;
-    let mention_added = mention_list::show(ui, editor_id(), &output, &mut document.text, agents, list_key);
+    let mention_added = mention_list::show(ui, editor_id(), &output, &mut document.text, mentions, list_key);
     if output.response.changed() || mention_added {
         document.on_text_changed();
     }
@@ -315,13 +314,13 @@ const BLOCK_PAD: i8 = 6;
 
 /// Draw the rendered Markdown, one clickable block at a time; the block in
 /// `editing` shows as a Markdown text box instead, where typing `@ai-`
-/// suggests `agents`.
+/// suggests `mentions`.
 pub fn show_preview(
     ui: &mut Ui,
     path: &Path,
     blocks: &[SourceBlock],
     mut editing: Option<&mut BlockEdit>,
-    agents: &[Agent],
+    mentions: &[Suggestion],
 ) -> PreviewOutput {
     let mut event = None;
     let mut hovered = None;
@@ -339,7 +338,7 @@ pub fn show_preview(
                 }
                 let top = ui.cursor().top();
                 let found = match editing.as_deref_mut() {
-                    Some(edit) if edit.index == index => edit_box(ui, edit, agents),
+                    Some(edit) if edit.index == index => edit_box(ui, edit, mentions),
                     _ => clickable_block(ui, index, source),
                 };
                 let span = egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=ui.cursor().top());
@@ -359,7 +358,7 @@ pub fn show_preview(
             // Under the last block: the new block being typed, or empty
             // space that starts one when clicked.
             let found = match editing {
-                Some(edit) if edit.index >= blocks.len() => edit_box(ui, edit, agents),
+                Some(edit) if edit.index >= blocks.len() => edit_box(ui, edit, mentions),
                 Some(_) => None,
                 None => new_block_space(ui),
             };
@@ -454,7 +453,7 @@ fn clickable_block(ui: &mut Ui, index: usize, source: &SourceBlock) -> Option<Pr
 }
 
 /// The block being edited: its Markdown in an outlined box.
-fn edit_box(ui: &mut Ui, edit: &mut BlockEdit, agents: &[Agent]) -> Option<PreviewEvent> {
+fn edit_box(ui: &mut Ui, edit: &mut BlockEdit, mentions: &[Suggestion]) -> Option<PreviewEvent> {
     let visuals = ui.visuals().clone();
     let mut event = None;
     let frame = egui::Frame::new()
@@ -475,7 +474,7 @@ fn edit_box(ui: &mut Ui, edit: &mut BlockEdit, agents: &[Agent]) -> Option<Previ
             .desired_width(f32::INFINITY)
             .desired_rows(rows)
             .show(ui);
-        mention_list::show(ui, block_editor_id(), &output, &mut edit.text, agents, list_key);
+        mention_list::show(ui, block_editor_id(), &output, &mut edit.text, mentions, list_key);
         if !edit.focused {
             output.response.request_focus();
             edit.focused = true;

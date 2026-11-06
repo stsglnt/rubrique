@@ -37,7 +37,7 @@ Agents run only when you ask, read-only by default.
 **Writing**
 
 - Live preview: click a block to edit it.
-- Structure (`Cmd+Shift+O`): the file's headings on the right, click one to jump to it.
+- Side panel (the button at the right of the tabs): Structure, the file's headings (`Cmd+Shift+O`), or its Notes.
 - Voice memos (`Cmd+Shift+R`), transcribed locally with whisper.cpp.
 - Drop images and audio onto the page.
 - Scratch files (`Cmd+N`), optionally encrypted, and an optional app PIN.
@@ -45,13 +45,16 @@ Agents run only when you ask, read-only by default.
 
 **Files**
 
-- Several folders in one explorer. Double-click to rename, right-click to delete.
+- Several folders in one explorer. Right-click a folder → New file, folder or terminal. Double-click a file or tab to rename it, right-click to delete.
 - Tabs keep unsaved changes, cursor and undo.
 - Safe saves: your file is never reformatted; outside changes open a merge.
 - Find in a file or across all folders (`Cmd+F`).
 - Remote folders over SSH (off by default, Settings → Files).
-- Terminals: tmux sessions as tabs, listed with their agent's status
-  (working, needs you, idle). A `.tmux` file opens a terminal in its folder.
+- Terminals: tmux sessions as tabs, listed under the files with their agent's
+  status (working, needs you, idle) and the agent sessions they ran, ready to
+  resume. A `.tmux` file opens a terminal in its folder.
+- Hand a step of any document to a terminal's agent: `@tmux-qa: check this`, then Send.
+- Tabs grouped and colored by explorer folder.
 
 <img src="docs/screenshots/themes.png" alt="One rubrique window shown in five themes: Light, Dark, Sepia, Midnight and High contrast" width="880">
 

@@ -10,8 +10,7 @@ use std::fs::File;
 use std::io::Read as _;
 use std::path::Path;
 
-use argon2::password_hash::rand_core::{OsRng, RngCore};
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
@@ -84,8 +83,7 @@ impl std::fmt::Debug for Vault {
 impl Vault {
     /// A new vault for `password` with a random salt, and what to store.
     pub fn create(password: &str) -> (Vault, VaultInfo) {
-        let mut salt = [0; SALT_LEN];
-        OsRng.fill_bytes(&mut salt);
+        let salt = random_bytes::<SALT_LEN>();
         let vault = Vault { key: derive_key(password, &salt), salt };
         let check = vault.encrypt(CHECK_TEXT);
         (vault, VaultInfo { salt, check })
@@ -109,11 +107,10 @@ impl Vault {
 
     /// Seal `plain` with a fresh nonce.
     pub fn encrypt(&self, plain: &[u8]) -> Vec<u8> {
-        let mut nonce = [0; NONCE_LEN];
-        OsRng.fill_bytes(&mut nonce);
+        let nonce = random_bytes::<NONCE_LEN>();
         let sealed = self
             .cipher()
-            .encrypt(XNonce::from_slice(&nonce), plain)
+            .encrypt(&XNonce::from(nonce), plain)
             // Only fails for inputs far larger than any file we open.
             .unwrap_or_default();
         let mut bytes = Vec::with_capacity(MAGIC.len() + SALT_LEN + NONCE_LEN + sealed.len());
@@ -140,38 +137,62 @@ impl Vault {
         if salt != self.salt {
             return Err(DecryptError::WrongKey);
         }
-        self.cipher().decrypt(XNonce::from_slice(nonce), sealed).map_err(|_| DecryptError::WrongKey)
+        let nonce = XNonce::try_from(nonce).map_err(|_| DecryptError::Corrupt)?;
+        self.cipher().decrypt(&nonce, sealed).map_err(|_| DecryptError::WrongKey)
     }
 
     fn cipher(&self) -> XChaCha20Poly1305 {
-        XChaCha20Poly1305::new(self.key.as_ref().into())
+        // The key is always KEY_LEN bytes, the length the cipher takes.
+        XChaCha20Poly1305::new_from_slice(self.key.as_ref()).expect("vault keys are 32 bytes")
     }
 }
 
 /// Argon2id settings: the library defaults (19 MiB, 2 passes) in the app,
 /// tiny ones in tests so they stay fast.
 fn argon2() -> Argon2<'static> {
-    let params =
-        if cfg!(test) { Params::new(8, 1, 1, Some(KEY_LEN)) } else { Params::new(19 * 1024, 2, 1, Some(KEY_LEN)) };
+    argon2_with(if cfg!(test) { Params::new(8, 1, 1, Some(KEY_LEN)) } else { production_params() })
+}
+
+/// The Argon2id settings every vault key and PIN hash in the app is made with.
+/// Changing them would lock people out of their encrypted scratches.
+fn production_params() -> Result<Params, argon2::Error> {
+    Params::new(19 * 1024, 2, 1, Some(KEY_LEN))
+}
+
+fn argon2_with(params: Result<Params, argon2::Error>) -> Argon2<'static> {
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params.unwrap_or_default())
 }
 
 fn derive_key(password: &str, salt: &[u8]) -> Zeroizing<[u8; KEY_LEN]> {
+    derive_key_with(&argon2(), password, salt)
+}
+
+fn derive_key_with(argon2: &Argon2, password: &str, salt: &[u8]) -> Zeroizing<[u8; KEY_LEN]> {
     let mut key = Zeroizing::new([0; KEY_LEN]);
     // Fails only for salts or outputs of the wrong length, which are fixed here.
-    let _ = argon2().hash_password_into(password.as_bytes(), salt, key.as_mut());
+    let _ = argon2.hash_password_into(password.as_bytes(), salt, key.as_mut());
     key
 }
 
-/// The PIN as an Argon2id hash string for the settings file.
+/// The PIN as an Argon2id hash string for the settings file (with a fresh
+/// random salt).
 pub fn pin_hash(pin: &str) -> String {
-    let salt = SaltString::generate(&mut OsRng);
-    argon2().hash_password(pin.as_bytes(), &salt).map(|hash| hash.to_string()).unwrap_or_default()
+    argon2().hash_password(pin.as_bytes()).map(|hash| hash.to_string()).unwrap_or_default()
 }
 
-/// `pin` matches the stored [`pin_hash`].
+/// `pin` matches the stored [`pin_hash`]. The hash string carries its own
+/// Argon2 settings, so hashes made with other settings verify too.
 pub fn verify_pin(pin: &str, hash: &str) -> bool {
-    PasswordHash::new(hash).is_ok_and(|parsed| argon2().verify_password(pin.as_bytes(), &parsed).is_ok())
+    argon2().verify_password(pin.as_bytes(), hash).is_ok()
+}
+
+/// `N` bytes from the operating system's secure random source.
+fn random_bytes<const N: usize>() -> [u8; N] {
+    let mut bytes = [0; N];
+    // The OS source only fails on a broken system, where nothing here can
+    // be done safely; the previous `OsRng` stopped the same way.
+    getrandom::fill(&mut bytes).expect("the system random source works");
+    bytes
 }
 
 fn to_hex(bytes: &[u8]) -> String {
@@ -243,6 +264,29 @@ mod tests {
         assert!(verify_pin("1234", &hash));
         assert!(!verify_pin("1235", &hash));
         assert!(!verify_pin("1234", "garbage"));
+    }
+
+    /// Made with argon2 0.5 and chacha20poly1305 0.10 (before the 0.7.0
+    /// upgrade) at the production settings: the vaults, encrypted files and
+    /// PINs people already have must keep opening after any upgrade.
+    const OLD_KEY: &str = "59261a0a7884df92e0302f3ad5eb49933ade68b0077d1c82bc34c7bb9aa76036";
+    const OLD_VAULT_INFO: &str = "0102030405060708090a0b0c0d0e0f10:52554252495155452d454e43310a0102030405060708090a0b0c0d0e0f109a3ee93b55e5e1b007bebcfd1211f8807f419bcefdccb55d1679107d5e36d73b68d42c8c566ff2c2e075c9148b1c4b89a9beee8ce680";
+    const OLD_FILE: &str = "52554252495155452d454e43310a0102030405060708090a0b0c0d0e0f105d20bffbb3057d81679188ffab85f33879068ee70db813b18a180a02b82eca416775ebdbfd719226764ffba76f2f2fc6c2b5b2";
+    const OLD_PIN: &str =
+        "$argon2id$v=19$m=19456,t=2,p=1$LWykIH9glqRAvTBlztVZdw$bi+JTWS4uzByQC2sgqNSOqSfJrmQDVAOBUohmg2FI2U";
+
+    #[test]
+    fn keys_files_and_pins_from_older_versions_still_open() {
+        let salt: [u8; SALT_LEN] = std::array::from_fn(|index| u8::try_from(index + 1).unwrap());
+        let key = derive_key_with(&argon2_with(production_params()), "correct horse", &salt);
+        assert_eq!(to_hex(key.as_ref()), OLD_KEY);
+        let vault = Vault { key, salt };
+        let info = VaultInfo::parse(OLD_VAULT_INFO).unwrap();
+        assert_eq!(info.salt, salt);
+        assert_eq!(vault.decrypt(&info.check).unwrap(), CHECK_TEXT);
+        assert_eq!(vault.decrypt(&from_hex(OLD_FILE).unwrap()).unwrap(), b"secret note");
+        assert!(verify_pin("1234", OLD_PIN));
+        assert!(!verify_pin("1235", OLD_PIN));
     }
 
     #[test]

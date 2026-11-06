@@ -8,6 +8,65 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-06
+
+### Added
+
+- **Rename from a tab**: double-click a tab (or right-click → **Rename**) to
+  edit the file's name right in the tab. Enter or clicking away renames,
+  Esc cancels.
+- **New ▸ File / Folder / Terminal** in a folder's right-click menu: a name
+  field opens at the top of the folder with a free name filled in (the part
+  before the extension selected). Enter creates it, Esc cancels. The + in
+  Terminals names a new session the same way, at the top of the list.
+- **Terminals list**: right-click a terminal → **Show in files** opens the
+  tree down to its `.tmux` file (or the folder it runs in) and highlights it.
+  Double-click a terminal to rename it in place; one opened from a `.tmux`
+  file renames that file instead, so the two stay linked.
+- **Hand steps to terminals with `@tmux-`**: in any document, write
+  `@tmux-<terminal>: what to do` in a step (typing `@tmux-` suggests your
+  `.tmux` files and running terminals). The side panel's new **Tasks** view
+  lists them; **Send** pastes the instruction, the step it sits in and the
+  document's path into that terminal's agent, then marks the mention sent
+  with a hidden comment. It is pasted only while an agent (Claude Code,
+  Codex, ...) waits at its prompt there, never into a bare shell; until then
+  it waits, and the terminal opens so you can start one.
+- **Tab groups**: with more than one folder in the explorer, each folder
+  gets a color (a dot after its name) and its tabs sit together behind a
+  chip in that color, each with a thin line in it. A new tab opens at the end
+  of its group. Click a chip to fold the group's tabs.
+- **Agent sessions per terminal**: rubrique notices which Claude Code or
+  Codex conversation runs in each terminal and remembers it. A terminal
+  that ran some gets a fold arrow in the list; unfold it to see them
+  (title and when). Click one to resume it in that terminal (or in a new one
+  when the terminal is busy); right-click for **Resume in new terminal** and
+  **Copy session id**.
+
+### Changed
+
+- **Side panel**: Structure and Notes share one panel on the right, opened
+  from the button at the right end of the tab bar. A switch at its top picks
+  Structure or Notes, a cross closes it, and it stays as you left it. Notes
+  no longer open on their own: a dot on the button says the file has notes,
+  and adding a note opens them. The Structure button left the status bar;
+  `Cmd+Shift+O` still toggles Structure.
+- **Explorer sections**: Files and Terminals each have a header that folds
+  them. The Files header holds Add folder, New scratch and Refresh. Terminals
+  moved under the files, docked at the bottom of the panel: drag its top edge
+  to resize it. While folded, its header still shows how many agents need
+  you or are working.
+- Encryption libraries updated (argon2 0.6, chacha20poly1305 0.11).
+  Encrypted scratches and the app PIN made with earlier versions keep
+  working; a test checks values made with the old libraries.
+- Terminal status is a colored dot before the status text, like herdr:
+  blue working, orange needs you, green idle, gray shell; a hollow ring for
+  a `.tmux` file that is not running. The terminal icon is one quiet color.
+
+### Fixed
+
+- The Terminals list was empty with tmux 3.8, which prints tabs in its
+  output as `_`; the session list now uses `:` between fields.
+
 ## [0.6.5] - 2026-11-06
 
 ### Added

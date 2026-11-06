@@ -1,19 +1,19 @@
 //! Terminals in the app: open a tmux session in a tab (from the Terminals
-//! list or a `.tmux` file), start new ones, and create `.tmux` files.
+//! list or a `.tmux` file), start, rename and find them in the file tree.
 
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use super::new_entry::creation_error;
 use super::{OpenFile, RubriqueApp};
-use crate::explorer::tree::FsNode;
+use crate::explorer::tree::path_under_root;
+use crate::explorer::view::{InlineRename, SessionEdit};
 use crate::remote;
+use crate::terminal::is_terminal_path;
 use crate::terminal::session::LiveTerminal;
-use crate::terminal::tmux::new_session_name;
+use crate::terminal::tmux::{file_for_session, new_session_name};
 use crate::terminal::{TERMINAL_EXTENSION, TERMINAL_FILE_TEXT};
-
-/// Most `terminal-N.tmux` names tried in one folder.
-const MAX_FILE_NUMBER: u32 = 999;
 
 impl RubriqueApp {
     /// A `.tmux` file as a tab: its session, started in the file's folder.
@@ -58,19 +58,138 @@ impl RubriqueApp {
         self.add_tab(OpenFile::Terminal { terminal: Box::new(terminal) });
     }
 
-    /// Start a new session in the first local folder and show it.
-    pub(super) fn new_terminal(&mut self) {
+    /// The + in the Terminals list: a name field for a new tmux session at
+    /// the top of the list.
+    pub(super) fn request_new_terminal(&mut self) {
         let Some(monitor) = &self.terminals else {
             return;
         };
-        let name = new_session_name(&monitor.rows().into_iter().map(|row| row.info).collect::<Vec<_>>());
+        let sessions: Vec<_> = monitor.rows().into_iter().map(|row| row.info).collect();
+        let name = new_session_name(&sessions);
+        self.clear_name_fields();
+        self.settings.layout.terminals_collapsed = false;
+        self.session_edit = Some(InlineRename::with_name(SessionEdit::New, name));
+    }
+
+    /// Start session `name` in the first local folder and show it.
+    fn start_named_session(&mut self, name: &str) -> Result<(), String> {
+        let Some(monitor) = &self.terminals else {
+            return Err("tmux is not installed".to_string());
+        };
+        if monitor.tmux().has_session(name) {
+            return Err(format!("A terminal called \u{201c}{name}\u{201d} is already running"));
+        }
         let folder = self.new_terminal_folder();
-        if let Err(error) = monitor.tmux().start(&name, &folder) {
-            self.show_status(format!("Cannot start a terminal: {error}"));
+        monitor.tmux().start(name, &folder).map_err(|error| format!("Cannot start it: {error}"))?;
+        monitor.refresh();
+        self.open_terminal_session(name);
+        Ok(())
+    }
+
+    /// "Show in files": open the tree down to the session's `.tmux` file,
+    /// or to the folder it runs in, and highlight it there.
+    pub(super) fn show_terminal_in_files(&mut self, name: &str) {
+        match self.terminal_place(name) {
+            Some(place) => self.reveal_in_files(place),
+            None => self.show_status("This terminal's folder is not in the explorer".to_string()),
+        }
+    }
+
+    /// Where a session sits in the file tree: the `.tmux` file it was
+    /// opened from, else the folder it runs in. `None` when that is outside
+    /// every explorer folder, or the session is gone.
+    fn terminal_place(&self, name: &str) -> Option<PathBuf> {
+        // A tab knows its file even after the shell moved to another folder.
+        let open_file = std::iter::once(&self.open_file).chain(&self.tabs).find_map(|file| match file {
+            OpenFile::Terminal { terminal } if terminal.name == name => terminal.file.clone(),
+            _ => None,
+        });
+        if open_file.is_some() {
+            return open_file;
+        }
+        let row = self.terminals.as_ref()?.rows().into_iter().find(|row| row.info.name == name)?;
+        let (root, folder) = self
+            .roots
+            .iter()
+            .find_map(|root| path_under_root(&root.path, &row.info.folder).map(|folder| (&root.path, folder)))?;
+        // The shell may have moved below the `.tmux` file's folder, so look
+        // in each folder up to the explorer root.
+        let file = folder
+            .ancestors()
+            .take_while(|ancestor| ancestor.starts_with(root))
+            .find_map(|ancestor| file_for_session(ancestor, name));
+        Some(file.unwrap_or(folder))
+    }
+
+    /// Unfold Files, open the folders down to `target`, and highlight and
+    /// scroll to it on the next frame.
+    pub(super) fn reveal_in_files(&mut self, target: PathBuf) {
+        self.settings.layout.files_collapsed = false;
+        if let Some(root) = self.roots.iter_mut().find(|root| target.starts_with(&root.path)) {
+            root.reveal(&target);
+        }
+        self.revealed = Some(target);
+        self.scroll_to_revealed = true;
+    }
+
+    /// Double click on a terminal in the list: edit its name in place. A
+    /// session opened from a `.tmux` file is named after that file, so its
+    /// file is renamed in the tree instead (renaming only the session would
+    /// cut it off from its file).
+    pub(super) fn start_terminal_rename(&mut self, name: String) {
+        self.clear_name_fields();
+        if let Some(file) = self.terminal_place(&name).filter(|place| is_terminal_path(place)) {
+            self.reveal_in_files(file.clone());
+            self.tree_rename = Some(InlineRename::new(file));
             return;
         }
+        self.session_edit = Some(InlineRename::with_name(SessionEdit::Rename(name.clone()), name));
+    }
+
+    /// Start or rename the session whose name field was just submitted; on
+    /// failure the field stays and shows why.
+    pub(super) fn finish_session_edit(&mut self) {
+        let Some(mut edit) = self.session_edit.take_if(|edit| edit.submitted) else {
+            return;
+        };
+        let result = match &edit.target {
+            SessionEdit::New => clean_terminal_name(&edit.name).and_then(|name| self.start_named_session(&name)),
+            SessionEdit::Rename(from) => self.rename_session(from, &edit.name),
+        };
+        if let Err(error) = result {
+            edit.failed(error);
+            self.session_edit = Some(edit);
+        }
+    }
+
+    /// Rename tmux session `from` to the `typed` name, and point its open
+    /// tabs at the new name.
+    fn rename_session(&mut self, from: &str, typed: &str) -> Result<(), String> {
+        let to = clean_terminal_name(typed)?;
+        if to == from {
+            return Ok(());
+        }
+        let Some(monitor) = &self.terminals else {
+            return Err("tmux is not installed".to_string());
+        };
+        if monitor.tmux().has_session(&to) {
+            return Err(format!("A terminal called \u{201c}{to}\u{201d} is already running"));
+        }
+        monitor.tmux().rename(from, &to).map_err(|error| format!("Cannot rename it: {error}"))?;
         monitor.refresh();
-        self.open_terminal_session(&name);
+        self.agent_history.rename_terminal(from, &to);
+        self.save_agent_history();
+        if let Some(expanded) = self.expanded_terminals.iter_mut().find(|name| *name == from) {
+            expanded.clone_from(&to);
+        }
+        for file in std::iter::once(&mut self.open_file).chain(&mut self.tabs) {
+            if let OpenFile::Terminal { terminal } = file
+                && terminal.name == from
+            {
+                terminal.follow_session_rename(&to);
+            }
+        }
+        Ok(())
     }
 
     /// Where a new terminal starts: the first local explorer folder, or home.
@@ -82,39 +201,37 @@ impl RubriqueApp {
             .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
             .unwrap_or_else(|| PathBuf::from("/"))
     }
-
-    /// Create `terminal.tmux` (or `terminal-2.tmux`, …) in `folder` and open it.
-    pub(super) fn new_terminal_file(&mut self, folder: &Path) {
-        match create_terminal_file(folder) {
-            Ok(path) => {
-                self.roots.iter_mut().for_each(FsNode::refresh);
-                self.open_in_tab(path);
-            }
-            Err(error) => self.show_status(format!("Cannot create a terminal file: {error}")),
-        }
-    }
 }
 
-/// Write a new `.tmux` file in `folder` under the first free name. Never
-/// replaces a file: `create_new` fails when the name is taken.
-fn create_terminal_file(folder: &Path) -> std::io::Result<PathBuf> {
-    for number in 1..=MAX_FILE_NUMBER {
-        let name = if number == 1 {
-            format!("terminal.{TERMINAL_EXTENSION}")
-        } else {
-            format!("terminal-{number}.{TERMINAL_EXTENSION}")
-        };
-        let path = folder.join(name);
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut file) => {
-                file.write_all(TERMINAL_FILE_TEXT.as_bytes())?;
-                return Ok(path);
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error),
-        }
+/// Create the `.tmux` file `typed` names in `folder` (with or without
+/// the extension). Returns its path.
+pub(super) fn create_terminal_file(folder: &Path, typed: &str) -> Result<PathBuf, String> {
+    let name = clean_terminal_name(typed)?;
+    write_terminal_file(folder, &name).map_err(|error| creation_error(&format!("{name}.{TERMINAL_EXTENSION}"), &error))
+}
+
+/// The typed name, trimmed and without a `.tmux` the user may have added.
+/// Letters, digits, spaces, `-` and `_` only: the name becomes a tmux
+/// session or a file name, and tmux reserves `.` and `:`.
+fn clean_terminal_name(typed: &str) -> Result<String, String> {
+    let name = typed.trim();
+    let name = name.strip_suffix(&format!(".{TERMINAL_EXTENSION}")).unwrap_or(name).trim();
+    if name.is_empty() {
+        return Err("Type a name".to_string());
     }
-    Err(std::io::Error::other("too many terminal files in this folder"))
+    if !name.chars().all(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_')) {
+        return Err("Use letters, digits, spaces, - and _".to_string());
+    }
+    Ok(name.to_string())
+}
+
+/// Write `<name>.tmux` in `folder`. Never replaces a file: `create_new`
+/// fails with `AlreadyExists` when the name is taken.
+fn write_terminal_file(folder: &Path, name: &str) -> std::io::Result<PathBuf> {
+    let path = folder.join(format!("{name}.{TERMINAL_EXTENSION}"));
+    let mut file = OpenOptions::new().write(true).create_new(true).open(&path)?;
+    file.write_all(TERMINAL_FILE_TEXT.as_bytes())?;
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -123,12 +240,20 @@ mod tests {
     use crate::test_support::TempFolder;
 
     #[test]
-    fn creates_numbered_terminal_files_without_replacing() {
+    fn never_replaces_a_terminal_file() {
         let temp = TempFolder::new();
-        let first = create_terminal_file(temp.path()).unwrap();
-        let second = create_terminal_file(temp.path()).unwrap();
-        assert_eq!(first.file_name().unwrap(), "terminal.tmux");
-        assert_eq!(second.file_name().unwrap(), "terminal-2.tmux");
-        assert_eq!(std::fs::read_to_string(&first).unwrap(), TERMINAL_FILE_TEXT);
+        let path = write_terminal_file(temp.path(), "terminal").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), TERMINAL_FILE_TEXT);
+        let taken = write_terminal_file(temp.path(), "terminal").unwrap_err();
+        assert_eq!(taken.kind(), std::io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn cleans_typed_names() {
+        assert_eq!(clean_terminal_name("  build "), Ok("build".to_string()));
+        assert_eq!(clean_terminal_name("api server.tmux"), Ok("api server".to_string()));
+        assert!(clean_terminal_name("   ").is_err());
+        assert!(clean_terminal_name("a/b").is_err());
+        assert!(clean_terminal_name("v1.2").is_err());
     }
 }

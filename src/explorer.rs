@@ -2,6 +2,7 @@
 
 pub mod note_marks;
 pub mod paths;
+mod section;
 mod terminals;
 pub mod tree;
 pub mod view;

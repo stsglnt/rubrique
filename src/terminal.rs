@@ -6,8 +6,10 @@
 //! A `.tmux` file in a folder is a terminal too: opening it starts (or
 //! reattaches to) a session in that folder.
 
+pub mod agent_sessions;
 pub mod ansi;
 pub mod keys;
+pub mod mentions;
 pub mod monitor;
 pub mod screen;
 pub mod session;
