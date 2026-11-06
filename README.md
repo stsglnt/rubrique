@@ -48,7 +48,8 @@ Agents run only when you ask, read-only by default.
 - Several folders in one explorer. Right-click a folder → New file, folder or terminal. Double-click a file or tab to rename it, right-click to delete.
 - Tabs keep unsaved changes, cursor and undo.
 - Safe saves: your file is never reformatted; outside changes open a merge.
-- Find in a file or across all folders (`Cmd+F`).
+- Find in a file or across all folders (`Cmd+F`), match case or whole
+  words, and replace one match or all of them (`Cmd+Alt+F`).
 - Remote folders over SSH (off by default, Settings → Files).
 - Terminals: tmux sessions as tabs, listed under the files with their agent's
   status (working, needs you, idle) and the agent sessions they ran, ready to
@@ -88,6 +89,7 @@ numbers and other options are in Settings → Accessibility.
 | Cmd+Shift+F | Format JSON, SQL or XML |
 | Cmd+Shift+C | Copy the open file's path |
 | Cmd+G / Cmd+Shift+G | Next / previous match |
+| Cmd+Alt+F (Ctrl+H on Linux) | Find and replace |
 | Alt+Up / Alt+Down | Move lines |
 | Cmd+D | Duplicate lines |
 | Cmd+Shift+D | Insert today's date |

@@ -112,6 +112,11 @@ const RECORD: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(M
 const COPY_OPEN_PATH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::C);
 const CLOSE_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::W);
 const FIND: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::F);
+/// Find with the replace row: Cmd+Alt+F on macOS, Ctrl+H elsewhere.
+#[cfg(target_os = "macos")]
+const FIND_REPLACE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::ALT), Key::F);
+#[cfg(not(target_os = "macos"))]
+const FIND_REPLACE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::H);
 const FIND_NEXT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::G);
 const FIND_PREVIOUS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::G);
 const NEXT_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::Tab);
@@ -734,16 +739,21 @@ impl RubriqueApp {
             self.load_skills_and_agents();
             self.open_ask(ctx);
         }
+        // Shortcuts with more modifiers first: egui lets Cmd+Shift+F and
+        // Cmd+Alt+F also match Cmd+F.
+        if ctx.input_mut(|input| input.consume_shortcut(&FORMAT)) {
+            self.format_text(ctx);
+        }
+        if ctx.input_mut(|input| input.consume_shortcut(&FIND_REPLACE)) {
+            self.open_find(ctx, true);
+        }
         if ctx.input_mut(|input| input.consume_shortcut(&FIND)) {
-            self.open_find();
+            self.open_find(ctx, false);
         }
         self.find_shortcuts(ctx);
         self.side_panel_shortcut(ctx);
         if ctx.input_mut(|input| input.consume_shortcut(&ADD_NOTE)) {
             self.start_note(ctx);
-        }
-        if ctx.input_mut(|input| input.consume_shortcut(&FORMAT)) {
-            self.format_text(ctx);
         }
         if ctx.input_mut(|input| input.consume_shortcut(&OPEN_IN_BROWSER)) {
             self.open_in_browser(ctx);

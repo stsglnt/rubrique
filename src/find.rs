@@ -1,6 +1,6 @@
-//! Search: matches of a query in a text (case-insensitive), and in every
-//! text file under the explorer's folders. Pure functions, apart from the
-//! file reading in [`search_files`].
+//! Search: matches of a query in a text (without case by default), in
+//! every text file under the explorer's folders, and replacing them. Pure
+//! functions, apart from the file reading in [`search_files`].
 
 use std::fs;
 use std::ops::Range;
@@ -11,19 +11,62 @@ const MAX_FILE_BYTES: u64 = 1024 * 1024;
 /// Longest excerpt shown for a hit, in characters.
 const EXCERPT_CHARS: usize = 100;
 
-/// Byte ranges of every case-insensitive occurrence of `query` in `text`,
-/// in order, without overlaps. An empty query matches nothing.
-pub fn find_all(text: &str, query: &str) -> Vec<Range<usize>> {
+/// How a query is compared with the text.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SearchOptions {
+    /// Letters must match in case. Off compares without case.
+    pub match_case: bool,
+    /// A match must not touch a letter, digit or `_` on either side.
+    pub whole_word: bool,
+}
+
+/// Byte ranges of every occurrence of `query` in `text`, in order, without
+/// overlaps. An empty query matches nothing.
+pub fn find_all(text: &str, query: &str, options: SearchOptions) -> Vec<Range<usize>> {
     if query.is_empty() {
         return Vec::new();
     }
-    let lowered = Lowered::new(text);
-    let query = query.to_lowercase();
-    lowered
-        .text
-        .match_indices(query.as_str())
-        .map(|(start, found)| lowered.original(start..start + found.len()))
-        .collect()
+    let ranges: Vec<Range<usize>> = if options.match_case {
+        text.match_indices(query).map(|(start, found)| start..start + found.len()).collect()
+    } else {
+        let lowered = Lowered::new(text);
+        let query = query.to_lowercase();
+        lowered
+            .text
+            .match_indices(query.as_str())
+            .map(|(start, found)| lowered.original(start..start + found.len()))
+            .collect()
+    };
+    if options.whole_word {
+        return ranges.into_iter().filter(|range| is_whole_word(text, range)).collect();
+    }
+    ranges
+}
+
+/// True when neither the character before `range` nor the one after it is
+/// a word character (a letter, a digit or `_`).
+fn is_whole_word(text: &str, range: &Range<usize>) -> bool {
+    let before = text[..range.start].chars().next_back();
+    let after = text[range.end..].chars().next();
+    !before.is_some_and(is_word_char) && !after.is_some_and(is_word_char)
+}
+
+fn is_word_char(character: char) -> bool {
+    character.is_alphanumeric() || character == '_'
+}
+
+/// `text` with every one of `matches` (in order, without overlaps, as
+/// [`find_all`] gives them) replaced by `with`.
+pub fn replace_all(text: &str, matches: &[Range<usize>], with: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut copied_to = 0;
+    for range in matches {
+        result.push_str(&text[copied_to..range.start]);
+        result.push_str(with);
+        copied_to = range.end;
+    }
+    result.push_str(&text[copied_to..]);
+    result
 }
 
 /// `text` in lower case, with the way back to the original byte offsets
@@ -99,17 +142,25 @@ impl SearchResults {
     }
 }
 
+/// What an all-files search looks for.
+#[derive(Clone, Copy, Debug)]
+pub struct Query<'a> {
+    pub text: &'a str,
+    /// How the text of the files is compared. File names are always
+    /// compared without case.
+    pub options: SearchOptions,
+}
+
 /// Search the text files under `roots` (hidden entries skipped) for `query`,
 /// stopping after `limit` hits. Files come in explorer order; name hits
 /// before text hits within a file.
-pub fn search_files(roots: &[PathBuf], query: &str, limit: usize) -> SearchResults {
+pub fn search_files(roots: &[PathBuf], query: Query<'_>, limit: usize) -> SearchResults {
     let mut results = SearchResults::default();
-    if query.trim().is_empty() {
+    if query.text.trim().is_empty() {
         return results;
     }
-    let query = query.to_lowercase();
     for root in roots {
-        search_folder(root, root, &query, limit, &mut results);
+        search_folder(root, root, query, limit, &mut results);
         if results.truncated {
             break;
         }
@@ -117,7 +168,7 @@ pub fn search_files(roots: &[PathBuf], query: &str, limit: usize) -> SearchResul
     results
 }
 
-fn search_folder(folder: &Path, root: &Path, query: &str, limit: usize, results: &mut SearchResults) {
+fn search_folder(folder: &Path, root: &Path, query: Query<'_>, limit: usize, results: &mut SearchResults) {
     let Ok(entries) = fs::read_dir(folder) else {
         return;
     };
@@ -148,10 +199,17 @@ fn search_folder(folder: &Path, root: &Path, query: &str, limit: usize, results:
 }
 
 /// Add the hits of one file: its name, then its text (when it was read and
-/// is text). `query` is in lower case.
-fn search_file(path: &Path, root: &Path, text: Option<&str>, query: &str, limit: usize, results: &mut SearchResults) {
+/// is text).
+fn search_file(
+    path: &Path,
+    root: &Path,
+    text: Option<&str>,
+    query: Query<'_>,
+    limit: usize,
+    results: &mut SearchResults,
+) {
     let name = path.file_name().map(|name| name.to_string_lossy().to_lowercase()).unwrap_or_default();
-    if name.contains(query) {
+    if name.contains(&query.text.to_lowercase()) {
         push_hit(results, FileHit { path: path.to_path_buf(), root: root.to_path_buf(), kind: HitKind::Name }, limit);
     }
     // Encrypted scratches: only their names are searched.
@@ -159,7 +217,7 @@ fn search_file(path: &Path, root: &Path, text: Option<&str>, query: &str, limit:
         return;
     };
     results.files_searched += 1;
-    for range in find_all(text, query) {
+    for range in find_all(text, query.text, query.options) {
         if results.truncated {
             return;
         }
@@ -179,13 +237,12 @@ const MAX_REMOTE_TEXT_FILES: usize = 200;
 /// # Errors
 ///
 /// A host cannot be reached.
-pub fn search_remote_files(roots: &[PathBuf], query: &str, limit: usize) -> std::io::Result<SearchResults> {
+pub fn search_remote_files(roots: &[PathBuf], query: Query<'_>, limit: usize) -> std::io::Result<SearchResults> {
     use crate::remote::{self, commands};
     let mut results = SearchResults::default();
-    if query.trim().is_empty() {
+    if query.text.trim().is_empty() {
         return Ok(results);
     }
-    let lower = query.to_lowercase();
     let remote_roots: Vec<(PathBuf, remote::RemotePath)> =
         roots.iter().filter_map(|root| Some((root.clone(), remote::from_mirror(root)?))).collect();
     let mut hosts: Vec<&str> = Vec::new();
@@ -198,7 +255,9 @@ pub fn search_remote_files(roots: &[PathBuf], query: &str, limit: usize) -> std:
         let folders: Vec<&(PathBuf, remote::RemotePath)> =
             remote_roots.iter().filter(|(_, found)| found.host == host).collect();
         let remote_folders: Vec<PathBuf> = folders.iter().map(|(_, found)| found.path.clone()).collect();
-        let found = commands::search(host, &remote_folders, query, MAX_FILE_BYTES)?;
+        // The host finds the files containing the query without case; the
+        // options are applied here, on their text.
+        let found = commands::search(host, &remote_folders, query.text, MAX_FILE_BYTES)?;
         let mut matching = found.text_matches;
         matching.truncate(MAX_REMOTE_TEXT_FILES);
         let texts = commands::read_many(host, &matching, MAX_FILE_BYTES)?;
@@ -225,7 +284,7 @@ pub fn search_remote_files(roots: &[PathBuf], query: &str, limit: usize) -> std:
                 .position(|candidate| *candidate == file)
                 .and_then(|index| texts.get(index).cloned().flatten())
                 .and_then(|bytes| String::from_utf8(bytes).ok());
-            search_file(&mirror, root, text.as_deref(), &lower, limit, &mut results);
+            search_file(&mirror, root, text.as_deref(), query, limit, &mut results);
         }
     }
     Ok(results)
@@ -265,7 +324,7 @@ mod tests {
         temp.write("docs/b.md", "line one\nthe PLAN is here\n");
         temp.write(".git/plan", "plan");
         let mirror = crate::remote::testing::mirror_of("find-host", temp.path());
-        let results = search_remote_files(std::slice::from_ref(&mirror), "plan", 50).unwrap();
+        let results = search_remote_files(std::slice::from_ref(&mirror), plain("plan"), 50).unwrap();
         assert_eq!(results.hits.len(), 2);
         // Same order as a local search: `docs` sorts before `Plan.md`.
         assert_eq!(
@@ -279,23 +338,63 @@ mod tests {
         assert_eq!((*line, excerpt.as_str(), range.clone()), (2, "the PLAN is here", 13..17));
     }
 
+    /// A query with the default options: without case, not whole words.
+    fn plain(text: &str) -> Query<'_> {
+        Query { text, options: SearchOptions::default() }
+    }
+
+    const MATCH_CASE: SearchOptions = SearchOptions { match_case: true, whole_word: false };
+    const WHOLE_WORD: SearchOptions = SearchOptions { match_case: false, whole_word: true };
+
     #[test]
     fn finds_without_case_and_without_overlaps() {
-        assert_eq!(find_all("Ab ab AB", "ab"), vec![0..2, 3..5, 6..8]);
-        assert_eq!(find_all("aaaa", "aa"), vec![0..2, 2..4]);
-        assert_eq!(find_all("text", ""), Vec::<Range<usize>>::new());
-        assert_eq!(find_all("", "x"), Vec::<Range<usize>>::new());
+        let any = SearchOptions::default();
+        assert_eq!(find_all("Ab ab AB", "ab", any), vec![0..2, 3..5, 6..8]);
+        assert_eq!(find_all("aaaa", "aa", any), vec![0..2, 2..4]);
+        assert_eq!(find_all("text", "", any), Vec::<Range<usize>>::new());
+        assert_eq!(find_all("", "x", any), Vec::<Range<usize>>::new());
+    }
+
+    #[test]
+    fn match_case_keeps_only_the_same_case() {
+        assert_eq!(find_all("Ab ab AB", "ab", MATCH_CASE), vec![3..5]);
+        assert_eq!(find_all("Київ київ", "київ", MATCH_CASE), vec![9..17]);
+        assert_eq!(find_all("Київ київ", "київ", SearchOptions::default()), vec![0..8, 9..17]);
+    }
+
+    #[test]
+    fn whole_word_rejects_matches_inside_words() {
+        let text = "cat concat cat_ (cat) Cat.";
+        assert_eq!(find_all(text, "cat", WHOLE_WORD), vec![0..3, 17..20, 22..25]);
+        let both = SearchOptions { match_case: true, whole_word: true };
+        assert_eq!(find_all(text, "cat", both), vec![0..3, 17..20]);
+        // Letters outside ASCII are word characters too.
+        assert_eq!(find_all("étécode été", "été", WHOLE_WORD), vec![10..15]);
+        assert_eq!(find_all("aaa", "aa", WHOLE_WORD), Vec::<Range<usize>>::new());
     }
 
     #[test]
     fn lower_casing_keeps_original_offsets() {
         // İ (2 bytes) lower-cases to i̇ (3 bytes); the match after it still
         // points into the original text.
+        let any = SearchOptions::default();
         let text = "İstanbul ÉTÉ";
-        let ranges = find_all(text, "été");
+        let ranges = find_all(text, "été", any);
         assert_eq!(ranges.len(), 1);
         assert_eq!(&text[ranges[0].clone()], "ÉTÉ");
-        assert_eq!(&text[find_all(text, "i̇stan")[0].clone()], "İstan");
+        assert_eq!(&text[find_all(text, "i̇stan", any)[0].clone()], "İstan");
+    }
+
+    #[test]
+    fn replaces_every_match_with_shorter_longer_or_empty_text() {
+        let text = "one two one";
+        let matches = find_all(text, "one", SearchOptions::default());
+        assert_eq!(replace_all(text, &matches, "1"), "1 two 1");
+        assert_eq!(replace_all(text, &matches, "three"), "three two three");
+        assert_eq!(replace_all(text, &matches, ""), " two ");
+        assert_eq!(replace_all(text, &[], "x"), text);
+        // The replacement may contain the query; it is not matched again.
+        assert_eq!(replace_all(text, &matches, "one one"), "one one two one one");
     }
 
     #[test]
@@ -315,7 +414,7 @@ mod tests {
         folder.write("other.txt", "no match\n");
         folder.write("image.png", "\0\0milk");
         let roots = vec![folder.path().to_path_buf()];
-        let results = search_files(&roots, "milk", 10);
+        let results = search_files(&roots, plain("milk"), 10);
         let kinds: Vec<&HitKind> = results.hits.iter().map(|hit| &hit.kind).collect();
         assert_eq!(
             kinds,
@@ -329,14 +428,28 @@ mod tests {
         assert_eq!(results.file_count(), 1);
         assert_eq!(results.files_searched, 2);
 
-        let by_name = search_files(&roots, "plan", 10);
+        let by_name = search_files(&roots, plain("plan"), 10);
         assert_eq!(by_name.hits[0].kind, HitKind::Name);
         assert_eq!(by_name.hits[1].kind, HitKind::Text { line: 1, excerpt: "# Plan".into(), range: 2..6 });
 
-        let capped = search_files(&roots, "milk", 1);
+        let capped = search_files(&roots, plain("milk"), 1);
         assert_eq!(capped.hits.len(), 1);
         assert!(capped.truncated);
-        assert_eq!(search_files(&roots, "  ", 10).hits, Vec::<FileHit>::new());
+        assert_eq!(search_files(&roots, plain("  "), 10).hits, Vec::<FileHit>::new());
+
+        // The options apply to the text of the files; names ignore the case.
+        let exact = search_files(&roots, Query { text: "Milk", options: MATCH_CASE }, 10);
+        assert_eq!(exact.hits.len(), 1);
+        assert_eq!(exact.hits[0].kind, HitKind::Text { line: 3, excerpt: "Milk is white".into(), range: 16..20 });
+        let by_name = search_files(&roots, Query { text: "PLAN", options: MATCH_CASE }, 10);
+        assert_eq!(
+            by_name.hits,
+            vec![FileHit {
+                path: folder.path().join("notes/Plan.md"),
+                root: folder.path().to_path_buf(),
+                kind: HitKind::Name
+            }]
+        );
     }
 
     #[test]
@@ -344,7 +457,7 @@ mod tests {
         let folder = TempFolder::new();
         // Real ones are rarely valid UTF-8; this one is, to show the check.
         folder.write("secret-milk.md", "RUBRIQUE-ENC1\nmilk");
-        let results = search_files(&[folder.path().to_path_buf()], "milk", 10);
+        let results = search_files(&[folder.path().to_path_buf()], plain("milk"), 10);
         assert_eq!(results.hits.len(), 1);
         assert_eq!(results.hits[0].kind, HitKind::Name);
     }
