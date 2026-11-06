@@ -33,8 +33,9 @@ pub enum ExplorerAction {
     AddFolder,
     /// Ask for a folder on another computer to add as a root.
     AddRemoteFolder,
-    /// Create a new scratch file and open it.
-    NewScratch,
+    /// Create a new scratch file and open it: encrypted or plain, or
+    /// `None` for the "Encrypt every new scratch" setting.
+    NewScratch { encrypted: Option<bool> },
     /// Ask for a new name for this file in the "Rename" dialog.
     Rename(PathBuf),
     /// Turn this file's row into a name field (a double click).
@@ -267,10 +268,19 @@ fn files_header(ui: &mut Ui, context: &TreeContext, expanded: bool, action: &mut
             {
                 *action = Some(ExplorerAction::Refresh);
             }
-            let scratch_tip = "New scratch file for quick notes (Cmd+N)";
-            if small_icon_button(ui, Icon::NewScratch, HEADER_BUTTON_SIZE, "New scratch", scratch_tip).clicked() {
-                *action = Some(ExplorerAction::NewScratch);
+            let scratch_tip = "New scratch file for quick notes (Cmd+N). Right-click for an encrypted one";
+            let scratch = small_icon_button(ui, Icon::NewScratch, HEADER_BUTTON_SIZE, "New scratch", scratch_tip);
+            if scratch.clicked() {
+                *action = Some(ExplorerAction::NewScratch { encrypted: None });
             }
+            scratch.context_menu(|ui| {
+                if ui.button("New plain scratch").clicked() {
+                    *action = Some(ExplorerAction::NewScratch { encrypted: Some(false) });
+                }
+                if ui.button("New encrypted scratch (Cmd+Shift+N)").clicked() {
+                    *action = Some(ExplorerAction::NewScratch { encrypted: Some(true) });
+                }
+            });
             let remote_tip = "Add a folder on another computer (SSH)";
             if context.remote_enabled
                 && small_icon_button(ui, Icon::ServerPlus, HEADER_BUTTON_SIZE, "Add remote folder", remote_tip)
