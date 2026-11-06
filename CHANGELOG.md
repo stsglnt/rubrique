@@ -8,6 +8,13 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Added
+
+- **Structure** (`Cmd+Shift+O`, or **Structure** in the status bar): the
+  headings of the open Markdown file, indented by level, in the right panel
+  where the notes are. Click a heading to jump to it in the preview or the
+  editor; the section on screen is highlighted.
+
 ## [0.6.0] - 2026-11-05
 
 ### Added

@@ -15,6 +15,7 @@ mod install;
 mod naming;
 mod privacy;
 mod remote;
+mod structure;
 mod summary;
 mod tabs;
 mod voice;
@@ -265,6 +266,8 @@ pub struct RubriqueApp {
     remote: remote::RemoteState,
     /// The open file's Helm chart and the Helm panel.
     helm: helm::HelmState,
+    /// The Structure panel (headings) is shown on the right for Markdown files.
+    structure_open: bool,
 }
 
 /// A note in the making (new, or an existing one being edited).
@@ -338,6 +341,7 @@ impl RubriqueApp {
             privacy,
             remote: remote::RemoteState::default(),
             helm: helm::HelmState::default(),
+            structure_open: false,
         };
         preview_selection::install(ctx);
         egui_extras::install_image_loaders(ctx);
@@ -659,6 +663,7 @@ impl RubriqueApp {
             self.open_find();
         }
         self.find_shortcuts(ctx);
+        self.structure_shortcut(ctx);
         if ctx.input_mut(|input| input.consume_shortcut(&ADD_NOTE)) {
             self.start_note(ctx);
         }
@@ -1934,6 +1939,7 @@ impl RubriqueApp {
                 if is_markdown || is_html {
                     self.voice_buttons(ui);
                 }
+                self.structure_button(ui);
                 if !showing_preview && let Some(stats) = &self.stats {
                     ui.label(format!("{}   ", stats.summary()));
                 }
@@ -2163,13 +2169,7 @@ impl eframe::App for RubriqueApp {
             });
             self.explorer(ui);
         });
-        if self.shows_notes_panel() {
-            egui::Panel::right("notes")
-                .resizable(true)
-                .default_size(NOTES_PANEL_WIDTH)
-                .frame(egui::Frame::side_top_panel(&style).inner_margin(0))
-                .show(ui, |ui| self.notes_panel(ui));
-        }
+        self.right_panel(ui);
         if self.ask.job.is_some() && self.merging.is_none() {
             egui::Panel::bottom("ai-output")
                 .resizable(true)

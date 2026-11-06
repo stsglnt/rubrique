@@ -6,4 +6,5 @@ pub mod highlight;
 pub mod html;
 pub mod inlines;
 pub mod notes;
+pub mod outline;
 pub mod render;

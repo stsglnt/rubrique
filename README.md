@@ -37,6 +37,7 @@ Agents run only when you ask, read-only by default.
 **Writing**
 
 - Live preview: click a block to edit it.
+- Structure (`Cmd+Shift+O`): the file's headings on the right, click one to jump to it.
 - Voice memos (`Cmd+Shift+R`), transcribed locally with whisper.cpp.
 - Drop images and audio onto the page.
 - Scratch files (`Cmd+N`), optionally encrypted, and an optional app PIN.
