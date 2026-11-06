@@ -558,6 +558,25 @@ pub fn select_editor_range(ctx: &Context, start: usize, end: usize) {
     }
 }
 
+/// Change the editor's text as one undo step, then put its cursor at
+/// character `cursor`: Cmd+Z brings back exactly the text from before
+/// `edit`. The editor's own undo only follows typing while it has focus,
+/// so an edit made from a bar needs its points added by hand.
+pub fn apply_with_undo(ctx: &Context, text: &mut String, cursor: usize, edit: impl FnOnce(&mut String)) {
+    let mut state = TextEditState::load(ctx, editor_id()).unwrap_or_default();
+    let before = state.cursor.char_range().unwrap_or_default();
+    let mut undoer = state.undoer();
+    // Closes any typing still being gathered into a point.
+    undoer.add_undo(&(before, text.clone()));
+    edit(text);
+    let after = CCursorRange::one(CCursor::new(cursor));
+    // The new text is a point too, so the editor sees no change to gather.
+    undoer.add_undo(&(after, text.clone()));
+    state.set_undoer(undoer);
+    state.cursor.set_char_range(Some(after));
+    state.store(ctx, editor_id());
+}
+
 /// Give keyboard focus to the editor (e.g. after opening a file).
 pub fn focus_editor(ctx: &Context) {
     ctx.memory_mut(|memory| memory.request_focus(editor_id()));

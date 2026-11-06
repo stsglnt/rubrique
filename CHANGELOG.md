@@ -29,6 +29,18 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   edits stay in the tab, and their kept draft is sealed or made plain too.
   Settings → Privacy → **Encrypt every new scratch** still sets what
   `Cmd/Ctrl+N` makes.
+- **Find options**: **Aa** (match case) and **W** (whole word) toggles in
+  the find bar, for the open file and for All files.
+- **Replace**: `Cmd+Alt+F` (`Ctrl+H` on Linux), or the **Replace** switch
+  in the find bar, adds a row under the search field. **Replace** (Enter)
+  changes the current match and moves to the next one; **Replace all**
+  (`Cmd+Enter`) changes every match. Each is one undo step, so one `Cmd+Z`
+  brings the old text back. The status bar says how many were replaced.
+- Opening the find bar with text selected (one line) searches for it.
+
+### Fixed
+
+- `Cmd+Shift+F` (Format) also opened the find bar.
 
 ## [0.7.0] - 2026-11-06
 
