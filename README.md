@@ -29,7 +29,7 @@ macOS blocks the first open (the app is not notarized yet). Fix:
 - **Ask** (`Cmd+K`): a request, or Shorter, Fix grammar, Table, Translate, Explain.
 - **Review**: every change opens in a merge screen. Nothing applies until you accept.
 - **Compare**: one request to two agents, keep the best of each.
-- **Named agents and skills**: type `@ai-` to pick one. Claude Code agents and skills work too.
+- **Named agents and skills**: type `@ai-` to pick one. Claude Code agents work too, and skills from Claude Code, Codex (`~/.agents/skills`) and Grok. See them all in Settings → Skills.
 - **Notes**: leave a note on a passage, let an agent resolve it.
 
 Agents run only when you ask, read-only by default.
