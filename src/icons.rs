@@ -46,6 +46,10 @@ pub enum Icon {
     /// A terminal (a tmux session). The `>_` prompt is the accent, so it can
     /// carry the status color of the agent inside.
     Terminal,
+    /// Add one more of what the section lists (a new terminal).
+    Plus,
+    /// Show or hide the right panel: a window whose right column is the accent.
+    SidePanel,
 }
 
 /// A flat button with `icon` and a hover tip. `active` keeps it highlighted
@@ -151,20 +155,9 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
             plus_badge(painter, at(4.0, 3.5), accent, behind);
         }
         Icon::ServerPlus => paint_server_plus(painter, center, colors),
-        Icon::NewScratch => {
-            // A square open at the top right with a pencil writing into it; the
-            // pencil tip is the accent, like the marker tip of the app icon.
-            let square = [at(0.0, -5.5), at(-6.5, -5.5), at(-6.5, 6.5), at(5.5, 6.5), at(5.5, 0.0)];
-            stroke_path(painter, &round_corners(&square, CORNER, false), false, line);
-            let along = vec2(1.0, -1.0).normalized();
-            let across = vec2(1.0, 1.0).normalized();
-            let tip = at(-1.6, 1.6);
-            let cone = tip + along * 2.2;
-            let back = tip + along * 10.4;
-            let body = [cone + across, back + across, back - across, cone - across];
-            stroke_path(painter, &body, true, line);
-            stroke_path(painter, &[cone + across, tip, cone - across], false, detail);
-        }
+        Icon::Plus => plus(painter, center, 5.0, line),
+        Icon::SidePanel => paint_side_panel(painter, center, line, detail),
+        Icon::NewScratch => paint_new_scratch(painter, center, line, detail),
         Icon::Refresh => {
             // Most of a circle; the arrowhead at its end is the accent.
             let radius = 5.6;
@@ -263,6 +256,32 @@ pub fn small_icon_button(ui: &mut Ui, icon: Icon, size: f32, label: &str, tip: &
     let behind = if fill == Color32::TRANSPARENT { visuals.panel_fill } else { fill };
     paint(painter, icon, rect.center(), Colors { line: color, accent: visuals.hyperlink_color, behind });
     response.on_hover_text(tip)
+}
+
+/// A square open at the top right with a pencil writing into it; the
+/// pencil tip is the accent, like the marker tip of the app icon.
+fn paint_new_scratch(painter: &Painter, center: Pos2, line: Stroke, detail: Stroke) {
+    let at = |x: f32, y: f32| center + vec2(x, y);
+    let square = [at(0.0, -5.5), at(-6.5, -5.5), at(-6.5, 6.5), at(5.5, 6.5), at(5.5, 0.0)];
+    stroke_path(painter, &round_corners(&square, CORNER, false), false, line);
+    let along = vec2(1.0, -1.0).normalized();
+    let across = vec2(1.0, 1.0).normalized();
+    let tip = at(-1.6, 1.6);
+    let cone = tip + along * 2.2;
+    let back = tip + along * 10.4;
+    let body = [cone + across, back + across, back - across, cone - across];
+    stroke_path(painter, &body, true, line);
+    stroke_path(painter, &[cone + across, tip, cone - across], false, detail);
+}
+
+/// A window split in two; the lines in the right column are the accent.
+fn paint_side_panel(painter: &Painter, center: Pos2, line: Stroke, detail: Stroke) {
+    let at = |x: f32, y: f32| center + vec2(x, y);
+    let window = [at(-6.5, -5.5), at(6.5, -5.5), at(6.5, 5.5), at(-6.5, 5.5)];
+    stroke_path(painter, &round_corners(&window, CORNER, true), true, line);
+    stroke_path(painter, &[at(1.5, -5.5), at(1.5, 5.5)], false, line);
+    stroke_path(painter, &[at(3.6, -2.5), at(4.4, -2.5)], false, detail);
+    stroke_path(painter, &[at(3.6, 0.0), at(4.4, 0.0)], false, detail);
 }
 
 /// A window; the `>_` prompt inside is the accent.

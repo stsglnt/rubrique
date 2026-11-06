@@ -15,6 +15,7 @@ mod install;
 mod naming;
 mod privacy;
 mod remote;
+mod side_panel;
 mod structure;
 mod summary;
 mod tabs;
@@ -39,7 +40,7 @@ use crate::document::view::{
 use crate::explorer::note_marks::NoteMarks;
 use crate::explorer::paths::{absolute_path_text, name_text};
 use crate::explorer::tree::{FsNode, is_markdown_path};
-use crate::explorer::view::{ExplorerAction, TreeContext, TreeRename, show_explorer};
+use crate::explorer::view::{ExplorerAction, InlineRename, TreeContext, show_explorer};
 use crate::format::{Language, format};
 use crate::icons::icon_text_button;
 use crate::icons::{Icon, icon_button};
@@ -265,11 +266,15 @@ pub struct RubriqueApp {
     /// The "Rename" dialog, while it is open.
     renaming: Option<Renaming>,
     /// The file being renamed in its explorer row (after a double click).
-    tree_rename: Option<TreeRename>,
+    tree_rename: Option<InlineRename>,
+    /// The file being renamed in its tab (after a double click on the tab).
+    tab_rename: Option<InlineRename>,
     /// The file the "Delete" dialog asks about, while it is open.
     deleting: Option<PathBuf>,
     /// Watches the tmux sessions for the explorer; `None` when tmux is not installed.
     terminals: Option<TerminalMonitor>,
+    /// The "New terminal" dialog, while it is open.
+    new_terminal: Option<terminals::NewTerminalDialog>,
     /// The merge screen for the open file, while it is open.
     merging: Option<MergeSession>,
     /// egui time of the last check for outside changes.
@@ -290,8 +295,6 @@ pub struct RubriqueApp {
     remote: remote::RemoteState,
     /// The open file's Helm chart and the Helm panel.
     helm: helm::HelmState,
-    /// The Structure panel (headings) is shown on the right for Markdown files.
-    structure_open: bool,
 }
 
 /// A note in the making (new, or an existing one being edited).
@@ -354,8 +357,10 @@ impl RubriqueApp {
             ai_found: [None, None, None, None],
             renaming: None,
             tree_rename: None,
+            tab_rename: None,
             deleting: None,
             terminals: Tmux::find().map(|tmux| TerminalMonitor::start(tmux, ctx)),
+            new_terminal: None,
             merging: None,
             last_disk_check: 0.0,
             block_edit: None,
@@ -366,7 +371,6 @@ impl RubriqueApp {
             privacy,
             remote: remote::RemoteState::default(),
             helm: helm::HelmState::default(),
-            structure_open: false,
         };
         preview_selection::install(ctx);
         egui_extras::install_image_loaders(ctx);
@@ -691,7 +695,7 @@ impl RubriqueApp {
             self.open_find();
         }
         self.find_shortcuts(ctx);
-        self.structure_shortcut(ctx);
+        self.side_panel_shortcut(ctx);
         if ctx.input_mut(|input| input.consume_shortcut(&ADD_NOTE)) {
             self.start_note(ctx);
         }
@@ -711,7 +715,9 @@ impl RubriqueApp {
             && self.pending.is_none()
             && self.renaming.is_none()
             && self.tree_rename.is_none()
+            && self.tab_rename.is_none()
             && self.deleting.is_none()
+            && self.new_terminal.is_none()
             && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
         {
             self.settings_open = false;
@@ -1210,13 +1216,28 @@ impl RubriqueApp {
     /// Rename the file whose tree row was just submitted; on failure the
     /// row stays a field and shows why.
     fn finish_tree_rename(&mut self) {
-        let Some(mut rename) = self.tree_rename.take_if(|rename| rename.submitted) else {
-            return;
-        };
-        if let Err(error) = self.finish_rename(&rename.path, &rename.name) {
-            rename.failed(error);
-            self.tree_rename = Some(rename);
+        if let Some(rename) = self.tree_rename.take_if(|rename| rename.submitted) {
+            self.tree_rename = self.try_inline_rename(rename);
         }
+    }
+
+    /// Rename the file whose tab was just submitted; on failure the tab
+    /// stays a field and the status bar says why (a tab has no room for it).
+    fn finish_tab_rename(&mut self) {
+        if let Some(rename) = self.tab_rename.take_if(|rename| rename.submitted) {
+            self.tab_rename = self.try_inline_rename(rename);
+            if let Some(error) = self.tab_rename.as_ref().and_then(|rename| rename.error.clone()) {
+                self.show_status(error);
+            }
+        }
+    }
+
+    /// Rename a file from an in-place field. Returns the field back, with
+    /// the error, when renaming failed.
+    fn try_inline_rename(&mut self, mut rename: InlineRename) -> Option<InlineRename> {
+        let error = self.finish_rename(&rename.path, &rename.name).err()?;
+        rename.failed(error);
+        Some(rename)
     }
 
     /// Draw the "Rename" dialog while it is open.
@@ -1322,8 +1343,14 @@ impl RubriqueApp {
                 _ => None,
             },
         };
-        let action =
-            show_explorer(ui, &mut self.roots, &mut self.settings.markdown_only, &context, &mut self.tree_rename);
+        let action = show_explorer(
+            ui,
+            &mut self.roots,
+            &mut self.settings.layout,
+            &mut self.settings.markdown_only,
+            &context,
+            &mut self.tree_rename,
+        );
         self.finish_tree_rename();
         match action {
             // Opens a tab, or switches to the file's tab when it is open.
@@ -1337,14 +1364,14 @@ impl RubriqueApp {
                 }
             }
             Some(ExplorerAction::OpenTerminal(name)) => self.open_terminal_session(&name),
-            Some(ExplorerAction::NewTerminal) => self.new_terminal(),
-            Some(ExplorerAction::NewTerminalFile(folder)) => self.new_terminal_file(&folder),
+            Some(ExplorerAction::NewTerminal) => self.request_new_terminal(),
+            Some(ExplorerAction::NewTerminalFile(folder)) => self.request_new_terminal_file(folder),
             Some(ExplorerAction::RemoveRoot(path)) => self.request_remove_root(path),
             Some(ExplorerAction::AddFolder) => self.choose_folder_to_add(),
             Some(ExplorerAction::AddRemoteFolder) => self.open_add_remote(),
             Some(ExplorerAction::NewScratch) => self.new_scratch(ui.ctx()),
             Some(ExplorerAction::Rename(path)) => self.start_rename(path),
-            Some(ExplorerAction::RenameInTree(path)) => self.tree_rename = Some(TreeRename::new(path)),
+            Some(ExplorerAction::RenameInTree(path)) => self.tree_rename = Some(InlineRename::new(path)),
             Some(ExplorerAction::Delete(path)) => self.request_delete(path),
             None => {}
         }
@@ -1355,6 +1382,7 @@ impl RubriqueApp {
     fn document_area(&mut self, ui: &mut Ui) {
         if !self.tabs.is_empty() {
             self.tab_bar(ui);
+            self.finish_tab_rename();
         }
         self.ask.page_rect = Some(ui.available_rect_before_wrap());
         let page = ui.available_rect_before_wrap();
@@ -1709,6 +1737,7 @@ impl RubriqueApp {
             match self.save_note(&draft) {
                 Ok(()) => {
                     preview_selection::clear(ctx);
+                    self.show_notes_panel();
                     self.show_status(
                         "Note saved in the file as a hidden comment (save the file to keep it)".to_string(),
                     );
@@ -1733,9 +1762,14 @@ impl RubriqueApp {
         let note_states: Vec<_> =
             notes.iter().map(|note| self.resolving_state(&ask::Resolving::One(note.quote.clone()))).collect();
         egui::Frame::new().inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+            if notes.is_empty() {
+                let hint = "No notes in this file. Select text in the preview, then Add note (Cmd+Shift+M).";
+                ui.label(RichText::new(hint).weak().size(11.5));
+                return;
+            }
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Notes").strong().size(16.0));
-                ui.label(RichText::new(format!("{} in this file", notes.len())).weak());
+                let count = if notes.len() == 1 { "1 note".to_string() } else { format!("{} notes", notes.len()) };
+                ui.label(RichText::new(count).weak());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add_enabled_ui(!busy, |ui| {
                         let tip = "Ask AI to resolve every note; the answer opens in merge";
@@ -1785,15 +1819,7 @@ impl RubriqueApp {
                     });
                     ui.add_space(8.0);
                 }
-                let tool = self.settings.ai.default_tool.name();
-                ui.label(
-                    RichText::new(format!(
-                        "Select text in the preview, then Add note (Cmd+Shift+M). \
-                         Resolve sends the file and the note to {tool}; the answer opens in merge."
-                    ))
-                    .weak()
-                    .size(11.5),
-                );
+                notes_help(ui, self.settings.ai.default_tool.name());
             });
         });
         if stop {
@@ -1820,13 +1846,6 @@ impl RubriqueApp {
             *preview = None;
             self.show_status("Note deleted (save the file to keep the change)".to_string());
         }
-    }
-
-    /// True when the preview is shown and the file has notes.
-    fn shows_notes_panel(&self) -> bool {
-        self.merging.is_none()
-            && self.showing_preview()
-            && matches!(&self.open_file, OpenFile::Text { document, .. } if document.text.contains("<!-- note on \""))
     }
 
     /// Act on a button of the "changed on disk" bar.
@@ -1980,7 +1999,6 @@ impl RubriqueApp {
                 if is_markdown || is_html {
                     self.voice_buttons(ui);
                 }
-                self.structure_button(ui);
                 if !showing_preview && let Some(stats) = &self.stats {
                     ui.label(format!("{}   ", stats.summary()));
                 }
@@ -2028,6 +2046,15 @@ impl RubriqueApp {
 /// A block typed at the end of the file: a blank line before it unless the
 /// file is empty or already ends with one, and a line break after it. Empty
 /// input gives an empty string, so nothing is added.
+/// The hint under the notes: how to add one and what Resolve does.
+fn notes_help(ui: &mut Ui, tool: &str) {
+    let text = format!(
+        "Select text in the preview, then Add note (Cmd+Shift+M). \
+         Resolve sends the file and the note to {tool}; the answer opens in merge."
+    );
+    ui.label(RichText::new(text).weak().size(11.5));
+}
+
 fn appended_block(text: &str, block: &str) -> String {
     let block = block.trim_end();
     if block.trim().is_empty() {
@@ -2237,6 +2264,7 @@ impl eframe::App for RubriqueApp {
         self.note_dialog(&ctx);
         self.rename_dialog(&ctx);
         self.delete_dialog(&ctx);
+        self.new_terminal_dialog(&ctx);
         self.add_remote_dialog(&ctx);
         self.secret_dialog(&ctx);
         self.update_title(&ctx);

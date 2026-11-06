@@ -8,11 +8,13 @@ use std::path::{Path, PathBuf};
 use crate::ai::AiSettings;
 use crate::remote::settings_text;
 use crate::settings::accessibility::AccessibilitySettings;
+use crate::settings::layout::LayoutSettings;
 use crate::settings::privacy::PrivacySettings;
 use crate::theme::catalog::ThemeChoice;
 use crate::voice::VoiceSettings;
 
 pub mod accessibility;
+pub mod layout;
 pub mod privacy;
 pub mod view;
 
@@ -45,6 +47,8 @@ pub struct Settings {
     pub privacy: PrivacySettings,
     /// Remote folders over SSH.
     pub remote: crate::remote::RemoteSettings,
+    /// Which panels and explorer sections are open.
+    pub layout: LayoutSettings,
 }
 
 impl Settings {
@@ -89,6 +93,7 @@ impl Settings {
                 || settings.accessibility.parse_line(key.trim(), value)
                 || settings.privacy.parse_line(key.trim(), value)
                 || settings.remote.parse_line(key.trim(), value)
+                || settings.layout.parse_line(key.trim(), value)
             {
                 continue;
             }
@@ -133,7 +138,7 @@ impl Settings {
         let folder_lines = path_lines("folder", &self.folders);
         let tab_lines = path_lines("tab", &self.open_tabs);
         format!(
-            "{folder_lines}{tab_lines}last_file={}\nmarkdown_only={}\nnote_marks={}\ntheme={}\nscratch_folder={}\n{window_lines}{}{}{}{}{}",
+            "{folder_lines}{tab_lines}last_file={}\nmarkdown_only={}\nnote_marks={}\ntheme={}\nscratch_folder={}\n{window_lines}{}{}{}{}{}{}",
             last_file,
             self.markdown_only,
             self.note_marks,
@@ -144,6 +149,7 @@ impl Settings {
             self.voice.to_lines(),
             self.privacy.to_lines(),
             self.remote.to_lines(),
+            self.layout.to_lines(),
         )
     }
 }
@@ -258,6 +264,12 @@ mod tests {
                 lock_after_minutes: 15,
             },
             remote: crate::remote::RemoteSettings { enabled: true, ssh_program: "/opt/ssh".to_string() },
+            layout: layout::LayoutSettings {
+                side_panel_open: true,
+                side_view: layout::SideView::Notes,
+                files_collapsed: false,
+                terminals_collapsed: true,
+            },
         };
         let text = settings.to_text();
         assert!(text.contains("folder=ssh://server/srv/notes\n"), "{text}");

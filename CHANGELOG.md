@@ -8,6 +8,30 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Added
+
+- **Rename from a tab**: double-click a tab (or right-click → **Rename**) to
+  edit the file's name right in the tab. Enter or clicking away renames,
+  Esc cancels.
+- **New terminal** and **New terminal here** ask for a name first.
+
+### Changed
+
+- **Side panel**: Structure and Notes share one panel on the right, opened
+  from the button at the right end of the tab bar. A switch at its top picks
+  Structure or Notes, a cross closes it, and it stays as you left it. Notes
+  no longer open on their own: a dot on the button says the file has notes,
+  and adding a note opens them. The Structure button left the status bar;
+  `Cmd+Shift+O` still toggles Structure.
+- **Explorer sections**: Files and Terminals each have a header that folds
+  them. The Files header holds Add folder, New scratch and Refresh. Terminals
+  moved under the files, docked at the bottom of the panel: drag its top edge
+  to resize it. While folded, its header still shows how many agents need
+  you or are working.
+- Terminal status is a colored dot before the status text, like herdr:
+  blue working, orange needs you, green idle, gray shell; a hollow ring for
+  a `.tmux` file that is not running. The terminal icon is one quiet color.
+
 ## [0.6.5] - 2026-11-06
 
 ### Added

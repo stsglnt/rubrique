@@ -6,8 +6,10 @@ use eframe::egui::{self, Key, RichText, Ui};
 use egui::text::{CCursor, CCursorRange};
 
 use super::note_marks::NoteMarks;
-use super::terminals::{show_terminal_file, show_terminals};
-use crate::icons::{Icon, icon_button, paint_icon};
+use super::section::{paint_fold_arrow, section_header};
+use super::terminals::{show_docked_terminals, show_terminal_file, show_terminals_section};
+use crate::icons::{Icon, paint_icon, small_icon_button};
+use crate::settings::layout::LayoutSettings;
 use crate::terminal::is_terminal_path;
 use crate::terminal::monitor::TerminalRow;
 
@@ -45,9 +47,9 @@ pub enum ExplorerAction {
     NewTerminalFile(PathBuf),
 }
 
-/// A file being renamed right in its tree row.
+/// A file being renamed right where its name shows: its tree row or its tab.
 #[derive(Debug)]
-pub struct TreeRename {
+pub struct InlineRename {
     pub path: PathBuf,
     /// The name being typed.
     pub name: String,
@@ -60,10 +62,10 @@ pub struct TreeRename {
     needs_focus: bool,
 }
 
-impl TreeRename {
+impl InlineRename {
     pub fn new(path: PathBuf) -> Self {
         let name = name_text(&path);
-        TreeRename { path, name, error: None, submitted: false, needs_focus: true }
+        InlineRename { path, name, error: None, submitted: false, needs_focus: true }
     }
 
     /// Show `error` under the field and give the field back its focus.
@@ -125,46 +127,43 @@ pub struct TreeContext<'a> {
     pub open_terminal: Option<&'a str>,
 }
 
-/// Draw the explorer panel: "Add folder…", refresh, the Markdown filter and one tree per root folder.
-/// `rename` is the file being renamed in its row, if any; Esc in the field clears it.
+/// Draw the explorer panel: the Files section (its header with "Add
+/// folder", "New scratch" and refresh, the Markdown filter and one tree per
+/// root folder) and the Terminals section docked under it. `layout` holds
+/// which sections are folded; the headers change it. `rename` is the file
+/// being renamed in its row, if any; Esc in the field clears it.
 pub fn show_explorer(
     ui: &mut Ui,
     roots: &mut [FsNode],
+    layout: &mut LayoutSettings,
     markdown_only: &mut bool,
     context: &TreeContext,
-    rename: &mut Option<TreeRename>,
+    rename: &mut Option<InlineRename>,
 ) -> Option<ExplorerAction> {
     let mut action = None;
-    ui.horizontal(|ui| {
-        if icon_button(ui, Icon::FolderPlus, "Add folder", "Add a folder to the explorer", false).clicked() {
-            action = Some(ExplorerAction::AddFolder);
-        }
-        if context.remote_enabled
-            && icon_button(ui, Icon::ServerPlus, "Add remote folder", "Add a folder on another computer (SSH)", false)
-                .clicked()
-        {
-            action = Some(ExplorerAction::AddRemoteFolder);
-        }
-        if icon_button(ui, Icon::NewScratch, "New scratch", "New scratch file for quick notes (Cmd+N)", false).clicked()
-        {
-            action = Some(ExplorerAction::NewScratch);
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if icon_button(ui, Icon::Refresh, "Refresh", "Re-read all folders from disk", false).clicked() {
-                action = Some(ExplorerAction::Refresh);
-            }
-        });
-    });
+    let files_open = !layout.files_collapsed;
+    // With Files open, Terminals is a panel docked at the bottom (drawn
+    // first so it claims its height); with Files folded it follows the
+    // Files header and gets the rest of the height.
+    if files_open {
+        show_docked_terminals(ui, context, &mut layout.terminals_collapsed, &mut action);
+    }
+    if files_header(ui, context, files_open, &mut action) {
+        layout.files_collapsed = files_open;
+    }
+    if !files_open {
+        show_terminals_section(ui, context, &mut layout.terminals_collapsed, &mut action);
+        return action;
+    }
     ui.checkbox(markdown_only, "Markdown only").on_hover_text("Hide files that are not Markdown");
-    ui.separator();
+    ui.add_space(2.0);
 
     // The checkbox above may have just changed the filter.
     let context = TreeContext { markdown_only: *markdown_only, ..*context };
     // Rows never wrap (a wrapped name would put the folder arrow over its
     // text); long names scroll sideways instead.
-    egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+    egui::ScrollArea::both().id_salt("file-tree").auto_shrink([false, false]).show(ui, |ui| {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-        show_terminals(ui, &context, &mut action);
         for root in roots.iter_mut() {
             let root_path = root.path.clone();
             let context = TreeContext { root: &root_path, ..context };
@@ -174,12 +173,46 @@ pub fn show_explorer(
     action
 }
 
+/// The "FILES" header with the folder buttons. Returns true when the title
+/// was clicked.
+fn files_header(ui: &mut Ui, context: &TreeContext, expanded: bool, action: &mut Option<ExplorerAction>) -> bool {
+    section_header(
+        ui,
+        "FILES",
+        expanded,
+        |_| {},
+        |ui| {
+            // Right to left: the last button added sits furthest left.
+            if small_icon_button(ui, Icon::Refresh, HEADER_BUTTON_SIZE, "Refresh", "Re-read all folders from disk")
+                .clicked()
+            {
+                *action = Some(ExplorerAction::Refresh);
+            }
+            let scratch_tip = "New scratch file for quick notes (Cmd+N)";
+            if small_icon_button(ui, Icon::NewScratch, HEADER_BUTTON_SIZE, "New scratch", scratch_tip).clicked() {
+                *action = Some(ExplorerAction::NewScratch);
+            }
+            let remote_tip = "Add a folder on another computer (SSH)";
+            if context.remote_enabled
+                && small_icon_button(ui, Icon::ServerPlus, HEADER_BUTTON_SIZE, "Add remote folder", remote_tip)
+                    .clicked()
+            {
+                *action = Some(ExplorerAction::AddRemoteFolder);
+            }
+            let folder_tip = "Add a folder to the explorer";
+            if small_icon_button(ui, Icon::FolderPlus, HEADER_BUTTON_SIZE, "Add folder", folder_tip).clicked() {
+                *action = Some(ExplorerAction::AddFolder);
+            }
+        },
+    )
+}
+
 /// A root folder: a bold row that folds its tree open and closed.
 fn show_root(
     ui: &mut Ui,
     root: &mut FsNode,
     context: &TreeContext,
-    rename: &mut Option<TreeRename>,
+    rename: &mut Option<InlineRename>,
     action: &mut Option<ExplorerAction>,
 ) {
     let label = RichText::new(format!("{ICON_GAP}{}", root.name)).strong();
@@ -200,7 +233,7 @@ fn show_children(
     ui: &mut Ui,
     folder: &mut FsNode,
     context: &TreeContext,
-    rename: &mut Option<TreeRename>,
+    rename: &mut Option<InlineRename>,
     action: &mut Option<ExplorerAction>,
 ) {
     match &mut folder.children {
@@ -225,7 +258,7 @@ fn show_folder(
     ui: &mut Ui,
     folder: &mut FsNode,
     context: &TreeContext,
-    rename: &mut Option<TreeRename>,
+    rename: &mut Option<InlineRename>,
     action: &mut Option<ExplorerAction>,
 ) {
     let label = format!("{ICON_GAP}{}{}", folder.name, link_marker(folder));
@@ -251,7 +284,7 @@ fn show_file(
     ui: &mut Ui,
     file: &FsNode,
     context: &TreeContext,
-    rename: &mut Option<TreeRename>,
+    rename: &mut Option<InlineRename>,
     action: &mut Option<ExplorerAction>,
 ) {
     if rename.as_ref().is_some_and(|rename| rename.path == file.path) {
@@ -287,18 +320,25 @@ fn show_file(
 
 /// The row of the file being renamed: a name field, with the name before
 /// the extension selected. Enter or leaving the field renames; Esc cancels.
-fn rename_row(ui: &mut Ui, slot: &mut Option<TreeRename>) {
+fn rename_row(ui: &mut Ui, slot: &mut Option<InlineRename>) {
+    ui.horizontal(|ui| {
+        // Line the field up with the file names in the other rows.
+        ui.add_space(ui.spacing().button_padding.x + NOTE_MARK_SIZE);
+        rename_field(ui, slot, egui::Id::unique("explorer-rename-field"), RENAME_FIELD_WIDTH);
+    });
+    if let Some(error) = slot.as_ref().and_then(|rename| rename.error.as_ref()) {
+        ui.label(RichText::new(error).small().color(ui.visuals().error_fg_color));
+    }
+}
+
+/// The name field of a file renamed in place (in its tree row or its tab).
+/// On its first frame it takes focus with the name before the extension
+/// selected. Enter or leaving the field marks it submitted; Esc clears `slot`.
+pub fn rename_field(ui: &mut Ui, slot: &mut Option<InlineRename>, id: egui::Id, width: f32) {
     let Some(rename) = slot.as_mut() else {
         return;
     };
-    let id = egui::Id::unique("explorer-rename-field");
-    let output = ui
-        .horizontal(|ui| {
-            // Line the field up with the file names in the other rows.
-            ui.add_space(ui.spacing().button_padding.x + NOTE_MARK_SIZE);
-            egui::TextEdit::singleline(&mut rename.name).id(id).desired_width(RENAME_FIELD_WIDTH).show(ui)
-        })
-        .inner;
+    let output = egui::TextEdit::singleline(&mut rename.name).id(id).desired_width(width).show(ui);
     if rename.needs_focus {
         rename.needs_focus = false;
         output.response.request_focus();
@@ -306,9 +346,6 @@ fn rename_row(ui: &mut Ui, slot: &mut Option<TreeRename>) {
         let stem_chars = name_stem_chars(&rename.name);
         state.cursor.set_char_range(Some(CCursorRange::two(CCursor::new(0), CCursor::new(stem_chars))));
         state.store(ui.ctx(), id);
-    }
-    if let Some(error) = &rename.error {
-        ui.label(RichText::new(error).small().color(ui.visuals().error_fg_color));
     }
     if output.response.lost_focus() {
         if ui.input(|input| input.key_pressed(Key::Escape)) {
@@ -339,8 +376,10 @@ const UNSAVED_COLOR: egui::Color32 = egui::Color32::from_rgb(0x34, 0xa8, 0x53);
 /// Room at the start of each row for the folder arrow, so file names line
 /// up with folder names.
 pub(super) const ICON_GAP: &str = "     ";
-/// Width and height of the folder arrow, in points.
+/// Width of the folder arrow, in points (for placing it).
 const ARROW_SIZE: f32 = 7.0;
+/// Size of the buttons in a section header.
+pub(super) const HEADER_BUTTON_SIZE: f32 = 22.0;
 /// Width of the note marker's icon box, in points.
 pub(super) const NOTE_MARK_SIZE: f32 = 14.0;
 /// Width of the name field of a file being renamed in the tree.
@@ -358,27 +397,12 @@ fn paint_note_mark(ui: &Ui, response: &egui::Response) {
     paint_icon(ui.painter(), Icon::Bubble, center, visuals.weak_text_color(), visuals.hyperlink_color, behind);
 }
 
-/// Paint a small triangle (right when collapsed, down when expanded).
-/// Painted by hand because the default egui fonts have no arrow glyphs.
+/// Paint the fold arrow in the gap before a folder name.
 fn paint_arrow(ui: &Ui, response: &egui::Response, expanded: bool) {
     let center =
         egui::pos2(response.rect.left() + ui.spacing().button_padding.x + ARROW_SIZE / 2.0, response.rect.center().y);
-    let half = ARROW_SIZE / 2.0;
-    let points = if expanded {
-        vec![
-            center + egui::vec2(-half, -half / 2.0),
-            center + egui::vec2(half, -half / 2.0),
-            center + egui::vec2(0.0, half),
-        ]
-    } else {
-        vec![
-            center + egui::vec2(-half / 2.0, -half),
-            center + egui::vec2(half, 0.0),
-            center + egui::vec2(-half / 2.0, half),
-        ]
-    };
     let color = ui.style().interact(response).fg_stroke.color;
-    ui.painter().add(egui::Shape::convex_polygon(points, color, egui::Stroke::NONE));
+    paint_fold_arrow(ui.painter(), center, expanded, color);
 }
 
 /// Marker after the name of a symlinked entry.

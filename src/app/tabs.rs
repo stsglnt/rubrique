@@ -9,11 +9,11 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, Color32, CornerRadius, Sense, Ui, pos2, vec2};
 
-use super::{GuardedAction, OpenFile, RubriqueApp};
+use super::{GuardedAction, OpenFile, RubriqueApp, side_panel};
 use crate::document::preview_selection;
 use crate::document::view::{focus_editor, restore_editor_state, take_editor_state};
 use crate::explorer::paths::absolute_path_text;
-use crate::explorer::tree::is_markdown_path;
+use crate::explorer::view::{InlineRename, rename_field};
 use crate::icons::{Icon, paint_icon, small_icon_button};
 use crate::media::image_uri;
 use crate::theme::style::page_fill;
@@ -24,6 +24,8 @@ const TAB_HEIGHT: f32 = 30.0;
 const TAB_PADDING: f32 = 12.0;
 /// Room for the close cross (or the unsaved dot) after the name.
 const CLOSE_SIZE: f32 = 18.0;
+/// Width of the name field while a tab is renamed.
+const RENAME_FIELD_WIDTH: f32 = 180.0;
 /// Widest a tab gets; longer names are cut with "…".
 const TAB_MAX_WIDTH: f32 = 220.0;
 /// Height of the accent line on top of the active tab.
@@ -46,6 +48,8 @@ enum TabAction {
     CloseOthers(usize),
     CloseToTheRight(usize),
     CopyPath(usize),
+    /// Edit the file's name right in its tab.
+    Rename(usize),
 }
 
 impl RubriqueApp {
@@ -135,6 +139,7 @@ impl RubriqueApp {
     /// with the tab, and screens tied to this file (merge, note, Ask bar) close.
     fn leave_tab(&mut self) {
         self.finish_block_edit();
+        self.tab_rename = None;
         self.merging = None;
         self.note_draft = None;
         self.stats = None;
@@ -263,15 +268,20 @@ impl RubriqueApp {
         ui.painter().rect_filled(strip, 0, strip_fill);
         let line = ui.visuals().widgets.noninteractive.bg_stroke;
         ui.painter().hline(strip.x_range(), strip.bottom() - line.width / 2.0, line);
-        // Markdown files get the Preview | Source switch at the right end.
-        let has_switch =
-            matches!(self.open_file, OpenFile::Text { .. }) && self.open_file.path().is_some_and(is_markdown_path);
+        // Markdown files get the Preview | Source switch at the right end,
+        // then the side panel toggle after it.
+        let has_switch = self.can_show_side_panel();
         let switch_width = SWITCH_SEGMENT * 2.0 + SWITCH_INSET * 2.0;
-        let tabs_rect =
-            if has_switch { strip.with_max_x(strip.right() - switch_width - SWITCH_MARGIN * 2.0) } else { strip };
+        let controls_width = switch_width + SWITCH_MARGIN * 3.0 + side_panel::TOGGLE_WIDTH;
+        let tabs_rect = if has_switch { strip.with_max_x(strip.right() - controls_width) } else { strip };
         if has_switch {
+            let toggle = egui::Rect::from_center_size(
+                pos2(strip.right() - SWITCH_MARGIN - side_panel::TOGGLE_WIDTH / 2.0, strip.center().y),
+                vec2(side_panel::TOGGLE_WIDTH, TAB_HEIGHT),
+            );
+            self.side_panel_toggle(ui, toggle);
             let switch = egui::Rect::from_center_size(
-                pos2(strip.right() - SWITCH_MARGIN - switch_width / 2.0, strip.center().y),
+                pos2(toggle.left() - SWITCH_MARGIN - switch_width / 2.0, strip.center().y),
                 vec2(switch_width, SWITCH_HEIGHT),
             );
             if let Some(preview) = preview_switch(ui, switch, self.showing_preview())
@@ -293,12 +303,13 @@ impl RubriqueApp {
                         for index in 0..self.tabs.len() {
                             let file = self.tab(index);
                             let tab = TabView {
+                                file: file.path().map(Path::to_path_buf),
                                 name: file.title(),
                                 path: file.path().map(absolute_path_text).unwrap_or_default(),
                                 dirty: file.is_dirty(),
                                 active: index == self.active_tab,
                             };
-                            if let Some(found) = show_tab(ui, &tab, index, self.tabs.len()) {
+                            if let Some(found) = show_tab(ui, &tab, index, self.tabs.len(), &mut self.tab_rename) {
                                 action = Some(found);
                             }
                         }
@@ -314,6 +325,11 @@ impl RubriqueApp {
             }
             Some(TabAction::CloseToTheRight(index)) => {
                 self.close_clean_tabs((index + 1..self.tabs.len()).collect());
+            }
+            Some(TabAction::Rename(index)) => {
+                if let Some(path) = self.tab(index).path() {
+                    self.tab_rename = Some(InlineRename::new(path.to_path_buf()));
+                }
             }
             Some(TabAction::CopyPath(index)) => {
                 if let Some(path) = self.tab(index).path() {
@@ -371,6 +387,8 @@ fn preview_switch(ui: &mut Ui, rect: egui::Rect, preview: bool) -> Option<bool> 
 
 /// What one tab shows.
 struct TabView {
+    /// The tab's file; `None` for a terminal opened from the Terminals list.
+    file: Option<PathBuf>,
     name: String,
     /// Full path, for the hover tip.
     path: String,
@@ -381,7 +399,17 @@ struct TabView {
 /// One tab: the file name, then a close cross (a dot instead while the file
 /// has unsaved changes and the pointer is elsewhere). A click switches, a
 /// middle click or the cross closes, a right click opens a menu.
-fn show_tab(ui: &mut Ui, tab: &TabView, index: usize, count: usize) -> Option<TabAction> {
+fn show_tab(
+    ui: &mut Ui,
+    tab: &TabView,
+    index: usize,
+    count: usize,
+    rename: &mut Option<InlineRename>,
+) -> Option<TabAction> {
+    if tab.file.is_some() && rename.as_ref().map(|rename| &rename.path) == tab.file.as_ref() {
+        renaming_tab(ui, tab, rename);
+        return None;
+    }
     let visuals = ui.visuals().clone();
     let font = egui::TextStyle::Body.resolve(ui.style());
     let text_color = if tab.active { visuals.strong_text_color() } else { visuals.weak_text_color() };
@@ -438,7 +466,9 @@ fn show_tab(ui: &mut Ui, tab: &TabView, index: usize, count: usize) -> Option<Ta
 
     let tip = if tab.dirty { format!("{}\nUnsaved changes", tab.path) } else { tab.path.clone() };
     let response = response.on_hover_text(tip);
-    if action.is_none() && response.clicked() {
+    if response.double_clicked() && tab.file.is_some() {
+        action = Some(TabAction::Rename(index));
+    } else if action.is_none() && response.clicked() {
         action = Some(TabAction::Switch(index));
     }
     if response.middle_clicked() {
@@ -455,11 +485,31 @@ fn show_tab(ui: &mut Ui, tab: &TabView, index: usize, count: usize) -> Option<Ta
             action = Some(TabAction::CloseToTheRight(index));
         }
         ui.separator();
+        if ui
+            .add_enabled(tab.file.is_some(), egui::Button::new("Rename"))
+            .on_hover_text("Or double-click the tab")
+            .clicked()
+        {
+            action = Some(TabAction::Rename(index));
+        }
         if ui.button("Copy path").clicked() {
             action = Some(TabAction::CopyPath(index));
         }
     });
     action
+}
+
+/// A tab whose file is being renamed: the name field in place of its label.
+fn renaming_tab(ui: &mut Ui, tab: &TabView, rename: &mut Option<InlineRename>) {
+    let visuals = ui.visuals().clone();
+    let width = TAB_PADDING * 2.0 + RENAME_FIELD_WIDTH + CLOSE_SIZE;
+    let (rect, _) = ui.allocate_exact_size(vec2(width, TAB_HEIGHT), Sense::hover());
+    let fill = if tab.active { page_fill(&visuals) } else { visuals.widgets.hovered.weak_bg_fill };
+    ui.painter().rect_filled(rect, CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }, fill);
+    let field_rect = rect.shrink2(vec2(TAB_PADDING, 0.0)).with_max_x(rect.right() - TAB_PADDING - CLOSE_SIZE);
+    let layout = egui::Layout::left_to_right(egui::Align::Center);
+    let mut field = ui.new_child(egui::UiBuilder::new().max_rect(field_rect).layout(layout));
+    rename_field(&mut field, rename, egui::Id::unique("tab-rename-field"), RENAME_FIELD_WIDTH);
 }
 
 #[cfg(test)]
@@ -487,13 +537,14 @@ mod layout_tests {
                         ui.spacing_mut().item_spacing.x = 0.0;
                         for index in 0..3 {
                             let tab = TabView {
+                                file: None,
                                 name: format!("file-{index}.md"),
                                 path: String::new(),
                                 dirty: index == 2,
                                 active: index == 1,
                             };
                             let left = ui.cursor().left();
-                            show_tab(ui, &tab, index, 3);
+                            show_tab(ui, &tab, index, 3, &mut None);
                             positions.push((left, ui.min_rect().top()));
                         }
                     });
