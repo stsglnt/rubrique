@@ -15,8 +15,10 @@ mod install;
 mod naming;
 mod privacy;
 mod remote;
+mod structure;
 mod summary;
 mod tabs;
+mod terminals;
 mod voice;
 
 use crate::ai::agents::{self, Agent};
@@ -52,6 +54,11 @@ use crate::settings::view::{
     AiInfo, PrivacyInfo, ScratchInfo, SettingsAction, SettingsGroup, VoiceInfo, show_settings,
 };
 use crate::settings::{Settings, default_agents_folder, default_scratch_folder, default_skills_folder, themes_folder};
+use crate::terminal::is_terminal_path;
+use crate::terminal::monitor::TerminalMonitor;
+use crate::terminal::session::LiveTerminal;
+use crate::terminal::tmux::Tmux;
+use crate::terminal::view::show_terminal;
 use crate::theme::catalog::Themes;
 use crate::theme::style::{apply_accessibility, apply_theme, page_fill};
 use crate::voice::view::set_memo_states;
@@ -140,6 +147,10 @@ enum OpenFile {
     Locked {
         path: PathBuf,
     },
+    /// A tmux session (from the Terminals list or a `.tmux` file).
+    Terminal {
+        terminal: Box<LiveTerminal>,
+    },
 }
 
 impl OpenFile {
@@ -149,6 +160,17 @@ impl OpenFile {
             OpenFile::Nothing => None,
             OpenFile::Text { document, .. } => Some(&document.path),
             OpenFile::Media { path, .. } | OpenFile::Unsupported { path, .. } | OpenFile::Locked { path } => Some(path),
+            OpenFile::Terminal { terminal } => terminal.file.as_deref(),
+        }
+    }
+
+    /// The tab's name: the file name, or the session name of a terminal
+    /// opened from the Terminals list.
+    fn title(&self) -> String {
+        match (self, self.path()) {
+            (_, Some(path)) => name_text(path),
+            (OpenFile::Terminal { terminal }, None) => terminal.name.clone(),
+            _ => String::new(),
         }
     }
 
@@ -160,6 +182,7 @@ impl OpenFile {
             OpenFile::Media { path, .. } | OpenFile::Unsupported { path, .. } | OpenFile::Locked { path } => {
                 *path = target.to_path_buf();
             }
+            OpenFile::Terminal { terminal } => terminal.follow_rename(target),
         }
     }
 
@@ -245,6 +268,8 @@ pub struct RubriqueApp {
     tree_rename: Option<TreeRename>,
     /// The file the "Delete" dialog asks about, while it is open.
     deleting: Option<PathBuf>,
+    /// Watches the tmux sessions for the explorer; `None` when tmux is not installed.
+    terminals: Option<TerminalMonitor>,
     /// The merge screen for the open file, while it is open.
     merging: Option<MergeSession>,
     /// egui time of the last check for outside changes.
@@ -265,6 +290,8 @@ pub struct RubriqueApp {
     remote: remote::RemoteState,
     /// The open file's Helm chart and the Helm panel.
     helm: helm::HelmState,
+    /// The Structure panel (headings) is shown on the right for Markdown files.
+    structure_open: bool,
 }
 
 /// A note in the making (new, or an existing one being edited).
@@ -328,6 +355,7 @@ impl RubriqueApp {
             renaming: None,
             tree_rename: None,
             deleting: None,
+            terminals: Tmux::find().map(|tmux| TerminalMonitor::start(tmux, ctx)),
             merging: None,
             last_disk_check: 0.0,
             block_edit: None,
@@ -338,6 +366,7 @@ impl RubriqueApp {
             privacy,
             remote: remote::RemoteState::default(),
             helm: helm::HelmState::default(),
+            structure_open: false,
         };
         preview_selection::install(ctx);
         egui_extras::install_image_loaders(ctx);
@@ -394,6 +423,9 @@ impl RubriqueApp {
     /// Read `path` for a tab: an image or video, a text file, or one that
     /// cannot be shown. `None` (with a status message) when it cannot be read.
     fn load_file(&mut self, path: PathBuf) -> Option<OpenFile> {
+        if is_terminal_path(&path) {
+            return self.load_terminal(&path);
+        }
         if let Some(kind) = media_kind(&path) {
             // A remote image or video is shown from its mirror copy.
             if let Err(error) = crate::vfs::fetch_to_mirror(&path, remote::MAX_MEDIA_BYTES) {
@@ -659,6 +691,7 @@ impl RubriqueApp {
             self.open_find();
         }
         self.find_shortcuts(ctx);
+        self.structure_shortcut(ctx);
         if ctx.input_mut(|input| input.consume_shortcut(&ADD_NOTE)) {
             self.start_note(ctx);
         }
@@ -1274,6 +1307,7 @@ impl RubriqueApp {
             .filter(|file| file.is_dirty())
             .filter_map(|file| file.path().map(Path::to_path_buf))
             .collect();
+        let terminal_rows = self.terminals.as_ref().map(TerminalMonitor::rows);
         let context = TreeContext {
             root: Path::new(""),
             can_remove_roots: self.roots.len() > 1,
@@ -1282,6 +1316,11 @@ impl RubriqueApp {
             dirty_files: &dirty_files,
             note_marks: self.settings.note_marks.then_some(&self.note_marks),
             remote_enabled: self.settings.remote.enabled,
+            terminals: terminal_rows.as_deref(),
+            open_terminal: match &self.open_file {
+                OpenFile::Terminal { terminal } => Some(terminal.name.as_str()),
+                _ => None,
+            },
         };
         let action =
             show_explorer(ui, &mut self.roots, &mut self.settings.markdown_only, &context, &mut self.tree_rename);
@@ -1293,7 +1332,13 @@ impl RubriqueApp {
             Some(ExplorerAction::Refresh) => {
                 self.roots.iter_mut().for_each(FsNode::refresh);
                 self.note_marks.clear();
+                if let Some(monitor) = &self.terminals {
+                    monitor.refresh();
+                }
             }
+            Some(ExplorerAction::OpenTerminal(name)) => self.open_terminal_session(&name),
+            Some(ExplorerAction::NewTerminal) => self.new_terminal(),
+            Some(ExplorerAction::NewTerminalFile(folder)) => self.new_terminal_file(&folder),
             Some(ExplorerAction::RemoveRoot(path)) => self.request_remove_root(path),
             Some(ExplorerAction::AddFolder) => self.choose_folder_to_add(),
             Some(ExplorerAction::AddRemoteFolder) => self.open_add_remote(),
@@ -1329,6 +1374,7 @@ impl RubriqueApp {
         }
         match &mut self.open_file {
             OpenFile::Locked { .. } => {}
+            OpenFile::Terminal { terminal } => show_terminal(ui, terminal),
             OpenFile::Nothing => {
                 ui.centered_and_justified(|ui| ui.label(RichText::new("Pick a file in the explorer").weak()));
             }
@@ -1934,6 +1980,7 @@ impl RubriqueApp {
                 if is_markdown || is_html {
                     self.voice_buttons(ui);
                 }
+                self.structure_button(ui);
                 if !showing_preview && let Some(stats) = &self.stats {
                     ui.label(format!("{}   ", stats.summary()));
                 }
@@ -2163,13 +2210,7 @@ impl eframe::App for RubriqueApp {
             });
             self.explorer(ui);
         });
-        if self.shows_notes_panel() {
-            egui::Panel::right("notes")
-                .resizable(true)
-                .default_size(NOTES_PANEL_WIDTH)
-                .frame(egui::Frame::side_top_panel(&style).inner_margin(0))
-                .show(ui, |ui| self.notes_panel(ui));
-        }
+        self.right_panel(ui);
         if self.ask.job.is_some() && self.merging.is_none() {
             egui::Panel::bottom("ai-output")
                 .resizable(true)

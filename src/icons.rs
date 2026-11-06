@@ -43,6 +43,9 @@ pub enum Icon {
     Bubble,
     /// Add a folder from another computer (over SSH).
     ServerPlus,
+    /// A terminal (a tmux session). The `>_` prompt is the accent, so it can
+    /// carry the status color of the agent inside.
+    Terminal,
 }
 
 /// A flat button with `icon` and a hover tip. `active` keeps it highlighted
@@ -209,6 +212,7 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
             stroke_path(painter, &outline, true, line);
             painter.circle_filled(center, 2.1, accent);
         }
+        Icon::Terminal => paint_terminal(painter, center, line, detail),
         Icon::Code => {
             // Angle brackets; the slash between them is the accent.
             stroke_path(painter, &[at(-2.5, -4.0), at(-6.5, 0.0), at(-2.5, 4.0)], false, line);
@@ -259,6 +263,15 @@ pub fn small_icon_button(ui: &mut Ui, icon: Icon, size: f32, label: &str, tip: &
     let behind = if fill == Color32::TRANSPARENT { visuals.panel_fill } else { fill };
     paint(painter, icon, rect.center(), Colors { line: color, accent: visuals.hyperlink_color, behind });
     response.on_hover_text(tip)
+}
+
+/// A window; the `>_` prompt inside is the accent.
+fn paint_terminal(painter: &Painter, center: Pos2, line: Stroke, detail: Stroke) {
+    let at = |x: f32, y: f32| center + vec2(x, y);
+    let window = [at(-6.5, -5.0), at(6.5, -5.0), at(6.5, 5.0), at(-6.5, 5.0)];
+    stroke_path(painter, &round_corners(&window, CORNER, true), true, line);
+    stroke_path(painter, &[at(-4.0, -2.2), at(-1.6, 0.0), at(-4.0, 2.2)], false, detail);
+    stroke_path(painter, &[at(0.2, 2.4), at(3.8, 2.4)], false, detail);
 }
 
 /// Points along a quadratic curve from `start` to `end` bent toward `control`.

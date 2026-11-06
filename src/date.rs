@@ -75,14 +75,18 @@ pub fn now_local() -> LocalNow {
         .ok()
         .and_then(|duration| i64::try_from(duration.as_secs()).ok())
         .unwrap_or(0);
-    match local_time(now) {
-        Some(local) => LocalNow {
-            date: iso_date(local.tm_year + 1900, local.tm_mon + 1, local.tm_mday),
-            hour: u8::try_from(local.tm_hour).unwrap_or(0),
-            minute: u8::try_from(local.tm_min).unwrap_or(0),
-        },
-        None => LocalNow { date: iso_date(1970, 1, 1), hour: 0, minute: 0 },
-    }
+    local_at(now).unwrap_or_else(|| LocalNow { date: iso_date(1970, 1, 1), hour: 0, minute: 0 })
+}
+
+/// The local date and time of a Unix timestamp (seconds); `None` when the
+/// C library cannot represent it.
+pub fn local_at(timestamp: i64) -> Option<LocalNow> {
+    let local = local_time(timestamp)?;
+    Some(LocalNow {
+        date: iso_date(local.tm_year + 1900, local.tm_mon + 1, local.tm_mday),
+        hour: u8::try_from(local.tm_hour).unwrap_or(0),
+        minute: u8::try_from(local.tm_min).unwrap_or(0),
+    })
 }
 
 /// Convert a Unix timestamp to local calendar time; `None` when the C

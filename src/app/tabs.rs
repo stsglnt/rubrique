@@ -12,7 +12,7 @@ use eframe::egui::{self, Color32, CornerRadius, Sense, Ui, pos2, vec2};
 use super::{GuardedAction, OpenFile, RubriqueApp};
 use crate::document::preview_selection;
 use crate::document::view::{focus_editor, restore_editor_state, take_editor_state};
-use crate::explorer::paths::{absolute_path_text, name_text};
+use crate::explorer::paths::absolute_path_text;
 use crate::explorer::tree::is_markdown_path;
 use crate::icons::{Icon, paint_icon, small_icon_button};
 use crate::media::image_uri;
@@ -141,8 +141,11 @@ impl RubriqueApp {
         self.ask.close_bar();
         preview_selection::clear(&self.repaint);
         let state = take_editor_state(&self.repaint);
-        if let OpenFile::Text { editor, .. } = &mut self.open_file {
-            *editor = state;
+        match &mut self.open_file {
+            OpenFile::Text { editor, .. } => *editor = state,
+            // A hidden terminal stops reading its screen; the session runs on.
+            OpenFile::Terminal { terminal } => terminal.pause(),
+            _ => {}
         }
     }
 
@@ -290,7 +293,7 @@ impl RubriqueApp {
                         for index in 0..self.tabs.len() {
                             let file = self.tab(index);
                             let tab = TabView {
-                                name: file.path().map(name_text).unwrap_or_default(),
+                                name: file.title(),
                                 path: file.path().map(absolute_path_text).unwrap_or_default(),
                                 dirty: file.is_dirty(),
                                 active: index == self.active_tab,

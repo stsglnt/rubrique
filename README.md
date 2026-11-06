@@ -37,6 +37,7 @@ Agents run only when you ask, read-only by default.
 **Writing**
 
 - Live preview: click a block to edit it.
+- Structure (`Cmd+Shift+O`): the file's headings on the right, click one to jump to it.
 - Voice memos (`Cmd+Shift+R`), transcribed locally with whisper.cpp.
 - Drop images and audio onto the page.
 - Scratch files (`Cmd+N`), optionally encrypted, and an optional app PIN.
@@ -49,6 +50,8 @@ Agents run only when you ask, read-only by default.
 - Safe saves: your file is never reformatted; outside changes open a merge.
 - Find in a file or across all folders (`Cmd+F`).
 - Remote folders over SSH (off by default, Settings → Files).
+- Terminals: tmux sessions as tabs, listed with their agent's status
+  (working, needs you, idle). A `.tmux` file opens a terminal in its folder.
 
 <img src="docs/screenshots/themes.png" alt="One rubrique window shown in five themes: Light, Dark, Sepia, Midnight and High contrast" width="880">
 
@@ -100,6 +103,7 @@ install command when one is missing (Settings → AI).
 | `ollama` | Local summaries, file names |
 | `whisper-cli` | Transcribing memos |
 | `helm` | Helm charts |
+| `tmux` | Terminals |
 
 whisper.cpp also needs its model:
 

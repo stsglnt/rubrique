@@ -128,6 +128,11 @@ pub fn show_editor(
             if let Some(find) = find {
                 paint_matches(ui, &output, &document.text, find);
             }
+            // A jump from the Structure panel: its line at the top of the page.
+            if let Some(index) = take_editor_scroll(ui.ctx()) {
+                let line = output.galley.pos_from_cursor(CCursor::new(index)).translate(output.galley_pos.to_vec2());
+                ui.scroll_to_rect(line, Some(Align::TOP));
+            }
             output
         })
         .inner;
@@ -320,6 +325,9 @@ pub fn show_preview(
 ) -> PreviewOutput {
     let mut event = None;
     let mut hovered = None;
+    let scroll_target = take_preview_scroll(ui.ctx());
+    // Source offset of the first block still on screen, for the Structure panel.
+    let mut top_offset = None;
     // Relative image paths are next to the file.
     set_image_folder(ui.ctx(), path.parent().map(Path::to_path_buf));
     egui::ScrollArea::vertical().id_salt(("preview-scroll", path)).auto_shrink([false, false]).show(ui, |ui| {
@@ -338,6 +346,12 @@ pub fn show_preview(
                 if ui.rect_contains_pointer(span) {
                     hovered = Some(index);
                 }
+                if scroll_target == Some(index) {
+                    ui.scroll_to_rect(span, Some(Align::TOP));
+                }
+                if top_offset.is_none() && span.bottom() > ui.clip_rect().top() {
+                    top_offset = Some(source.range.start);
+                }
                 if event.is_none() {
                     event = found;
                 }
@@ -354,7 +368,43 @@ pub fn show_preview(
             }
         });
     });
+    ui.ctx().data_mut(|data| match top_offset {
+        Some(offset) => {
+            data.insert_temp(preview_top_id(path), offset);
+        }
+        None => data.remove::<usize>(preview_top_id(path)),
+    });
     PreviewOutput { event, hovered }
+}
+
+/// Where a jump from the Structure panel waits for the next preview frame.
+fn preview_scroll_id() -> Id {
+    Id::unique("rubrique-preview-scroll-to-block")
+}
+
+/// Where the preview of `path` keeps the source offset of its first block on screen.
+fn preview_top_id(path: &Path) -> Id {
+    Id::unique(("rubrique-preview-top", path))
+}
+
+/// Scroll the preview so top-level block `index` is at the top, on the next frame.
+pub fn scroll_preview_to_block(ctx: &Context, index: usize) {
+    ctx.data_mut(|data| data.insert_temp(preview_scroll_id(), index));
+}
+
+/// The block the preview was asked to scroll to, if any (taken once).
+fn take_preview_scroll(ctx: &Context) -> Option<usize> {
+    ctx.data_mut(|data| {
+        let index = data.get_temp::<usize>(preview_scroll_id());
+        data.remove::<usize>(preview_scroll_id());
+        index
+    })
+}
+
+/// Byte offset in the source of the first block on screen in the last
+/// drawn preview of `path`, so the Structure panel can mark that section.
+pub fn preview_top_offset(ctx: &Context, path: &Path) -> Option<usize> {
+    ctx.data(|data| data.get_temp::<usize>(preview_top_id(path)))
 }
 
 /// The rest of the page under the last block. A click there starts a new
@@ -474,6 +524,31 @@ pub fn set_editor_cursor(ctx: &Context, index: usize) {
         state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(index))));
         state.store(ctx, editor_id());
     }
+}
+
+/// Put the editor's cursor at character `index`, focus the editor, and
+/// scroll that line to the top of the page on the next frame. Works before
+/// the editor has drawn this file, unlike [`set_editor_cursor`].
+pub fn jump_editor_to(ctx: &Context, index: usize) {
+    let mut state = TextEditState::load(ctx, editor_id()).unwrap_or_default();
+    state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(index))));
+    state.store(ctx, editor_id());
+    ctx.data_mut(|data| data.insert_temp(editor_scroll_id(), index));
+    focus_editor(ctx);
+}
+
+/// Where a jump waits for the editor's next frame.
+fn editor_scroll_id() -> Id {
+    Id::unique("rubrique-editor-scroll-to-char")
+}
+
+/// The character the editor was asked to scroll to, if any (taken once).
+fn take_editor_scroll(ctx: &Context) -> Option<usize> {
+    ctx.data_mut(|data| {
+        let index = data.get_temp::<usize>(editor_scroll_id());
+        data.remove::<usize>(editor_scroll_id());
+        index
+    })
 }
 
 /// Select characters `start..end` in the editor, the cursor at the end.

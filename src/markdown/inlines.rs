@@ -205,7 +205,7 @@ fn link_parts(chars: &[char], open: usize) -> Option<(usize, String, usize)> {
 }
 
 /// The text of `inlines` without any formatting.
-fn plain_text(inlines: &[Inline]) -> String {
+pub fn plain_text(inlines: &[Inline]) -> String {
     let mut text = String::new();
     for inline in inlines {
         match inline {
