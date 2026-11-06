@@ -8,6 +8,18 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Changed
+
+- **Settings → AI** is simpler. The two choices come first: **Ask and
+  notes** (the tool behind `Cmd+K`, Resolve notes and Compare) and
+  **Summaries and names**, each a drop-down over the tools that were found.
+  Under them, **Tools** lists Claude Code, Codex, Grok and the local model
+  with a check or a warning dot, where each was found, Ask and Summaries
+  tags, and the install or model download prompt when something is missing.
+  The command templates are folded behind a **Command** button on each row;
+  a command without `{prompt}` opens by itself with the warning. Safety is
+  one line with the folder count and **Forget allowed folders**.
+
 ## [0.7.0] - 2026-11-06
 
 ### Added
