@@ -8,6 +8,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 pub mod agents;
+pub mod flags;
 pub mod mention_list;
 pub mod naming;
 pub mod preview;
@@ -468,6 +469,23 @@ pub fn split_command(command: &str) -> Vec<String> {
         words.push(word);
     }
     words
+}
+
+/// Words back into a template that [`split_command`] reads the same.
+pub fn join_command(words: &[String]) -> String {
+    words
+        .iter()
+        .map(|word| {
+            if !word.is_empty() && !word.contains(|c: char| c.is_whitespace() || c == '"' || c == '\'') {
+                word.clone()
+            } else if word.contains('"') {
+                format!("'{word}'")
+            } else {
+                format!("\"{word}\"")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The program a template starts (its first word).

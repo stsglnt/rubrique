@@ -19,6 +19,10 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   The command templates are folded behind a **Command** button on each row;
   a command without `{prompt}` opens by itself with the warning. Safety is
   one line with the folder count and **Forget allowed folders**.
+- **Flag chips** above a command: **Model** for Claude Code, Codex and the
+  local model, **Permissions** for Claude Code and **Sandbox** for Codex.
+  A chip rewrites just its flag in the command; everything else you typed
+  stays, and the command field remains the source of truth.
 
 ## [0.7.0] - 2026-11-06
 

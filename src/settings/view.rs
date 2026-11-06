@@ -10,6 +10,7 @@ use eframe::egui::{
 };
 
 use crate::ai::agents::Agent;
+use crate::ai::flags::{self, FlagKind};
 use crate::ai::skills::Skill;
 use crate::ai::{AiSettings, AiTool, CommandProblem, PROMPT, SYSTEM, check_command};
 use crate::install::view::{InstallAction, install_prompt};
@@ -774,7 +775,7 @@ fn missing_help(tool: AiTool) -> String {
 /// The command field, Reset when it was changed, and a line under it: the
 /// problem, or what the placeholders mean. Returns whether the command changed.
 fn command_editor(ui: &mut Ui, settings: &mut AiSettings, tool: AiTool, problem: Option<CommandProblem>) -> bool {
-    let mut changed = false;
+    let mut changed = flag_chips(ui, settings, tool);
     let visuals = ui.visuals().clone();
     field_box(ui, &visuals, problem.is_some(), |ui| {
         ui.horizontal(|ui| {
@@ -800,6 +801,92 @@ fn command_editor(ui: &mut Ui, settings: &mut AiSettings, tool: AiTool, problem:
     };
     ui.label(RichText::new(text).size(SMALL_SIZE).color(color));
     changed
+}
+
+/// Width of the model field in a chip.
+const MODEL_CHIP_WIDTH: f32 = 110.0;
+/// Width of a choice drop-down in a chip.
+const CHOICE_CHIP_WIDTH: f32 = 150.0;
+/// What a choice chip says when the option is not in the command.
+const TOOL_DEFAULT: &str = "tool default";
+
+/// The flags rubrique knows for `tool`, as chips above the command field:
+/// a model field and the tool's choice options. A chip rewrites its flag in
+/// the command; the rest of the command stays as typed. Returns whether the
+/// command changed.
+fn flag_chips(ui: &mut Ui, settings: &mut AiSettings, tool: AiTool) -> bool {
+    let mut changed = false;
+    ui.horizontal_wrapped(|ui| {
+        for flag in flags::known_flags(tool) {
+            ui.label(RichText::new(flag.label).size(SMALL_SIZE).weak());
+            let current = flags::value(settings.command(tool), tool, flag);
+            let edit = match flag.kind {
+                FlagKind::Model => model_chip(ui, tool, current),
+                FlagKind::Choice { values, .. } => choice_chip(ui, tool, flag.label, values, current.as_deref()),
+            };
+            if let Some(edit) = edit {
+                let command = flags::with_value(settings.command(tool), tool, flag, edit.value());
+                settings.set_command(tool, &command);
+                changed = true;
+            }
+            ui.add_space(6.0);
+        }
+    });
+    changed
+}
+
+/// What a chip asks for.
+enum ChipEdit {
+    /// Set the flag to this value.
+    Set(String),
+    /// Take the flag out, back to the tool's own default.
+    Clear,
+}
+
+impl ChipEdit {
+    fn value(&self) -> Option<&str> {
+        match self {
+            ChipEdit::Set(value) => Some(value),
+            ChipEdit::Clear => None,
+        }
+    }
+}
+
+/// A small text field with the model. Returns the edit when the field was
+/// typed in; an emptied field clears the flag.
+fn model_chip(ui: &mut Ui, tool: AiTool, current: Option<String>) -> Option<ChipEdit> {
+    let mut text = current.unwrap_or_default();
+    let edit = egui::TextEdit::singleline(&mut text)
+        .id_salt(("ai-model-chip", tool.id()))
+        .font(FontId::monospace(12.0))
+        .hint_text(TOOL_DEFAULT)
+        .desired_width(MODEL_CHIP_WIDTH);
+    let response = ui.add(edit);
+    if !response.changed() {
+        return None;
+    }
+    let text = text.trim();
+    Some(if text.is_empty() { ChipEdit::Clear } else { ChipEdit::Set(text.to_string()) })
+}
+
+/// A drop-down over the option's values, plus the tool's default (the
+/// option taken out). Returns the pick when it differs from `current`.
+fn choice_chip(ui: &mut Ui, tool: AiTool, label: &str, values: &[&str], current: Option<&str>) -> Option<ChipEdit> {
+    let mut choice = current;
+    egui::ComboBox::from_id_salt(("ai-choice-chip", tool.id(), label))
+        .selected_text(choice.unwrap_or(TOOL_DEFAULT))
+        .width(CHOICE_CHIP_WIDTH)
+        .show_ui(ui, |ui| {
+            for value in values {
+                ui.selectable_value(&mut choice, Some(*value), *value);
+            }
+            ui.separator();
+            ui.selectable_value(&mut choice, None, TOOL_DEFAULT);
+        });
+    if choice == current {
+        return None;
+    }
+    Some(choice.map_or(ChipEdit::Clear, |value| ChipEdit::Set(value.to_string())))
 }
 
 /// What the placeholders in `command` mean, and for the local model which
