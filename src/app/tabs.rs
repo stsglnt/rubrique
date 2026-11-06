@@ -207,7 +207,7 @@ impl RubriqueApp {
     }
 
     /// Close a tab that is not on screen (and has nothing unsaved).
-    fn close_hidden_tab(&mut self, index: usize) {
+    pub(super) fn close_hidden_tab(&mut self, index: usize) {
         let closed = self.tabs.remove(index);
         self.forget_media(&closed);
         if index < self.active_tab {

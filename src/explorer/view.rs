@@ -53,6 +53,8 @@ pub enum ExplorerAction {
     ShowTerminalInFiles(String),
     /// Turn this session's row in the Terminals list into a name field.
     RenameTerminal(String),
+    /// End this tmux session and close its tab.
+    ExitTerminal(String),
     /// Show or hide the agent sessions under this terminal in the list.
     ToggleAgentSessions(String),
     /// Resume an agent session: in its terminal, or in a new one.
