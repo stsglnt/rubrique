@@ -70,6 +70,7 @@ use crate::terminal::view::show_terminal;
 use crate::theme::catalog::Themes;
 use crate::theme::style::{apply_accessibility, apply_theme, page_fill};
 use crate::voice::view::set_memo_states;
+use privacy::AfterPassword;
 
 /// How long a status message ("Copied ...") stays visible.
 const STATUS_MESSAGE_SECONDS: f64 = 4.0;
@@ -106,6 +107,8 @@ const ADD_NOTE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus
 const FORMAT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::F);
 const OPEN_IN_BROWSER: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::B);
 const NEW_SCRATCH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
+const NEW_ENCRYPTED_SCRATCH: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::N);
 const TOGGLE_SETTINGS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma);
 const ASK: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::K);
 const RECORD: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::R);
@@ -754,8 +757,12 @@ impl RubriqueApp {
         if ctx.input_mut(|input| input.consume_shortcut(&RECORD)) {
             self.toggle_recording(ctx);
         }
+        // The longer shortcut first: Cmd+N alone would also match Cmd+Shift+N.
+        if ctx.input_mut(|input| input.consume_shortcut(&NEW_ENCRYPTED_SCRATCH)) {
+            self.new_scratch(ctx, true);
+        }
         if ctx.input_mut(|input| input.consume_shortcut(&NEW_SCRATCH)) {
-            self.new_scratch(ctx);
+            self.new_scratch(ctx, self.encrypt_new_scratches());
         }
         if self.settings_open
             && self.pending.is_none()
@@ -1208,15 +1215,21 @@ impl RubriqueApp {
         self.themes.for_base(base).palette
     }
 
-    /// Create a scratch file, show its folder in the explorer, and open it for typing.
-    fn new_scratch(&mut self, ctx: &Context) {
+    /// Create a scratch file, encrypted or plain, show its folder in the
+    /// explorer, and open it for typing.
+    fn new_scratch(&mut self, ctx: &Context, encrypted: bool) {
         let Some(folder) = self.settings.scratch_folder_or_default() else {
             self.show_status("No folder for scratch files: set one in Settings".to_string());
             return;
         };
-        let Ok(vault) = self.new_scratch_vault() else {
-            // The password dialog opens and makes the scratch after.
-            return;
+        let vault = if encrypted {
+            let Some(vault) = self.scratch_vault_or_ask(AfterPassword::NewEncryptedScratch) else {
+                // The password dialog opens and makes the scratch after.
+                return;
+            };
+            Some(vault)
+        } else {
+            None
         };
         let path = match create_scratch(&folder, &crate::date::today_iso(), vault.as_deref()) {
             Ok(path) => path,
@@ -1462,7 +1475,10 @@ impl RubriqueApp {
             Some(ExplorerAction::RemoveRoot(path)) => self.request_remove_root(path),
             Some(ExplorerAction::AddFolder) => self.choose_folder_to_add(),
             Some(ExplorerAction::AddRemoteFolder) => self.open_add_remote(),
-            Some(ExplorerAction::NewScratch) => self.new_scratch(ui.ctx()),
+            Some(ExplorerAction::NewScratch { encrypted }) => {
+                let encrypted = encrypted.unwrap_or_else(|| self.encrypt_new_scratches());
+                self.new_scratch(ui.ctx(), encrypted);
+            }
             Some(ExplorerAction::Rename(path)) => self.start_rename(path),
             Some(ExplorerAction::RenameInTree(path)) => {
                 self.clear_name_fields();
@@ -2100,6 +2116,7 @@ impl RubriqueApp {
                 if is_markdown || is_html {
                     self.voice_buttons(ui);
                 }
+                self.scratch_lock_button(ui);
                 if !showing_preview && let Some(stats) = &self.stats {
                     ui.label(format!("{}   ", stats.summary()));
                 }
@@ -2109,6 +2126,33 @@ impl RubriqueApp {
                 ui.add(egui::Label::new(path_text.as_str()).truncate()).on_hover_text(path_text.as_str());
             });
         });
+    }
+
+    /// "Encrypt" on a plain scratch, "Encrypted" (with a menu to undo it)
+    /// on an encrypted one. Nothing on other files.
+    fn scratch_lock_button(&mut self, ui: &mut Ui) {
+        let (Some(encrypted), Some(path)) =
+            (self.open_scratch_encrypted(), self.open_file.path().map(Path::to_path_buf))
+        else {
+            return;
+        };
+        if !encrypted {
+            let tip = "Save this scratch encrypted with the scratch password. AI tools are then off for it";
+            if icon_text_button(ui, Icon::Lock, "Encrypt", tip, false).clicked() {
+                self.set_scratch_encrypted(&path, true);
+            }
+            return;
+        }
+        let tip = "Saved encrypted with the scratch password. AI tools are off for it";
+        let response = icon_text_button(ui, Icon::Lock, "Encrypted", tip, true);
+        let mut decrypt = false;
+        egui::Popup::menu(&response).show(|ui| {
+            ui.label(RichText::new("Anyone who can read the file sees its text.").weak());
+            decrypt = ui.button("Remove encryption").clicked();
+        });
+        if decrypt {
+            self.set_scratch_encrypted(&path, false);
+        }
     }
 
     /// Ask about unsaved changes while an action is pending, then run it or drop it.

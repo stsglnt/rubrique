@@ -445,14 +445,15 @@ fn privacy_section(ui: &mut Ui, privacy: PrivacyInfo) -> Option<SettingsAction> 
     ui.label(RichText::new("Encrypted scratches").strong());
     ui.label(
         RichText::new(
-            "New scratch files are saved encrypted with a password. They open only after you enter it, \
-             and AI tools never see them.",
+            "Encrypted scratches are saved with a password. They open only after you enter it, and AI \
+             tools never see them. Each scratch can be encrypted on its own: the lock button in the status \
+             bar, or Cmd+Shift+N for a new encrypted one.",
         )
         .weak(),
     );
     let has_password = settings.vault.is_some();
     let mut encrypt = settings.encrypt_scratches;
-    if ui.checkbox(&mut encrypt, "Encrypt new scratches").changed() {
+    if ui.checkbox(&mut encrypt, "Encrypt every new scratch (Cmd+N)").changed() {
         if encrypt && !has_password {
             action = Some(SettingsAction::SetScratchPassword);
         } else {
