@@ -6,7 +6,10 @@ use eframe::egui::{self, Key, RichText, Ui};
 use egui::text::{CCursor, CCursorRange};
 
 use super::note_marks::NoteMarks;
+use super::terminals::{show_terminal_file, show_terminals};
 use crate::icons::{Icon, icon_button, paint_icon};
+use crate::terminal::is_terminal_path;
+use crate::terminal::monitor::TerminalRow;
 
 use super::paths::{absolute_path_text, name_text, relative_path_text};
 use super::tree::{Children, FsNode, NodeKind, is_markdown_path};
@@ -34,6 +37,12 @@ pub enum ExplorerAction {
     RenameInTree(PathBuf),
     /// Ask, then move this file to the Trash.
     Delete(PathBuf),
+    /// Show this tmux session in a tab.
+    OpenTerminal(String),
+    /// Start a new tmux session and show it.
+    NewTerminal,
+    /// Create a `.tmux` file in this folder and open it.
+    NewTerminalFile(PathBuf),
 }
 
 /// A file being renamed right in its tree row.
@@ -109,6 +118,11 @@ pub struct TreeContext<'a> {
     pub note_marks: Option<&'a NoteMarks>,
     /// Remote folders are turned on (shows "Add remote folder").
     pub remote_enabled: bool,
+    /// The tmux sessions and their status; `None` when tmux is not
+    /// installed (no Terminals list then).
+    pub terminals: Option<&'a [TerminalRow]>,
+    /// The session shown in the active tab, highlighted in the list.
+    pub open_terminal: Option<&'a str>,
 }
 
 /// Draw the explorer panel: "Add folder…", refresh, the Markdown filter and one tree per root folder.
@@ -150,6 +164,7 @@ pub fn show_explorer(
     // text); long names scroll sideways instead.
     egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+        show_terminals(ui, &context, &mut action);
         for root in roots.iter_mut() {
             let root_path = root.path.clone();
             let context = TreeContext { root: &root_path, ..context };
@@ -197,7 +212,7 @@ fn show_children(
             for child in children.iter_mut() {
                 if child.is_folder() {
                     show_folder(ui, child, context, rename, action);
-                } else if !context.markdown_only || is_markdown_path(&child.path) {
+                } else if !context.markdown_only || is_markdown_path(&child.path) || is_terminal_path(&child.path) {
                     show_file(ui, child, context, rename, action);
                 }
             }
@@ -241,6 +256,10 @@ fn show_file(
 ) {
     if rename.as_ref().is_some_and(|rename| rename.path == file.path) {
         rename_row(ui, rename);
+        return;
+    }
+    if is_terminal_path(&file.path) {
+        show_terminal_file(ui, file, context, action);
         return;
     }
     let is_open = context.open_file == Some(file.path.as_path());
@@ -310,7 +329,7 @@ fn name_stem_chars(name: &str) -> usize {
 }
 
 /// One explorer row on a single line (the tree scrolls sideways for long names).
-fn tree_row(ui: &mut Ui, selected: bool, label: impl Into<egui::WidgetText>) -> egui::Response {
+pub(super) fn tree_row(ui: &mut Ui, selected: bool, label: impl Into<egui::WidgetText>) -> egui::Response {
     ui.add(egui::Button::selectable(selected, label.into()))
 }
 
@@ -319,11 +338,11 @@ fn tree_row(ui: &mut Ui, selected: bool, label: impl Into<egui::WidgetText>) -> 
 const UNSAVED_COLOR: egui::Color32 = egui::Color32::from_rgb(0x34, 0xa8, 0x53);
 /// Room at the start of each row for the folder arrow, so file names line
 /// up with folder names.
-const ICON_GAP: &str = "     ";
+pub(super) const ICON_GAP: &str = "     ";
 /// Width and height of the folder arrow, in points.
 const ARROW_SIZE: f32 = 7.0;
 /// Width of the note marker's icon box, in points.
-const NOTE_MARK_SIZE: f32 = 14.0;
+pub(super) const NOTE_MARK_SIZE: f32 = 14.0;
 /// Width of the name field of a file being renamed in the tree.
 const RENAME_FIELD_WIDTH: f32 = 220.0;
 
@@ -372,6 +391,7 @@ fn root_menu(response: &egui::Response, path: &Path, context: &TreeContext, acti
     response.context_menu(|ui| {
         copy_items(ui, path, context, action);
         ui.separator();
+        new_terminal_item(ui, path, context, action);
         let remove = ui
             .add_enabled(context.can_remove_roots, egui::Button::new("Remove from explorer"))
             .on_hover_text("Hide this folder here; nothing on disk changes")
@@ -384,7 +404,12 @@ fn root_menu(response: &egui::Response, path: &Path, context: &TreeContext, acti
 }
 
 /// Right-click menu of a file: the copy actions, then "Rename…" and "Delete…".
-fn file_menu(response: &egui::Response, path: &Path, context: &TreeContext, action: &mut Option<ExplorerAction>) {
+pub(super) fn file_menu(
+    response: &egui::Response,
+    path: &Path,
+    context: &TreeContext,
+    action: &mut Option<ExplorerAction>,
+) {
     response.context_menu(|ui| {
         copy_items(ui, path, context, action);
         ui.separator();
@@ -401,7 +426,26 @@ fn file_menu(response: &egui::Response, path: &Path, context: &TreeContext, acti
 
 /// Right-click menu with the three copy actions.
 fn path_menu(response: &egui::Response, path: &Path, context: &TreeContext, action: &mut Option<ExplorerAction>) {
-    response.context_menu(|ui| copy_items(ui, path, context, action));
+    response.context_menu(|ui| {
+        copy_items(ui, path, context, action);
+        if new_terminal_item(ui, path, context, action) {
+            ui.separator();
+        }
+    });
+}
+
+/// "New terminal here" for a local folder, when tmux is installed. Returns
+/// true when the item was shown.
+fn new_terminal_item(ui: &mut Ui, folder: &Path, context: &TreeContext, action: &mut Option<ExplorerAction>) -> bool {
+    if context.terminals.is_none() || crate::remote::is_mirror(folder) {
+        return false;
+    }
+    let tip = "Add a .tmux file here: opening it starts a terminal in this folder";
+    if ui.button("New terminal here").on_hover_text(tip).clicked() {
+        *action = Some(ExplorerAction::NewTerminalFile(folder.to_path_buf()));
+        ui.close();
+    }
+    true
 }
 
 /// "Copy absolute path", "Copy relative path" and "Copy name".

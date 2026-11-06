@@ -17,6 +17,7 @@ mod media;
 mod remote;
 mod scratch;
 mod settings;
+mod terminal;
 #[cfg(test)]
 mod test_support;
 mod theme;

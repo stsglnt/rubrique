@@ -10,6 +10,16 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Added
 
+- **Terminals**: tmux sessions open as tabs, and you type straight into
+  them (vim and agents work: tmux does the terminal). The explorer lists
+  every session at the top under **Terminals**, newest first, with when it
+  was opened and what runs in it. For coding agents (Claude Code, Codex,
+  Grok and others) it shows **working**, **needs you** (a question or
+  permission prompt on screen) or **idle**, and the terminal icon takes the
+  matching color. **New terminal** starts one; right-click a folder →
+  **New terminal here** adds a `.tmux` file that opens a terminal in that
+  folder. Closing a tab leaves the session running. Local folders only;
+  needs `tmux`.
 - **Structure** (`Cmd+Shift+O`, or **Structure** in the status bar): the
   headings of the open Markdown file, indented by level, in the right panel
   where the notes are. Click a heading to jump to it in the preview or the
