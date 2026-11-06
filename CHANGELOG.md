@@ -8,6 +8,17 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Added
+
+- **Skills from more agents**: besides rubrique's own folder and Claude
+  Code's, skills now come from `~/.agents/skills` (the shared folder Codex
+  reads) and Grok's `~/.grok/skills`. Each source can be switched off.
+- **All skills in Settings → Skills**: every loaded skill in one list, with a
+  filter field and a button per source. Click a skill to see where it lives,
+  the start of its instructions, and to open its SKILL.md or folder. A skill
+  linked into several folders shows once, with a badge per source; a
+  different skill with a taken name is listed as skipped.
+
 ## [0.7.0] - 2026-11-06
 
 ### Added

@@ -13,6 +13,9 @@
 //! rubrique adds the instructions to what it sends to any tool. An optional
 //! `output: answer` line makes the result an answer to read instead of new
 //! text for the selection.
+//!
+//! Skills come from several [`SkillSource`]s: rubrique's own folder and the
+//! folders other agents read (`~/.agents/skills`, Claude Code, Grok).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -21,6 +24,56 @@ use super::AskKind;
 
 /// The file that makes a folder a skill.
 pub const SKILL_FILE: &str = "SKILL.md";
+
+/// A folder of skills rubrique reads, in the order they are read: when two
+/// sources have a skill with the same name, the earlier source wins.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SkillSource {
+    /// rubrique's own folder (the chosen one or the default). Always read.
+    Rubrique,
+    /// `~/.agents/skills`, the shared folder Codex and other agents read.
+    Agents,
+    /// Claude Code's `~/.claude/skills`.
+    Claude,
+    /// Grok's `~/.grok/skills`.
+    Grok,
+}
+
+impl SkillSource {
+    pub const ALL: [SkillSource; 4] = [Self::Rubrique, Self::Agents, Self::Claude, Self::Grok];
+
+    /// Key used in the settings file.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Rubrique => "rubrique",
+            Self::Agents => "agents",
+            Self::Claude => "claude",
+            Self::Grok => "grok",
+        }
+    }
+
+    /// Name shown in Settings.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Rubrique => "rubrique",
+            Self::Agents => "Agents",
+            Self::Claude => "Claude Code",
+            Self::Grok => "Grok",
+        }
+    }
+
+    /// The folder in the home folder, for every source but rubrique's own
+    /// (which lives in the config folder or wherever the user put it).
+    pub fn home_folder(self) -> Option<PathBuf> {
+        let relative = match self {
+            Self::Rubrique => return None,
+            Self::Agents => ".agents/skills",
+            Self::Claude => ".claude/skills",
+            Self::Grok => ".grok/skills",
+        };
+        std::env::var_os("HOME").map(|home| Path::new(&home).join(relative))
+    }
+}
 
 /// One skill.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,9 +86,44 @@ pub struct Skill {
     pub kind: AskKind,
     /// The SKILL.md file.
     pub path: PathBuf,
+    /// Where [`Skill::path`] was found.
+    pub source: SkillSource,
+    /// Other sources that hold the same file (often a symlink, for example
+    /// `~/.claude/skills/x` pointing at `~/.agents/skills/x`).
+    pub linked: Vec<(SkillSource, PathBuf)>,
+    /// Different skills with the same name in later sources, not used.
+    pub skipped: Vec<(SkillSource, PathBuf)>,
 }
 
-/// Read a SKILL.md. The name falls back to the folder name.
+impl Skill {
+    /// Every source that offers this skill: its own first, then the linked ones.
+    pub fn sources(&self) -> impl Iterator<Item = SkillSource> + '_ {
+        std::iter::once(self.source).chain(self.linked.iter().map(|(source, _)| *source))
+    }
+
+    /// The name or description contains `query`, ignoring case. An empty
+    /// query matches every skill.
+    pub fn matches(&self, query: &str) -> bool {
+        let query = query.trim().to_lowercase();
+        self.name.to_lowercase().contains(&query) || self.description.to_lowercase().contains(&query)
+    }
+}
+
+/// A skill source's folder and whether it exists, for Settings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceFolder {
+    pub source: SkillSource,
+    pub path: PathBuf,
+    pub exists: bool,
+}
+
+/// Look up which of `folders` exist. Done once per load, not every frame.
+pub fn source_folders(folders: Vec<(SkillSource, PathBuf)>) -> Vec<SourceFolder> {
+    folders.into_iter().map(|(source, path)| SourceFolder { source, exists: path.is_dir(), path }).collect()
+}
+
+/// Read a SKILL.md. The name falls back to the folder name. The source is
+/// rubrique's own; [`load_skills`] sets the real one.
 pub fn parse_skill(text: &str, folder_name: &str, path: PathBuf) -> Option<Skill> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let (front, body) = split_front_matter(text);
@@ -60,7 +148,16 @@ pub fn parse_skill(text: &str, folder_name: &str, path: PathBuf) -> Option<Skill
     }
     let name = name.unwrap_or_else(|| folder_name.to_string());
     let description = description.unwrap_or_else(|| format!("Use the {name} skill."));
-    Some(Skill { name, description, instructions, kind, path })
+    Some(Skill {
+        name,
+        description,
+        instructions,
+        kind,
+        path,
+        source: SkillSource::Rubrique,
+        linked: Vec::new(),
+        skipped: Vec::new(),
+    })
 }
 
 /// Front matter between `---` lines at the top, and the rest.
@@ -85,31 +182,47 @@ pub(super) fn unquote(value: &str) -> String {
 }
 
 /// All skills in `folders` (each skill is a sub-folder with SKILL.md), by
-/// name. When two folders have a skill with the same name, the first wins.
-pub fn load_skills(folders: &[PathBuf]) -> Vec<Skill> {
+/// name. The same file seen again in a later folder (through a symlink) is
+/// recorded in [`Skill::linked`]; another skill with a name already taken is
+/// recorded in [`Skill::skipped`], so the first folder wins.
+pub fn load_skills(folders: &[(SkillSource, PathBuf)]) -> Vec<Skill> {
     let mut skills: Vec<Skill> = Vec::new();
-    for folder in folders {
-        let Ok(entries) = fs::read_dir(folder) else {
-            continue;
-        };
-        let mut found: Vec<Skill> = entries
-            .filter_map(Result::ok)
-            .filter_map(|entry| {
-                let path = entry.path().join(SKILL_FILE);
-                let text = fs::read_to_string(&path).ok()?;
-                parse_skill(&text, &entry.file_name().to_string_lossy(), path)
-            })
-            .collect();
-        found.retain(|skill| !skills.iter().any(|known| known.name == skill.name));
-        skills.extend(found);
+    // The resolved SKILL.md path of each entry in `skills`, to spot links.
+    let mut real_paths: Vec<PathBuf> = Vec::new();
+    for (source, folder) in folders {
+        for mut skill in read_folder(folder) {
+            skill.source = *source;
+            let real_path = fs::canonicalize(&skill.path).unwrap_or_else(|_| skill.path.clone());
+            if let Some(index) = real_paths.iter().position(|known| *known == real_path) {
+                skills[index].linked.push((*source, skill.path));
+            } else if let Some(known) = skills.iter_mut().find(|known| known.name == skill.name) {
+                known.skipped.push((*source, skill.path));
+            } else {
+                skills.push(skill);
+                real_paths.push(real_path);
+            }
+        }
     }
     skills.sort_by_key(|skill| skill.name.to_lowercase());
     skills
 }
 
-/// Claude Code's own skills folder, `~/.claude/skills`.
-pub fn claude_skills_folder() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| Path::new(&home).join(".claude/skills"))
+/// The skills in one folder, in file name order so results do not depend
+/// on the order the file system lists them.
+fn read_folder(folder: &Path) -> Vec<Skill> {
+    let Ok(entries) = fs::read_dir(folder) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
+    entries.sort_by_key(fs::DirEntry::file_name);
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let path = entry.path().join(SKILL_FILE);
+            let text = fs::read_to_string(&path).ok()?;
+            parse_skill(&text, &entry.file_name().to_string_lossy(), path)
+        })
+        .collect()
 }
 
 /// Name of the example skill.
@@ -158,6 +271,16 @@ mod tests {
     }
 
     #[test]
+    fn matches_name_or_description() {
+        let skill = parse_skill("---\ndescription: Make a TABLE\n---\nDo it.", "tidy", PathBuf::new())
+            .unwrap_or_else(|| panic!("parsed"));
+        assert!(skill.matches(""));
+        assert!(skill.matches(" Tid "));
+        assert!(skill.matches("table"));
+        assert!(!skill.matches("grammar"));
+    }
+
+    #[test]
     fn falls_back_to_the_folder_name() {
         let skill = parse_skill("Just instructions.", "short", PathBuf::new()).unwrap_or_else(|| panic!("parsed"));
         assert_eq!(skill.name, "short");
@@ -182,14 +305,45 @@ mod tests {
         write(&second, "b", "---\nname: Beta\n---\nsecond beta");
         write(&second, "a", "alpha");
         fs::create_dir_all(second.join("not-a-skill")).unwrap_or_default();
-        let skills = load_skills(&[first, second.clone(), root.join("missing")]);
+        let folders = [
+            (SkillSource::Rubrique, first),
+            (SkillSource::Agents, second.clone()),
+            (SkillSource::Grok, root.join("missing")),
+        ];
+        let skills = load_skills(&folders);
         let names: Vec<&str> = skills.iter().map(|skill| skill.name.as_str()).collect();
         assert_eq!(names, ["a", "Beta"]);
+        assert_eq!(skills[0].source, SkillSource::Agents);
+        // The second Beta is a different file, so it is skipped, not linked.
         assert_eq!(skills[1].instructions, "first beta");
+        assert_eq!(skills[1].source, SkillSource::Rubrique);
+        assert_eq!(skills[1].skipped, [(SkillSource::Agents, second.join("b").join(SKILL_FILE))]);
+        assert_eq!(skills[1].linked, []);
 
         let path = create_example(&second).unwrap_or_default();
         assert!(path.ends_with("action-items/SKILL.md"));
-        assert!(load_skills(&[second]).iter().any(|skill| skill.name == EXAMPLE_NAME));
+        let only_second = [(SkillSource::Agents, second)];
+        assert!(load_skills(&only_second).iter().any(|skill| skill.name == EXAMPLE_NAME));
+        fs::remove_dir_all(&root).unwrap_or_default();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_skill_is_one_skill_from_two_sources() {
+        let root = std::env::temp_dir().join(format!("rubrique-linked-skills-{}", std::process::id()));
+        let agents = root.join("agents");
+        let claude = root.join("claude");
+        fs::create_dir_all(agents.join("tidy")).unwrap_or_default();
+        fs::create_dir_all(&claude).unwrap_or_default();
+        fs::write(agents.join("tidy").join(SKILL_FILE), "Use lists.").unwrap_or_default();
+        std::os::unix::fs::symlink(agents.join("tidy"), claude.join("tidy")).unwrap_or_default();
+
+        let skills = load_skills(&[(SkillSource::Agents, agents), (SkillSource::Claude, claude.clone())]);
+        assert_eq!(skills.len(), 1);
+        let sources: Vec<SkillSource> = skills[0].sources().collect();
+        assert_eq!(sources, [SkillSource::Agents, SkillSource::Claude]);
+        assert_eq!(skills[0].linked, [(SkillSource::Claude, claude.join("tidy").join(SKILL_FILE))]);
+        assert_eq!(skills[0].skipped, []);
         fs::remove_dir_all(&root).unwrap_or_default();
     }
 }

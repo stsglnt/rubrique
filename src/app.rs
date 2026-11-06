@@ -28,7 +28,7 @@ mod voice;
 
 use crate::ai::agents::{self, Agent};
 use crate::ai::mention_list::{self, Suggestion};
-use crate::ai::skills::{self, Skill};
+use crate::ai::skills::{self, Skill, SourceFolder};
 use crate::ai::{self, AiTool};
 use crate::document::highlighting::Syntax;
 use crate::document::media_view::{MediaEvent, image_pixels, show_image, show_video};
@@ -261,6 +261,8 @@ pub struct RubriqueApp {
     ask: ask::AskState,
     /// Skills from the skills folders, read when Settings or Ask opens.
     skills: Vec<Skill>,
+    /// Every skill source's folder and whether it exists, read with the skills.
+    skill_folders: Vec<SourceFolder>,
     /// Agents from the agents folders, read at start and when Settings or Ask opens.
     agents: Vec<Agent>,
     /// Hover summaries in the explorer.
@@ -381,6 +383,7 @@ impl RubriqueApp {
             settings_group: SettingsGroup::default(),
             ask: ask::AskState::default(),
             skills: Vec::new(),
+            skill_folders: Vec::new(),
             agents: Vec::new(),
             summaries: summary::SummaryState::default(),
             naming: naming::NamingState::default(),
@@ -860,7 +863,9 @@ impl RubriqueApp {
 
     /// Read the skills and agents from their folders.
     fn load_skills_and_agents(&mut self) {
-        self.skills = skills::load_skills(&self.settings.ai.skill_folders(default_skills_folder()));
+        self.skills = skills::load_skills(&self.settings.ai.skill_folders(default_skills_folder().as_deref()));
+        self.skill_folders =
+            skills::source_folders(self.settings.ai.all_skill_folders(default_skills_folder().as_deref()));
         self.agents = agents::load_agents(&self.settings.ai.agent_folders(default_agents_folder()));
     }
 
@@ -973,7 +978,7 @@ impl RubriqueApp {
             settings: &mut self.settings.ai,
             found: &self.ai_found,
             skills: &self.skills,
-            skills_folder: skills_folder.as_deref(),
+            skill_folders: &self.skill_folders,
             agents: &self.agents,
             agents_folder: agents_folder.as_deref(),
             recipes: &self.install.ai,
@@ -1043,6 +1048,11 @@ impl RubriqueApp {
             SettingsAction::OpenFile(path) => {
                 self.settings_open = false;
                 self.open_in_tab(path);
+            }
+            SettingsAction::ShowFolder(folder) => {
+                if let Err(error) = crate::media::open_with_system(&folder) {
+                    self.show_status(error);
+                }
             }
             SettingsAction::VoiceCommandChanged => self.check_voice_tool(),
             SettingsAction::Copy(text) => {
