@@ -109,7 +109,7 @@ impl AskBar {
             let start = self.request.len() - self.request.trim_start().len();
             return Some(TypedMention { range: start..self.request.len(), typed: word.to_string() });
         }
-        mention_list::typed_mention(&self.request, cursor?)
+        mention_list::typed_mention(&self.request, cursor?, &[agents::MENTION_PREFIX])
     }
 
     /// Use the suggested `agent` and take its `@` word out of the request.

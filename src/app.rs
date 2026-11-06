@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use eframe::egui::{self, Context, Key, KeyboardShortcut, Modifiers, RichText, Ui, ViewportCommand};
 
+mod agent_history;
 mod ask;
+mod delegate;
 mod delete;
 mod drafts;
 mod find;
@@ -13,17 +15,19 @@ mod helm;
 mod images;
 mod install;
 mod naming;
+mod new_entry;
 mod privacy;
 mod remote;
 mod side_panel;
 mod structure;
 mod summary;
+mod tab_groups;
 mod tabs;
 mod terminals;
 mod voice;
 
 use crate::ai::agents::{self, Agent};
-use crate::ai::mention_list;
+use crate::ai::mention_list::{self, Suggestion};
 use crate::ai::skills::{self, Skill};
 use crate::ai::{self, AiTool};
 use crate::document::highlighting::Syntax;
@@ -40,7 +44,9 @@ use crate::document::view::{
 use crate::explorer::note_marks::NoteMarks;
 use crate::explorer::paths::{absolute_path_text, name_text};
 use crate::explorer::tree::{FsNode, is_markdown_path};
-use crate::explorer::view::{ExplorerAction, InlineRename, TreeContext, show_explorer};
+use crate::explorer::view::{
+    ExplorerAction, ExplorerEdits, InlineRename, NewEntry, Revealed, SessionEdit, TreeContext, show_explorer,
+};
 use crate::format::{Language, format};
 use crate::icons::icon_text_button;
 use crate::icons::{Icon, icon_button};
@@ -55,6 +61,7 @@ use crate::settings::view::{
     AiInfo, PrivacyInfo, ScratchInfo, SettingsAction, SettingsGroup, VoiceInfo, show_settings,
 };
 use crate::settings::{Settings, default_agents_folder, default_scratch_folder, default_skills_folder, themes_folder};
+use crate::terminal::agent_sessions::SessionHistory;
 use crate::terminal::is_terminal_path;
 use crate::terminal::monitor::TerminalMonitor;
 use crate::terminal::session::LiveTerminal;
@@ -80,6 +87,8 @@ const NOTE_DIALOG_WIDTH: f32 = 360.0;
 const NOTE_QUOTE_CHARS: usize = 80;
 /// Default width of the notes panel.
 const NOTES_PANEL_WIDTH: f32 = 280.0;
+/// How often the `@` suggestions are gathered again, in seconds.
+const MENTION_REFRESH_SECONDS: f64 = 2.0;
 /// Opacity of the warning color behind a note card.
 const NOTE_CARD_TINT: f32 = 0.18;
 /// Width of the "Rename" dialog.
@@ -269,12 +278,34 @@ pub struct RubriqueApp {
     tree_rename: Option<InlineRename>,
     /// The file being renamed in its tab (after a double click on the tab).
     tab_rename: Option<InlineRename>,
+    /// The name field in the Terminals list: a new session, or one being
+    /// renamed (after a double click).
+    session_edit: Option<InlineRename<SessionEdit>>,
+    /// A new file, folder or terminal being named at the top of its folder.
+    new_entry: Option<InlineRename<NewEntry>>,
+    /// The agent sessions each terminal has run.
+    agent_history: SessionHistory,
+    /// egui time of the last look for agent sessions.
+    last_agent_check: f64,
+    /// Terminals whose agent sessions are unfolded in the list.
+    expanded_terminals: Vec<String>,
+    /// Tab groups folded down to their chip, by folder (an empty path for
+    /// the files outside every folder).
+    folded_groups: Vec<PathBuf>,
+    /// `@tmux-` messages waiting for a busy terminal to be idle.
+    pending_sends: Vec<delegate::PendingSend>,
+    /// What typing `@` suggests, and when it was gathered (egui time):
+    /// gathering reads folders, so it is redone every few seconds only.
+    mention_cache: (f64, Vec<Suggestion>),
+    /// The tree entry "Show in files" pointed at, highlighted until the next
+    /// click in the explorer.
+    revealed: Option<PathBuf>,
+    /// Scroll the tree to `revealed` on the next frame.
+    scroll_to_revealed: bool,
     /// The file the "Delete" dialog asks about, while it is open.
     deleting: Option<PathBuf>,
     /// Watches the tmux sessions for the explorer; `None` when tmux is not installed.
     terminals: Option<TerminalMonitor>,
-    /// The "New terminal" dialog, while it is open.
-    new_terminal: Option<terminals::NewTerminalDialog>,
     /// The merge screen for the open file, while it is open.
     merging: Option<MergeSession>,
     /// egui time of the last check for outside changes.
@@ -358,9 +389,18 @@ impl RubriqueApp {
             renaming: None,
             tree_rename: None,
             tab_rename: None,
+            session_edit: None,
+            new_entry: None,
+            pending_sends: Vec::new(),
+            folded_groups: Vec::new(),
+            agent_history: agent_history::load_history(),
+            last_agent_check: f64::NEG_INFINITY,
+            expanded_terminals: Vec::new(),
+            mention_cache: (f64::NEG_INFINITY, Vec::new()),
+            revealed: None,
+            scroll_to_revealed: false,
             deleting: None,
             terminals: Tmux::find().map(|tmux| TerminalMonitor::start(tmux, ctx)),
-            new_terminal: None,
             merging: None,
             last_disk_check: 0.0,
             block_edit: None,
@@ -381,6 +421,7 @@ impl RubriqueApp {
         // Reopen last session's tabs (with their unsaved edits), then the file asked for.
         let saved_tabs = std::mem::take(&mut app.settings.open_tabs);
         app.reopen_tabs(saved_tabs);
+        app.sort_tabs_into_groups();
         if let Some(file) = file {
             app.open_in_tab(file);
         }
@@ -495,6 +536,7 @@ impl RubriqueApp {
         }
         self.roots.push(FsNode::new_root(path));
         self.remember_roots();
+        self.sort_tabs_into_groups();
     }
 
     /// Ask to remove a root; unsaved files inside it need the question.
@@ -513,6 +555,7 @@ impl RubriqueApp {
         self.roots.retain(|root| root.path != path);
         self.close_tabs_inside(path);
         self.remember_roots();
+        self.sort_tabs_into_groups();
     }
 
     /// Save the open document; returns false when saving failed.
@@ -715,9 +758,10 @@ impl RubriqueApp {
             && self.pending.is_none()
             && self.renaming.is_none()
             && self.tree_rename.is_none()
+            && self.session_edit.is_none()
+            && self.new_entry.is_none()
             && self.tab_rename.is_none()
             && self.deleting.is_none()
-            && self.new_terminal.is_none()
             && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
         {
             self.settings_open = false;
@@ -1232,10 +1276,28 @@ impl RubriqueApp {
         }
     }
 
+    /// What typing `@` suggests (agents and terminals), gathered again
+    /// when older than [`MENTION_REFRESH_SECONDS`].
+    fn mentions(&mut self, ctx: &Context) -> Vec<Suggestion> {
+        let now = ctx.input(|input| input.time);
+        if now - self.mention_cache.0 > MENTION_REFRESH_SECONDS {
+            self.mention_cache = (now, self.mention_suggestions());
+        }
+        self.mention_cache.1.clone()
+    }
+
+    /// Close every in-place name field, so only the one about to open shows.
+    fn clear_name_fields(&mut self) {
+        self.tree_rename = None;
+        self.tab_rename = None;
+        self.new_entry = None;
+        self.session_edit = None;
+    }
+
     /// Rename a file from an in-place field. Returns the field back, with
     /// the error, when renaming failed.
     fn try_inline_rename(&mut self, mut rename: InlineRename) -> Option<InlineRename> {
-        let error = self.finish_rename(&rename.path, &rename.name).err()?;
+        let error = self.finish_rename(&rename.target, &rename.name).err()?;
         rename.failed(error);
         Some(rename)
     }
@@ -1342,6 +1404,10 @@ impl RubriqueApp {
                 OpenFile::Terminal { terminal } => Some(terminal.name.as_str()),
                 _ => None,
             },
+            revealed: self.revealed.as_deref().map(|path| Revealed { path, scroll: self.scroll_to_revealed }),
+            root_color: None,
+            agent_history: Some(&self.agent_history),
+            expanded_terminals: &self.expanded_terminals,
         };
         let action = show_explorer(
             ui,
@@ -1349,9 +1415,20 @@ impl RubriqueApp {
             &mut self.settings.layout,
             &mut self.settings.markdown_only,
             &context,
-            &mut self.tree_rename,
+            &mut ExplorerEdits {
+                rename: &mut self.tree_rename,
+                new_entry: &mut self.new_entry,
+                session: &mut self.session_edit,
+            },
         );
+        self.scroll_to_revealed = false;
         self.finish_tree_rename();
+        self.finish_session_edit();
+        self.finish_new_entry();
+        // Any click in the explorer ends the "Show in files" highlight.
+        if action.is_some() {
+            self.revealed = None;
+        }
         match action {
             // Opens a tab, or switches to the file's tab when it is open.
             Some(ExplorerAction::OpenFile(path)) => self.open_in_tab(path),
@@ -1365,13 +1442,22 @@ impl RubriqueApp {
             }
             Some(ExplorerAction::OpenTerminal(name)) => self.open_terminal_session(&name),
             Some(ExplorerAction::NewTerminal) => self.request_new_terminal(),
-            Some(ExplorerAction::NewTerminalFile(folder)) => self.request_new_terminal_file(folder),
+            Some(ExplorerAction::New(folder, kind)) => self.start_new_entry(folder, kind),
+            Some(ExplorerAction::ShowTerminalInFiles(name)) => self.show_terminal_in_files(&name),
+            Some(ExplorerAction::RenameTerminal(name)) => self.start_terminal_rename(name),
+            Some(ExplorerAction::ToggleAgentSessions(name)) => self.toggle_agent_sessions(name),
+            Some(ExplorerAction::ResumeAgentSession { terminal, id, new_terminal }) => {
+                self.resume_agent_session(&terminal, &id, new_terminal);
+            }
             Some(ExplorerAction::RemoveRoot(path)) => self.request_remove_root(path),
             Some(ExplorerAction::AddFolder) => self.choose_folder_to_add(),
             Some(ExplorerAction::AddRemoteFolder) => self.open_add_remote(),
             Some(ExplorerAction::NewScratch) => self.new_scratch(ui.ctx()),
             Some(ExplorerAction::Rename(path)) => self.start_rename(path),
-            Some(ExplorerAction::RenameInTree(path)) => self.tree_rename = Some(InlineRename::new(path)),
+            Some(ExplorerAction::RenameInTree(path)) => {
+                self.clear_name_fields();
+                self.tree_rename = Some(InlineRename::new(path));
+            }
             Some(ExplorerAction::Delete(path)) => self.request_delete(path),
             None => {}
         }
@@ -1390,6 +1476,7 @@ impl RubriqueApp {
             self.recording_bar(ui);
         }
         let showing_preview = self.showing_preview();
+        let mentions = self.mentions(ui.ctx());
         let mut notice_choice = None;
         let mut name_choice = None;
         let mut merge_action = None;
@@ -1436,7 +1523,7 @@ impl RubriqueApp {
                     let blocks = preview.get_or_insert_with(|| parse_source_blocks(&document.text));
                     let folder = document.path.parent().unwrap_or(Path::new("/"));
                     set_memo_states(ui.ctx(), self.voice.memo_states(folder, blocks));
-                    let output = show_preview(ui, &document.path, blocks, self.block_edit.as_mut(), &self.agents);
+                    let output = show_preview(ui, &document.path, blocks, self.block_edit.as_mut(), &mentions);
                     preview_event = output.event;
                     self.voice.preview_hover = output.hovered;
                 } else {
@@ -1444,7 +1531,7 @@ impl RubriqueApp {
                     let syntax = Syntax::of(&document.path);
                     let line_numbers = self.settings.accessibility.line_numbers;
                     let find = find::highlight(&mut self.find);
-                    if let Some(stats) = show_editor(ui, document, syntax, line_numbers, find, &self.agents) {
+                    if let Some(stats) = show_editor(ui, document, syntax, line_numbers, find, &mentions) {
                         self.stats = Some(stats);
                     }
                     // Any edit invalidates the cached preview.
@@ -1691,6 +1778,10 @@ impl RubriqueApp {
 
     /// The dialog for writing a note.
     fn note_dialog(&mut self, ctx: &Context) {
+        if self.note_draft.is_none() {
+            return;
+        }
+        let mentions = self.mentions(ctx);
         let Some(draft) = &mut self.note_draft else {
             return;
         };
@@ -1711,7 +1802,7 @@ impl RubriqueApp {
                 .desired_width(f32::INFINITY)
                 .hint_text("Your note")
                 .show(ui);
-            mention_list::show(ui, field_id, &output, &mut draft.text, &self.agents, list_key);
+            mention_list::show(ui, field_id, &output, &mut draft.text, &mentions, list_key);
             let field = output.response;
             if !field.has_focus() && draft.text.is_empty() && draft.error.is_none() {
                 field.request_focus();
@@ -2215,6 +2306,8 @@ impl eframe::App for RubriqueApp {
         self.poll_voice(&ctx);
         self.poll_install(&ctx);
         self.poll_remote();
+        self.poll_pending_sends();
+        self.poll_agent_sessions(&ctx);
 
         let style = ctx.global_style();
         let bar_frame =
@@ -2264,7 +2357,6 @@ impl eframe::App for RubriqueApp {
         self.note_dialog(&ctx);
         self.rename_dialog(&ctx);
         self.delete_dialog(&ctx);
-        self.new_terminal_dialog(&ctx);
         self.add_remote_dialog(&ctx);
         self.secret_dialog(&ctx);
         self.update_title(&ctx);

@@ -60,6 +60,22 @@ fn adjust_style(style: &mut Style, settings: &AccessibilitySettings) {
 
 /// Fill of the page behind the editor and the preview.
 ///
+/// Colors that tell explorer folders (and their tab groups) apart: distinct
+/// hues of middle lightness, so they read on light and dark themes alike.
+const GROUP_COLORS: [Color32; 6] = [
+    Color32::from_rgb(0x4c, 0x8d, 0xf6),
+    Color32::from_rgb(0x34, 0xa8, 0x53),
+    Color32::from_rgb(0xf2, 0x9d, 0x38),
+    Color32::from_rgb(0xa3, 0x71, 0xf7),
+    Color32::from_rgb(0x1f, 0xb5, 0xad),
+    Color32::from_rgb(0xe5, 0x60, 0x9a),
+];
+
+/// The color of explorer folder number `index` (repeating after six).
+pub fn group_color(index: usize) -> Color32 {
+    GROUP_COLORS[index % GROUP_COLORS.len()]
+}
+
 /// The theme's `background` is stored as egui's text field color, so read it
 /// from there.
 pub fn page_fill(visuals: &Visuals) -> Color32 {

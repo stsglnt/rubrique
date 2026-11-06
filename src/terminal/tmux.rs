@@ -18,7 +18,11 @@ const BREW_FOLDERS: [&str; 3] = ["/opt/homebrew/bin", "/usr/local/bin", "/home/l
 
 /// One line per pane from `list-panes -a`: session, times, program, folder,
 /// and whether it is the pane you see in that session.
-const LIST_FORMAT: &str = "#{session_name}\t#{session_created}\t#{window_activity}\t#{pane_current_command}\t#{pane_current_path}\t#{window_active}#{pane_active}";
+const LIST_FORMAT: &str = "#{session_name}:#{session_created}:#{window_activity}:#{window_active}#{pane_active}:#{pane_current_command}:#{pane_current_path}";
+
+/// The tmux paste buffer rubrique fills for [`Tmux::paste`] (deleted right
+/// after pasting).
+const PASTE_BUFFER: &str = "rubrique-send";
 
 /// The tmux program, and the server socket to use.
 #[derive(Clone, Debug)]
@@ -162,6 +166,38 @@ impl Tmux {
         self.run(&args).map(|_| ())
     }
 
+    /// Paste `text` into the session as one bracketed paste, then press
+    /// Enter. An agent gets a multi-line message as one prompt this way,
+    /// where typing it would send each line on its own.
+    ///
+    /// # Errors
+    ///
+    /// The session is gone, or tmux failed.
+    pub fn paste(&self, name: &str, text: &str) -> io::Result<()> {
+        let target = target(name);
+        let args = [
+            "set-buffer",
+            "-b",
+            PASTE_BUFFER,
+            "--",
+            text,
+            ";",
+            "paste-buffer",
+            "-p",
+            "-d",
+            "-b",
+            PASTE_BUFFER,
+            "-t",
+            &target,
+            ";",
+            "send-keys",
+            "-t",
+            &target,
+            "Enter",
+        ];
+        self.run(&args).map(|_| ())
+    }
+
     /// Rename a session (when its `.tmux` file is renamed).
     ///
     /// # Errors
@@ -190,8 +226,11 @@ fn parse_session_list(output: &str) -> Vec<SessionInfo> {
     output
         .lines()
         .filter_map(|line| {
-            let fields: Vec<&str> = line.split('\t').collect();
-            let [name, created, last_output, command, folder, visible] = fields[..] else {
+            // Fields are split on `:`, which tmux never allows in a session
+            // name (tabs would be nicer, but tmux 3.8 prints them as `_`).
+            // The folder comes last, so a `:` inside a path stays in it.
+            let fields: Vec<&str> = line.splitn(6, ':').collect();
+            let [name, created, last_output, visible, command, folder] = fields[..] else {
                 return None;
             };
             (visible == "11").then(|| SessionInfo {
@@ -213,6 +252,17 @@ pub fn session_name_for_file(path: &Path) -> String {
     let readable: String =
         stem.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' }).collect();
     format!("{readable}-{:06x}", fnv1a(path.to_string_lossy().as_bytes()) & 0x00ff_ffff)
+}
+
+/// The `.tmux` file in `folder` that opens the session `name`, if any.
+/// `folder` must be spelled the way the explorer spells it, since the
+/// session name comes from the file's full path.
+pub fn file_for_session(folder: &Path, name: &str) -> Option<PathBuf> {
+    std::fs::read_dir(folder)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| super::is_terminal_path(path) && session_name_for_file(path) == name)
 }
 
 /// FNV-1a: a tiny hash that, unlike `DefaultHasher`, never changes between
@@ -242,13 +292,12 @@ mod tests {
 
     #[test]
     fn reads_the_visible_pane_of_each_session() {
-        let output =
-            "a\t100\t200\tzsh\t/tmp\t11\na\t100\t150\tvim\t/tmp\t01\nb c\t5\t6\tclaude\t/srv\t11\nbroken line\n";
+        let output = "a:100:200:11:zsh:/tmp\na:100:150:01:vim:/tmp\nb c:5:6:11:claude:/srv/a:b\nbroken line\n";
         let sessions = parse_session_list(output);
         assert_eq!(sessions.len(), 2);
         assert_eq!(sessions[0].command, "zsh");
         assert_eq!(sessions[1].name, "b c");
-        assert_eq!(sessions[1].folder, PathBuf::from("/srv"));
+        assert_eq!(sessions[1].folder, PathBuf::from("/srv/a:b"));
     }
 
     #[test]
@@ -258,6 +307,15 @@ mod tests {
         assert!(first.starts_with("build-") && first.len() == "build-".len() + 6);
         assert_ne!(first, session_name_for_file(Path::new("/other/build.tmux")));
         assert!(session_name_for_file(Path::new("/a/my notes.v2.tmux")).starts_with("my-notes-v2-"));
+    }
+
+    #[test]
+    fn finds_the_file_that_opens_a_session() {
+        let temp = crate::test_support::TempFolder::new();
+        let file = temp.write("build.tmux", "");
+        temp.write("notes.md", "");
+        assert_eq!(file_for_session(temp.path(), &session_name_for_file(&file)), Some(file));
+        assert_eq!(file_for_session(temp.path(), "term-1"), None);
     }
 
     #[test]
@@ -295,5 +353,24 @@ mod tests {
         tmux.kill_server();
         assert!(screen.plain_text().contains("rubrique-42"), "screen was:\n{}", screen.plain_text());
         assert_eq!((screen.columns, screen.rows), (70, 12));
+    }
+
+    /// Runs only where tmux is installed; uses its own tmux server.
+    #[test]
+    fn pastes_text_and_presses_enter() {
+        let socket = format!("rubrique-paste-test-{}", std::process::id());
+        let Some(tmux) = Tmux::with_socket(&socket) else {
+            return;
+        };
+        tmux.start("demo", &std::env::temp_dir()).unwrap();
+        tmux.paste("demo", "echo pasted-$((40+2))").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut text = tmux.plain_screen("demo").unwrap();
+        while !text.contains("pasted-42") && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+            text = tmux.plain_screen("demo").unwrap();
+        }
+        tmux.kill_server();
+        assert!(text.contains("pasted-42"), "screen was:\n{text}");
     }
 }

@@ -129,6 +129,23 @@ pub fn reencrypt_scratches(folder: &Path, old: &Vault, new: &Vault) -> io::Resul
     Ok(changed)
 }
 
+/// The typed file or folder name, trimmed, when it is a valid single name
+/// (not empty, no path separators, not `.` or `..`).
+///
+/// # Errors
+///
+/// Says why the name cannot be used.
+pub fn check_name(typed: &str) -> Result<&str, String> {
+    let name = typed.trim();
+    if name.is_empty() {
+        return Err("The name cannot be empty".to_string());
+    }
+    if name.contains(['/', '\\', '\0']) || name == "." || name == ".." {
+        return Err(format!("Not a valid file name: {name}"));
+    }
+    Ok(name)
+}
+
 /// The new path for renaming `path` to `new_name` in the same folder.
 ///
 /// # Errors
@@ -136,13 +153,7 @@ pub fn reencrypt_scratches(folder: &Path, old: &Vault, new: &Vault) -> io::Resul
 /// A message for the user when the name is empty, holds a path separator,
 /// is `.` or `..`, or the target already exists.
 pub fn rename_target(path: &Path, new_name: &str) -> Result<PathBuf, String> {
-    let name = new_name.trim();
-    if name.is_empty() {
-        return Err("The name cannot be empty".to_string());
-    }
-    if name.contains(['/', '\\', '\0']) || name == "." || name == ".." {
-        return Err(format!("Not a valid file name: {name}"));
-    }
+    let name = check_name(new_name)?;
     let target = path.with_file_name(name);
     if target != path && crate::vfs::exists(&target) {
         return Err(format!("{name} already exists"));

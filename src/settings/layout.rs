@@ -9,6 +9,8 @@ pub enum SideView {
     Structure,
     /// The notes in the open Markdown file.
     Notes,
+    /// The `@tmux-` mentions in the open Markdown file, to send to terminals.
+    Tasks,
 }
 
 impl SideView {
@@ -17,12 +19,13 @@ impl SideView {
         match self {
             SideView::Structure => "structure",
             SideView::Notes => "notes",
+            SideView::Tasks => "tasks",
         }
     }
 
     /// Read a stored word; anything unknown is Structure.
     fn parse(value: &str) -> Self {
-        if value == SideView::Notes.id() { SideView::Notes } else { SideView::Structure }
+        [SideView::Notes, SideView::Tasks].into_iter().find(|view| view.id() == value).unwrap_or(SideView::Structure)
     }
 }
 

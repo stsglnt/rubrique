@@ -1,6 +1,7 @@
-//! Agent suggestions while typing `@ai-…` in a text box: a small list under
-//! the cursor with the matching agents. Up and Down move through it, Enter
-//! or Tab puts the agent in, Esc hides it, and a click picks one.
+//! Mention suggestions while typing `@ai-…` (agents) or `@tmux-…`
+//! (terminals) in a text box: a small list under the cursor with the
+//! matches. Up and Down move through it, Enter or Tab puts the mention in,
+//! Esc hides it, and a click picks one.
 //!
 //! The list is drawn after its text box, but must take Enter, Tab and the
 //! arrows before the box sees them (the box would insert a new line or a
@@ -13,12 +14,49 @@ use eframe::egui::text::{CCursor, CCursorRange};
 use eframe::egui::text_edit::{TextEditOutput, TextEditState};
 use eframe::egui::{self, Context, Id, Key, Modifiers, RichText, Ui};
 
-use super::agents::{self, Agent, MENTION_PREFIX};
+use super::agents::{Agent, MENTION_PREFIX};
+use crate::terminal::mentions::MENTION_PREFIX as TERMINAL_PREFIX;
 
 /// Widest a suggestion row gets; long descriptions are cut short.
 const LIST_WIDTH: f32 = 360.0;
+/// The mention kinds a text box suggests: agents and terminals.
+const PREFIXES: [&str; 2] = [MENTION_PREFIX, TERMINAL_PREFIX];
 
-/// An `@ai-…` word at the text cursor.
+/// One thing the list can put in: an agent (`@ai-ed`) or a terminal
+/// (`@tmux-qa`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Suggestion {
+    /// The whole mention, `@` included.
+    pub mention: String,
+    /// The name shown next to it.
+    pub title: String,
+    /// A short description, shown weak.
+    pub detail: String,
+}
+
+impl Suggestion {
+    /// The suggestion for an agent.
+    pub fn agent(agent: &Agent) -> Self {
+        Suggestion { mention: agent.mention(), title: agent.name.clone(), detail: agent.description.clone() }
+    }
+}
+
+/// The suggestions whose mention starts with `typed` (without `@`), or
+/// whose name starts with what follows the mention kind (`ai-` or `tmux-`).
+fn matching<'a>(suggestions: &'a [Suggestion], typed: &str) -> Vec<&'a Suggestion> {
+    let typed = typed.to_lowercase();
+    let bare = PREFIXES.iter().find_map(|prefix| typed.strip_prefix(prefix)).unwrap_or(&typed);
+    suggestions
+        .iter()
+        .filter(|suggestion| {
+            let mention = suggestion.mention.trim_start_matches('@').to_lowercase();
+            let same_kind = PREFIXES.iter().any(|prefix| typed.starts_with(prefix) && mention.starts_with(prefix));
+            same_kind && (mention.starts_with(&typed) || suggestion.title.to_lowercase().starts_with(bare))
+        })
+        .collect()
+}
+
+/// An `@ai-…` or `@tmux-…` word at the text cursor.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TypedMention {
     /// Byte range of the whole word, `@` included: what a picked agent replaces.
@@ -27,17 +65,19 @@ pub struct TypedMention {
     pub typed: String,
 }
 
-/// The `@ai-…` word that the cursor (a char index, as egui counts) is in or
-/// right after. `None` for other words, and for e-mail addresses
-/// (`me@ai-lab.com`): the `@` must start a word.
-pub fn typed_mention(text: &str, cursor_char: usize) -> Option<TypedMention> {
+/// The mention word starting with one of `prefixes` (after `@`) that the
+/// cursor (a char index, as egui counts) is in or right after. `None` for
+/// other words, and for e-mail addresses (`me@ai-lab.com`): the `@` must
+/// start a word.
+pub fn typed_mention(text: &str, cursor_char: usize, prefixes: &[&str]) -> Option<TypedMention> {
     let cursor = text.char_indices().nth(cursor_char).map_or(text.len(), |(byte, _)| byte);
     let before = &text[..cursor];
     let word_start = before.rfind(|c: char| !is_handle_char(c)).map_or(0, |index| index + 1);
     let at = word_start.checked_sub(1).filter(|&at| before[at..].starts_with('@'))?;
     let starts_word = before[..at].chars().next_back().is_none_or(|c| !c.is_alphanumeric() && c != '_');
     let typed = &before[word_start..];
-    if !starts_word || !typed.to_lowercase().starts_with(MENTION_PREFIX) {
+    let lower = typed.to_lowercase();
+    if !starts_word || !prefixes.iter().any(|prefix| lower.starts_with(prefix)) {
         return None;
     }
     // A pick replaces the rest of the word after the cursor too.
@@ -51,10 +91,9 @@ fn is_handle_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '-'
 }
 
-/// Put `agent`'s mention and one space over `range`. Returns the char index
-/// just after the space, for the cursor.
-pub fn insert_mention(text: &mut String, range: Range<usize>, agent: &Agent) -> usize {
-    let mention = agent.mention();
+/// Put `mention` and one space over `range`. Returns the char index just
+/// after the space, for the cursor.
+pub fn insert_mention(text: &mut String, range: Range<usize>, mention: &str) -> usize {
     // Reuse a space that is already there rather than doubling it.
     let space = if text[range.end..].starts_with(' ') { "" } else { " " };
     let start = range.start;
@@ -78,7 +117,7 @@ pub enum ListKey {
     Nothing,
     Up,
     Down,
-    /// Enter or Tab: put the selected agent in.
+    /// Enter or Tab: put the selected suggestion in.
     Pick,
     /// Esc: hide the list for this mention.
     Close,
@@ -127,21 +166,28 @@ pub fn take_key(ctx: &Context, field: Id) -> ListKey {
     })
 }
 
-/// Show the agents that match the `@ai-…` word at the cursor of the text
-/// box `field` (just drawn, as `output`), and put a picked one into `text`.
-/// Returns true when `text` changed.
-pub fn show(ui: &Ui, field: Id, output: &TextEditOutput, text: &mut String, agents: &[Agent], key: ListKey) -> bool {
+/// Show the suggestions that match the mention word at the cursor of the
+/// text box `field` (just drawn, as `output`), and put a picked one into
+/// `text`. Returns true when `text` changed.
+pub fn show(
+    ui: &Ui,
+    field: Id,
+    output: &TextEditOutput,
+    text: &mut String,
+    suggestions: &[Suggestion],
+    key: ListKey,
+) -> bool {
     let ctx = ui.ctx();
     let mut state = load_state(ctx, field);
     // A click on the list takes focus from the box in the same frame.
     let focused = output.response.has_focus() || output.response.lost_focus();
     let cursor = output.cursor_range.or_else(|| output.state.cursor.char_range()).map(|range| range.primary);
-    let mention = cursor.filter(|_| focused).and_then(|cursor| typed_mention(text, cursor.index.0));
+    let mention = cursor.filter(|_| focused).and_then(|cursor| typed_mention(text, cursor.index.0, &PREFIXES));
     let Some((mention, cursor)) = mention.zip(cursor) else {
         store_state(ctx, field, ListState::default());
         return false;
     };
-    let matches = agents::matching(agents, &mention.typed);
+    let matches = matching(suggestions, &mention.typed);
     if matches.is_empty() || state.dismissed_at == Some(mention.range.start) {
         state.open = false;
         store_state(ctx, field, state);
@@ -160,20 +206,20 @@ pub fn show(ui: &Ui, field: Id, output: &TextEditOutput, text: &mut String, agen
         |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_max_width(LIST_WIDTH);
-                for (index, agent) in matches.iter().enumerate() {
-                    if suggestion_row(ui, agent, index == state.selected) {
-                        picked = Some(agent);
+                for (index, suggestion) in matches.iter().enumerate() {
+                    if suggestion_row(ui, suggestion, index == state.selected) {
+                        picked = Some(suggestion);
                     }
                 }
             });
         },
     );
-    let Some(agent) = picked else {
+    let Some(suggestion) = picked else {
         state.open = true;
         store_state(ctx, field, state);
         return false;
     };
-    let new_cursor = insert_mention(text, mention.range, agent);
+    let new_cursor = insert_mention(text, mention.range, &suggestion.mention);
     let mut edit_state = TextEditState::load(ctx, field).unwrap_or_default();
     edit_state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(new_cursor))));
     edit_state.store(ctx, field);
@@ -193,12 +239,12 @@ fn moved_selection(selected: usize, key: ListKey, count: usize) -> usize {
     }
 }
 
-/// One agent: its mention, name and description. True when clicked.
-fn suggestion_row(ui: &mut Ui, agent: &Agent, selected: bool) -> bool {
+/// One suggestion: its mention, name and description. True when clicked.
+fn suggestion_row(ui: &mut Ui, suggestion: &Suggestion, selected: bool) -> bool {
     ui.horizontal(|ui| {
-        let clicked = ui.selectable_label(selected, RichText::new(agent.mention()).monospace()).clicked();
-        ui.label(&agent.name);
-        ui.add(egui::Label::new(RichText::new(&agent.description).small().weak()).truncate());
+        let clicked = ui.selectable_label(selected, RichText::new(&suggestion.mention).monospace()).clicked();
+        ui.label(&suggestion.title);
+        ui.add(egui::Label::new(RichText::new(&suggestion.detail).small().weak()).truncate());
         clicked
     })
     .inner
@@ -224,7 +270,7 @@ mod tests {
     }
 
     fn mention_at_end(text: &str) -> Option<TypedMention> {
-        typed_mention(text, text.chars().count())
+        typed_mention(text, text.chars().count(), &PREFIXES)
     }
 
     #[test]
@@ -246,7 +292,7 @@ mod tests {
     #[test]
     fn covers_the_whole_word_when_the_cursor_is_inside_it() {
         // Cursor after "@ai-e" in "é @ai-editor!": char indices, not bytes.
-        let found = typed_mention("é @ai-editor!", 7).unwrap();
+        let found = typed_mention("é @ai-editor!", 7, &PREFIXES).unwrap();
         assert_eq!(found.typed, "ai-e");
         assert_eq!(found.range, 3..13);
     }
@@ -254,12 +300,12 @@ mod tests {
     #[test]
     fn inserts_the_mention_and_one_space() {
         let mut text = "Ask @ai-e".to_string();
-        let cursor = insert_mention(&mut text, 4..9, &agent("editor"));
+        let cursor = insert_mention(&mut text, 4..9, &agent("editor").mention());
         assert_eq!(text, "Ask @ai-editor ");
         assert_eq!(cursor, text.chars().count());
 
         let mut text = "é @ai-e fix".to_string();
-        let cursor = insert_mention(&mut text, 3..8, &agent("editor"));
+        let cursor = insert_mention(&mut text, 3..8, &agent("editor").mention());
         assert_eq!(text, "é @ai-editor fix");
         assert_eq!(cursor, "é @ai-editor ".chars().count());
     }
@@ -269,6 +315,26 @@ mod tests {
         assert_eq!(remove_mention("make it @ai-ed short", 8..14), "make it short");
         assert_eq!(remove_mention("shorter @ai-ed", 8..14), "shorter");
         assert_eq!(remove_mention("@ai-ed", 0..6), "");
+    }
+
+    #[test]
+    fn finds_terminal_mentions_too() {
+        assert_eq!(mention_at_end("Do it @tmux-q").unwrap().typed, "tmux-q");
+        assert_eq!(typed_mention("@tmux-q", 7, &[MENTION_PREFIX]), None);
+    }
+
+    #[test]
+    fn matches_only_the_kind_being_typed() {
+        let suggestions = [
+            Suggestion::agent(&agent("qa")),
+            Suggestion { mention: "@tmux-qa".to_string(), title: "qa".to_string(), detail: String::new() },
+        ];
+        let mentions = |typed: &str| -> Vec<String> {
+            matching(&suggestions, typed).iter().map(|found| found.mention.clone()).collect()
+        };
+        assert_eq!(mentions("tmux-"), ["@tmux-qa"]);
+        assert_eq!(mentions("ai-q"), ["@ai-qa"]);
+        assert_eq!(mentions("tmux-x"), Vec::<String>::new());
     }
 
     #[test]

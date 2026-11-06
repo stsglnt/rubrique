@@ -47,6 +47,16 @@ impl TerminalStatus {
             TerminalStatus::Idle(agent) => format!("{agent} · idle"),
         }
     }
+
+    /// The agent running, whatever it is doing; `None` for shells and other programs.
+    pub fn agent(&self) -> Option<&str> {
+        match self {
+            TerminalStatus::Working(agent) | TerminalStatus::NeedsYou(agent) | TerminalStatus::Idle(agent) => {
+                Some(agent)
+            }
+            TerminalStatus::Shell | TerminalStatus::Program(_) => None,
+        }
+    }
 }
 
 /// True when `command` is an agent, so its screen is worth reading.

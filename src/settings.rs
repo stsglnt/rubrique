@@ -187,6 +187,11 @@ pub fn default_skills_folder() -> Option<PathBuf> {
     config_folder().map(|folder| folder.join("skills"))
 }
 
+/// The file that remembers the agent sessions each terminal ran.
+pub fn agent_sessions_file() -> Option<PathBuf> {
+    config_folder().map(|folder| folder.join("agent-sessions"))
+}
+
 /// Folder for unsaved edits kept between runs (`drafts` in the config folder).
 pub fn drafts_folder() -> Option<PathBuf> {
     config_folder().map(|folder| folder.join("drafts"))

@@ -92,7 +92,8 @@ fn check(tmux: &Tmux) -> Vec<TerminalRow> {
 }
 
 /// Seconds since 1970, as tmux counts.
-fn unix_now() -> i64 {
+/// Now, in Unix seconds.
+pub fn unix_now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()

@@ -19,7 +19,7 @@ use crate::media::image_uri;
 use crate::theme::style::page_fill;
 
 /// Height of the tab strip.
-const TAB_HEIGHT: f32 = 30.0;
+pub(super) const TAB_HEIGHT: f32 = 30.0;
 /// Space left and right of a tab's name.
 const TAB_PADDING: f32 = 12.0;
 /// Room for the close cross (or the unsaved dot) after the name.
@@ -30,6 +30,8 @@ const RENAME_FIELD_WIDTH: f32 = 180.0;
 const TAB_MAX_WIDTH: f32 = 220.0;
 /// Height of the accent line on top of the active tab.
 const ACTIVE_LINE: f32 = 2.0;
+/// How strongly an inactive tab shows its group color on top.
+const GROUP_LINE_TINT: f32 = 0.55;
 /// Radius of the unsaved-changes dot.
 const DIRTY_DOT: f32 = 3.5;
 /// Width of each half of the Preview | Source switch.
@@ -99,7 +101,8 @@ impl RubriqueApp {
         }
     }
 
-    /// Show `file` in a new tab right after the active one.
+    /// Show `file` in a new tab: right after the active one, or at the end
+    /// of its group when tabs are grouped by folder.
     pub(super) fn add_tab(&mut self, file: OpenFile) {
         if self.tabs.is_empty() {
             self.tabs.push(OpenFile::Nothing);
@@ -107,8 +110,12 @@ impl RubriqueApp {
             self.open_file = file;
             self.enter_tab();
         } else {
-            let index = self.active_tab + 1;
+            let index = self.new_tab_index(&file);
             self.tabs.insert(index, file);
+            // A group can start before the active tab: its slot moved right.
+            if index <= self.active_tab {
+                self.active_tab += 1;
+            }
             self.switch_to_tab(index);
         }
     }
@@ -263,6 +270,7 @@ impl RubriqueApp {
     /// The row of tabs above the page.
     pub(super) fn tab_bar(&mut self, ui: &mut Ui) {
         let mut action = None;
+        let mut chip_click = None;
         let strip_fill = ui.visuals().panel_fill;
         let (strip, _) = ui.allocate_exact_size(vec2(ui.available_width(), TAB_HEIGHT), Sense::hover());
         ui.painter().rect_filled(strip, 0, strip_fill);
@@ -300,7 +308,22 @@ impl RubriqueApp {
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
+                        let grouped = self.tabs_grouped();
+                        let mut current_group = None;
                         for index in 0..self.tabs.len() {
+                            let file = self.tab(index);
+                            let group = self.group_of(file);
+                            let folded = grouped && self.group_folded(group);
+                            // Each group starts with its chip.
+                            if grouped && (index == 0 || current_group != Some(group)) {
+                                current_group = Some(group);
+                                if let Some(click) = self.group_chip(ui, group, folded) {
+                                    chip_click = Some(click);
+                                }
+                            }
+                            if folded && index != self.active_tab {
+                                continue;
+                            }
                             let file = self.tab(index);
                             let tab = TabView {
                                 file: file.path().map(Path::to_path_buf),
@@ -308,6 +331,7 @@ impl RubriqueApp {
                                 path: file.path().map(absolute_path_text).unwrap_or_default(),
                                 dirty: file.is_dirty(),
                                 active: index == self.active_tab,
+                                group_color: self.group_color_of(group),
                             };
                             if let Some(found) = show_tab(ui, &tab, index, self.tabs.len(), &mut self.tab_rename) {
                                 action = Some(found);
@@ -316,6 +340,9 @@ impl RubriqueApp {
                     });
                 });
         });
+        if let Some(click) = chip_click {
+            self.toggle_group(click.group);
+        }
         match action {
             Some(TabAction::Switch(index)) => self.switch_to_tab(index),
             Some(TabAction::Close(index)) => self.request_close_tab(index),
@@ -394,6 +421,8 @@ struct TabView {
     path: String,
     dirty: bool,
     active: bool,
+    /// The color of the tab's folder, when tabs are grouped.
+    group_color: Option<Color32>,
 }
 
 /// One tab: the file name, then a close cross (a dot instead while the file
@@ -406,7 +435,7 @@ fn show_tab(
     count: usize,
     rename: &mut Option<InlineRename>,
 ) -> Option<TabAction> {
-    if tab.file.is_some() && rename.as_ref().map(|rename| &rename.path) == tab.file.as_ref() {
+    if tab.file.is_some() && rename.as_ref().map(|rename| &rename.target) == tab.file.as_ref() {
         renaming_tab(ui, tab, rename);
         return None;
     }
@@ -433,9 +462,17 @@ fn show_tab(
     };
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }, fill);
-    if tab.active {
+    // The line on top: the accent (or the group color) on the active tab,
+    // the group color, softer, on the others.
+    let line = match (tab.active, tab.group_color) {
+        (true, Some(color)) => Some(color),
+        (true, None) => Some(visuals.hyperlink_color),
+        (false, Some(color)) => Some(color.gamma_multiply(GROUP_LINE_TINT)),
+        (false, None) => None,
+    };
+    if let Some(color) = line {
         let top = egui::Rect::from_min_size(rect.min, vec2(rect.width(), ACTIVE_LINE));
-        painter.rect_filled(top, CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }, visuals.hyperlink_color);
+        painter.rect_filled(top, CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }, color);
     }
     // Thin line between tabs that are not active.
     if !tab.active {
@@ -542,6 +579,7 @@ mod layout_tests {
                                 path: String::new(),
                                 dirty: index == 2,
                                 active: index == 1,
+                                group_color: None,
                             };
                             let left = ui.cursor().left();
                             show_tab(ui, &tab, index, 3, &mut None);

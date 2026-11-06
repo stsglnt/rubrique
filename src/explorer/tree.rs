@@ -113,6 +113,33 @@ impl FsNode {
         };
     }
 
+    /// Open every folder from this one down to `target`, so its row shows,
+    /// reading folders from disk on the way. Returns true when `target` is
+    /// this node or its parent folder was found inside it.
+    pub fn reveal(&mut self, target: &Path) -> bool {
+        self.path == target || target.parent().is_some_and(|parent| self.open_folder(parent))
+    }
+
+    /// Open `folder` and every folder above it from this one, reading them
+    /// from disk on the way. Returns true when `folder` was found. When it
+    /// is missing, the folders that exist on the way stay open.
+    pub fn open_folder(&mut self, folder: &Path) -> bool {
+        if self.kind != NodeKind::Folder || !folder.starts_with(&self.path) {
+            return false;
+        }
+        if matches!(self.children, Children::NotLoaded) {
+            self.load_children();
+        }
+        self.expanded = true;
+        if self.path == folder {
+            return true;
+        }
+        let Children::Loaded(children) = &mut self.children else {
+            return false;
+        };
+        children.iter_mut().any(|child| child.open_folder(folder))
+    }
+
     /// Re-read every loaded folder, keeping which folders are expanded.
     pub fn refresh(&mut self) {
         if matches!(self.children, Children::NotLoaded) {
@@ -137,6 +164,19 @@ impl FsNode {
             new_child.refresh();
         }
     }
+}
+
+/// `target` spelled the way the tree under `root` spells paths, when it is
+/// inside `root`. Programs like tmux report the resolved path
+/// (`/private/tmp/x` on macOS), while a root may go through a link
+/// (`/tmp/x`), so the resolved root is tried too.
+pub fn path_under_root(root: &Path, target: &Path) -> Option<PathBuf> {
+    if target.starts_with(root) {
+        return Some(target.to_path_buf());
+    }
+    let resolved_root = fs::canonicalize(root).ok()?;
+    let inside = target.strip_prefix(&resolved_root).ok()?;
+    Some(root.join(inside))
 }
 
 /// Read one folder: every entry, folders first, then case-insensitive by name.
@@ -242,6 +282,40 @@ mod tests {
             Children::Loaded(children) => children,
             other => panic!("expected loaded children, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn reveal_opens_the_folders_down_to_a_file() {
+        let temp = TempFolder::new();
+        let target = temp.write("a/b/c.tmux", "");
+        temp.write("a/other.md", "");
+        let mut root = FsNode::new_root(temp.path().to_path_buf());
+        assert!(root.reveal(&target));
+        let a = &loaded(&root)[0];
+        assert!(a.expanded);
+        let b = &loaded(a)[0];
+        assert!(b.expanded);
+        assert_eq!(names(loaded(b)), ["c.tmux"]);
+    }
+
+    #[test]
+    fn reveal_reports_a_path_outside_the_root() {
+        let temp = TempFolder::new();
+        let other = TempFolder::new();
+        let mut root = FsNode::new_root(temp.path().to_path_buf());
+        assert!(!root.reveal(&other.path().join("x.md")));
+    }
+
+    #[test]
+    fn resolved_paths_are_mapped_under_a_linked_root() {
+        let temp = TempFolder::new();
+        let real = temp.make_folder("real");
+        let link = temp.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let inside = real.join("docs");
+        assert_eq!(path_under_root(&link, &inside), Some(link.join("docs")));
+        assert_eq!(path_under_root(&real, &inside), Some(inside.clone()));
+        assert_eq!(path_under_root(&link, temp.path()), None);
     }
 
     #[test]

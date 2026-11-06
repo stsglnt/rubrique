@@ -11,6 +11,7 @@ use crate::explorer::tree::is_markdown_path;
 use crate::icons::{Icon, icon_button, small_icon_button};
 use crate::markdown::notes::find_notes;
 use crate::settings::layout::SideView;
+use crate::terminal::mentions::find_delegations;
 use crate::theme::style::page_fill;
 
 const TOGGLE_STRUCTURE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::O);
@@ -89,22 +90,30 @@ impl RubriqueApp {
             match self.settings.layout.side_view {
                 SideView::Structure => self.structure_panel(ui),
                 SideView::Notes => self.notes_panel(ui),
+                SideView::Tasks => self.tasks_panel(ui),
             }
         });
     }
 
-    /// The Structure | Notes switch (Notes with its count) and the close cross.
+    /// The Structure | Notes | Tasks switch (with counts) and the close cross.
     fn side_panel_header(&mut self, ui: &mut Ui) {
-        let note_count = match &self.open_file {
-            OpenFile::Text { document, .. } => find_notes(&document.text).len(),
-            _ => 0,
+        let (note_count, task_count) = match &self.open_file {
+            OpenFile::Text { document, .. } => {
+                (find_notes(&document.text).len(), find_delegations(&document.text).len())
+            }
+            _ => (0, 0),
         };
-        let notes_label = if note_count == 0 { "Notes".to_string() } else { format!("Notes {note_count}") };
+        let counted =
+            |label: &str, count: usize| if count == 0 { label.to_string() } else { format!("{label} {count}") };
         let layout = &mut self.settings.layout;
         let margin = egui::Margin { left: HEADER_MARGIN, right: HEADER_MARGIN, top: HEADER_MARGIN, bottom: 0 };
         egui::Frame::new().inner_margin(margin).show(ui, |ui| {
             ui.horizontal(|ui| {
-                let choices = [(SideView::Structure, "Structure".to_string()), (SideView::Notes, notes_label)];
+                let choices = [
+                    (SideView::Structure, "Structure".to_string()),
+                    (SideView::Notes, counted("Notes", note_count)),
+                    (SideView::Tasks, counted("Tasks", task_count)),
+                ];
                 if let Some(view) = view_switch(ui, &choices, layout.side_view) {
                     layout.side_view = view;
                 }

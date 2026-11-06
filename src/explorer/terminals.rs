@@ -6,10 +6,14 @@
 use eframe::egui::text::LayoutJob;
 use eframe::egui::{self, Align, Color32, FontSelection, RichText, Ui, Visuals};
 
-use super::section::{SECTION_HEADER_HEIGHT, section_header};
-use super::view::{ExplorerAction, HEADER_BUTTON_SIZE, ICON_GAP, NOTE_MARK_SIZE, TreeContext, file_menu, tree_row};
+use super::section::{SECTION_HEADER_HEIGHT, paint_fold_arrow, section_header};
+use super::view::{
+    ExplorerAction, HEADER_BUTTON_SIZE, ICON_GAP, InlineRename, NOTE_MARK_SIZE, SessionEdit, TreeContext, file_menu,
+    is_revealed, rename_row, scroll_if_revealed, tree_row,
+};
 use crate::explorer::tree::FsNode;
 use crate::icons::{Icon, paint_icon, small_icon_button};
+use crate::terminal::agent_sessions::AgentSession;
 use crate::terminal::monitor::{TerminalRow, ago_label, opened_label};
 use crate::terminal::status::TerminalStatus;
 use crate::terminal::tmux::session_name_for_file;
@@ -22,6 +26,9 @@ const TERMINALS_MIN_HEIGHT: f32 = 90.0;
 const SECTION_GAP: i8 = 4;
 /// Status color of an idle agent: the green used for "all good".
 const IDLE_COLOR: Color32 = Color32::from_rgb(0x34, 0xa8, 0x53);
+/// One more space before the name than tree rows have: the terminal icon
+/// is wider than a folder arrow and would touch the name otherwise.
+const ICON_ROOM: &str = " ";
 /// Spaces left after the name for the status dot to be painted in.
 const DOT_ROOM: &str = "     ";
 const DOT_RADIUS: f32 = 3.5;
@@ -33,6 +40,7 @@ pub(super) fn show_docked_terminals(
     ui: &mut Ui,
     context: &TreeContext,
     collapsed: &mut bool,
+    rename: &mut Option<InlineRename<SessionEdit>>,
     action: &mut Option<ExplorerAction>,
 ) {
     if context.terminals.is_none() {
@@ -49,16 +57,19 @@ pub(super) fn show_docked_terminals(
             .default_size(TERMINALS_DEFAULT_HEIGHT)
             .size_range(TERMINALS_MIN_HEIGHT..=f32::INFINITY)
     };
-    panel.frame(frame).show(ui, |ui| show_terminals_section(ui, context, collapsed, action));
+    panel.frame(frame).show(ui, |ui| show_terminals_section(ui, context, collapsed, rename, action));
 }
 
 /// The "TERMINALS" header (with a count, status dots while folded, and
 /// "New terminal"), then one row per tmux session, newest first, in its own
-/// scroll area. Nothing when tmux is not installed.
+/// scroll area. `rename` is the name field for a new session (shown at the
+/// top) or for a session being renamed in its row, if any.
+/// Nothing when tmux is not installed.
 pub(super) fn show_terminals_section(
     ui: &mut Ui,
     context: &TreeContext,
     collapsed: &mut bool,
+    rename: &mut Option<InlineRename<SessionEdit>>,
     action: &mut Option<ExplorerAction>,
 ) {
     let Some(rows) = context.terminals else {
@@ -83,29 +94,134 @@ pub(super) fn show_terminals_section(
     if !expanded {
         return;
     }
-    if rows.is_empty() {
+    let naming_new = rename.as_ref().is_some_and(|rename| rename.target == SessionEdit::New);
+    if rows.is_empty() && !naming_new {
         let hint = "No tmux sessions yet. Start one with +, or right-click a folder for a .tmux file.";
         ui.add(egui::Label::new(RichText::new(hint).small().weak()).wrap());
         return;
     }
     egui::ScrollArea::both().id_salt("terminal-list").auto_shrink([false, false]).show(ui, |ui| {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+        if naming_new {
+            rename_row(ui, rename);
+        }
         for row in rows {
-            terminal_row(ui, row, context, action);
+            terminal_row(ui, row, context, rename, action);
         }
     });
 }
 
-/// One session in the list: a click shows it in a tab.
-fn terminal_row(ui: &mut Ui, row: &TerminalRow, context: &TreeContext, action: &mut Option<ExplorerAction>) {
-    let selected = context.open_terminal == Some(row.info.name.as_str());
-    let label = terminal_label(ui, &row.info.name, Some(row));
+/// One session in the list: a click shows it in a tab, a double click
+/// renames it in place, a right click offers "Show in files".
+fn terminal_row(
+    ui: &mut Ui,
+    row: &TerminalRow,
+    context: &TreeContext,
+    rename: &mut Option<InlineRename<SessionEdit>>,
+    action: &mut Option<ExplorerAction>,
+) {
+    let renaming = |rename: &InlineRename<SessionEdit>| rename.target == SessionEdit::Rename(row.info.name.clone());
+    if rename.as_ref().is_some_and(renaming) {
+        rename_row(ui, rename);
+        return;
+    }
+    let name = &row.info.name;
+    let sessions = context.agent_history.map(|history| history.of(name)).unwrap_or_default();
+    let expanded = context.expanded_terminals.contains(name);
+    let selected = context.open_terminal == Some(name.as_str());
+    let label = terminal_label(ui, name, Some(row));
     let response = tree_row(ui, selected, label).on_hover_text(terminal_tip(Some(row)));
-    paint_terminal_icon(ui, &response);
-    paint_status_dot(ui, &response, &row.info.name, Some(&row.status));
-    if response.clicked() {
+    paint_status_dot(ui, &response, name, Some(&row.status));
+    // A terminal that ran agent sessions folds them open and closed with an
+    // arrow in place of its icon, like a folder.
+    if sessions.is_empty() {
+        paint_terminal_icon(ui, &response);
+    } else if fold_arrow(ui, &response, expanded) {
+        *action = Some(ExplorerAction::ToggleAgentSessions(name.clone()));
+        return;
+    }
+    if response.double_clicked() {
+        *action = Some(ExplorerAction::RenameTerminal(row.info.name.clone()));
+    } else if response.clicked() {
         *action = Some(ExplorerAction::OpenTerminal(row.info.name.clone()));
     }
+    response.context_menu(|ui| {
+        let tip = "Open the file tree down to this terminal's .tmux file or folder";
+        if ui.button("Show in files").on_hover_text(tip).clicked() {
+            *action = Some(ExplorerAction::ShowTerminalInFiles(row.info.name.clone()));
+            ui.close();
+        }
+        if ui.button("Rename").on_hover_text("Or double-click it").clicked() {
+            *action = Some(ExplorerAction::RenameTerminal(row.info.name.clone()));
+            ui.close();
+        }
+    });
+    if expanded && !sessions.is_empty() {
+        ui.indent(("agent-sessions", name), |ui| {
+            for session in sessions {
+                agent_session_row(ui, session, action);
+            }
+        });
+    }
+}
+
+/// The fold arrow in the icon's place; returns true when it was clicked.
+fn fold_arrow(ui: &Ui, response: &egui::Response, expanded: bool) -> bool {
+    let left = response.rect.left();
+    let width = ui.spacing().button_padding.x * 2.0 + NOTE_MARK_SIZE;
+    let area = response.rect.with_max_x(left + width);
+    let arrow = ui.interact(area, response.id.with("fold"), egui::Sense::click());
+    let center = egui::pos2(left + ui.spacing().button_padding.x + NOTE_MARK_SIZE / 2.0, response.rect.center().y);
+    let color = if arrow.hovered() { ui.visuals().strong_text_color() } else { ui.visuals().weak_text_color() };
+    paint_fold_arrow(ui.painter(), center, expanded, color);
+    let tip = if expanded { "Hide its agent sessions" } else { "Show its agent sessions" };
+    arrow.on_hover_text(tip).clicked()
+}
+
+/// One agent session under its terminal: a click resumes it there, a right
+/// click offers a new terminal or its id.
+fn agent_session_row(ui: &mut Ui, session: &AgentSession, action: &mut Option<ExplorerAction>) {
+    let mut job = LayoutJob::default();
+    let style = ui.style();
+    RichText::new(format!("{} · {}", session.agent, session.label())).append_to(
+        &mut job,
+        style,
+        FontSelection::Default,
+        Align::Center,
+    );
+    RichText::new(format!("  {}", ago_label(session.last_used))).small().weak().append_to(
+        &mut job,
+        style,
+        FontSelection::Default,
+        Align::Center,
+    );
+    let response = tree_row(ui, false, job).on_hover_text(format!(
+        "Click to resume it here:\n{}\nin {}",
+        session.resume_command(),
+        session.folder.display()
+    ));
+    let resume = |new_terminal: bool| ExplorerAction::ResumeAgentSession {
+        terminal: session.terminal.clone(),
+        id: session.id.clone(),
+        new_terminal,
+    };
+    if response.clicked() {
+        *action = Some(resume(false));
+    }
+    response.context_menu(|ui| {
+        if ui.button("Resume here").clicked() {
+            *action = Some(resume(false));
+            ui.close();
+        }
+        if ui.button("Resume in new terminal").clicked() {
+            *action = Some(resume(true));
+            ui.close();
+        }
+        if ui.button("Copy session id").on_hover_text(&session.id).clicked() {
+            *action = Some(ExplorerAction::Copy(session.id.clone()));
+            ui.close();
+        }
+    });
 }
 
 /// Next to the title: how many sessions there are and, while the section
@@ -145,9 +261,10 @@ pub(super) fn show_terminal_file(
 ) {
     let session = session_name_for_file(&file.path);
     let row = context.terminals.and_then(|rows| rows.iter().find(|row| row.info.name == session));
-    let is_open = context.open_file == Some(file.path.as_path());
+    let is_open = context.open_file == Some(file.path.as_path()) || is_revealed(context, &file.path);
     let label = terminal_label(ui, &file.name, row);
     let response = tree_row(ui, is_open, label).on_hover_text(terminal_tip(row));
+    scroll_if_revealed(ui, context, &file.path, &response);
     paint_terminal_icon(ui, &response);
     paint_status_dot(ui, &response, &file.name, row.map(|row| &row.status));
     if response.double_clicked() {
@@ -163,7 +280,7 @@ pub(super) fn show_terminal_file(
 fn terminal_label(ui: &Ui, name: &str, row: Option<&TerminalRow>) -> egui::WidgetText {
     let mut job = LayoutJob::default();
     let style = ui.style();
-    RichText::new(format!("{ICON_GAP}{name}{DOT_ROOM}")).append_to(
+    RichText::new(format!("{ICON_GAP}{ICON_ROOM}{name}{DOT_ROOM}")).append_to(
         &mut job,
         style,
         FontSelection::Default,
@@ -212,7 +329,7 @@ fn paint_status_dot(ui: &Ui, response: &egui::Response, name: &str, status: Opti
     let font = egui::TextStyle::Body.resolve(ui.style());
     let width_of =
         |text: String| ui.fonts_mut(|fonts| fonts.layout_no_wrap(text, font.clone(), Color32::WHITE).size().x);
-    let name_width = width_of(format!("{ICON_GAP}{name}"));
+    let name_width = width_of(format!("{ICON_GAP}{ICON_ROOM}{name}"));
     let room_width = width_of(DOT_ROOM.to_string());
     let x = response.rect.left() + ui.spacing().button_padding.x + name_width + room_width / 2.0;
     let center = egui::pos2(x, response.rect.center().y);

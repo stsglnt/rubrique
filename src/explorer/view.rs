@@ -10,8 +10,10 @@ use super::section::{paint_fold_arrow, section_header};
 use super::terminals::{show_docked_terminals, show_terminal_file, show_terminals_section};
 use crate::icons::{Icon, paint_icon, small_icon_button};
 use crate::settings::layout::LayoutSettings;
+use crate::terminal::agent_sessions::SessionHistory;
 use crate::terminal::is_terminal_path;
 use crate::terminal::monitor::TerminalRow;
+use crate::theme::style::group_color;
 
 use super::paths::{absolute_path_text, name_text, relative_path_text};
 use super::tree::{Children, FsNode, NodeKind, is_markdown_path};
@@ -43,14 +45,62 @@ pub enum ExplorerAction {
     OpenTerminal(String),
     /// Start a new tmux session and show it.
     NewTerminal,
-    /// Create a `.tmux` file in this folder and open it.
-    NewTerminalFile(PathBuf),
+    /// Ask, in a name field at the top of this folder, for the name of a
+    /// new file, folder or terminal (`.tmux` file) to create in it.
+    New(PathBuf, NewKind),
+    /// Open the file tree down to this tmux session's `.tmux` file or folder.
+    ShowTerminalInFiles(String),
+    /// Turn this session's row in the Terminals list into a name field.
+    RenameTerminal(String),
+    /// Show or hide the agent sessions under this terminal in the list.
+    ToggleAgentSessions(String),
+    /// Resume an agent session: in its terminal, or in a new one.
+    ResumeAgentSession { terminal: String, id: String, new_terminal: bool },
 }
 
-/// A file being renamed right where its name shows: its tree row or its tab.
+/// What "New" in a folder's menu creates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NewKind {
+    File,
+    Folder,
+    /// A `.tmux` file: opening it starts a terminal in its folder.
+    Terminal,
+}
+
+/// A file, folder or terminal about to be created: the name field shows at
+/// the top of `folder` in the tree.
+#[derive(Debug, PartialEq, Eq)]
+pub struct NewEntry {
+    pub folder: PathBuf,
+    pub kind: NewKind,
+}
+
+/// The name field in the Terminals list: for a new tmux session (the +
+/// button) or for renaming one (a double click).
+#[derive(Debug, PartialEq, Eq)]
+pub enum SessionEdit {
+    New,
+    Rename(String),
+}
+
+/// The name fields the explorer can show in place of a row.
 #[derive(Debug)]
-pub struct InlineRename {
-    pub path: PathBuf,
+pub struct ExplorerEdits<'a> {
+    /// A file renamed in its tree row.
+    pub rename: &'a mut Option<InlineRename>,
+    /// A new file, folder or terminal being named in its folder.
+    pub new_entry: &'a mut Option<InlineRename<NewEntry>>,
+    /// A tmux session being named in the Terminals list.
+    pub session: &'a mut Option<InlineRename<SessionEdit>>,
+}
+
+/// A name being edited right where it shows: a file in its tree row or its
+/// tab (`T` is the file's path), a new entry in its folder (`T` is a
+/// [`NewEntry`]), or a terminal in the Terminals list (`T` is a [`SessionEdit`]).
+#[derive(Debug)]
+pub struct InlineRename<T = PathBuf> {
+    /// What is being renamed.
+    pub target: T,
     /// The name being typed.
     pub name: String,
     /// Why the last attempt failed, shown under the row.
@@ -63,9 +113,18 @@ pub struct InlineRename {
 }
 
 impl InlineRename {
+    /// Rename the file at `path`, starting from its current name.
     pub fn new(path: PathBuf) -> Self {
         let name = name_text(&path);
-        InlineRename { path, name, error: None, submitted: false, needs_focus: true }
+        InlineRename::with_name(path, name)
+    }
+}
+
+impl<T> InlineRename<T> {
+    /// A name field for `target`, starting with `name` (the part before
+    /// the extension selected).
+    pub fn with_name(target: T, name: String) -> Self {
+        InlineRename { target, name, error: None, submitted: false, needs_focus: true }
     }
 
     /// Show `error` under the field and give the field back its focus.
@@ -125,20 +184,39 @@ pub struct TreeContext<'a> {
     pub terminals: Option<&'a [TerminalRow]>,
     /// The session shown in the active tab, highlighted in the list.
     pub open_terminal: Option<&'a str>,
+    /// The entry "Show in files" pointed at, highlighted until the next
+    /// click in the explorer.
+    pub revealed: Option<Revealed<'a>>,
+    /// The color of the root being drawn, when there are several roots
+    /// (its tabs are grouped under the same color).
+    pub root_color: Option<egui::Color32>,
+    /// The agent sessions each terminal has run.
+    pub agent_history: Option<&'a SessionHistory>,
+    /// The terminals whose agent sessions are unfolded in the list.
+    pub expanded_terminals: &'a [String],
+}
+
+/// The tree entry "Show in files" pointed at.
+#[derive(Clone, Copy, Debug)]
+pub struct Revealed<'a> {
+    pub path: &'a Path,
+    /// Scroll it into view (only on the frame after it was revealed, so the
+    /// tree can be scrolled away from it again).
+    pub scroll: bool,
 }
 
 /// Draw the explorer panel: the Files section (its header with "Add
 /// folder", "New scratch" and refresh, the Markdown filter and one tree per
 /// root folder) and the Terminals section docked under it. `layout` holds
-/// which sections are folded; the headers change it. `rename` is the file
-/// being renamed in its row, if any; Esc in the field clears it.
+/// which sections are folded; the headers change it. `edits` holds the name
+/// fields shown in place of rows; Esc in a field clears it.
 pub fn show_explorer(
     ui: &mut Ui,
     roots: &mut [FsNode],
     layout: &mut LayoutSettings,
     markdown_only: &mut bool,
     context: &TreeContext,
-    rename: &mut Option<InlineRename>,
+    edits: &mut ExplorerEdits,
 ) -> Option<ExplorerAction> {
     let mut action = None;
     let files_open = !layout.files_collapsed;
@@ -146,13 +224,13 @@ pub fn show_explorer(
     // first so it claims its height); with Files folded it follows the
     // Files header and gets the rest of the height.
     if files_open {
-        show_docked_terminals(ui, context, &mut layout.terminals_collapsed, &mut action);
+        show_docked_terminals(ui, context, &mut layout.terminals_collapsed, edits.session, &mut action);
     }
     if files_header(ui, context, files_open, &mut action) {
         layout.files_collapsed = files_open;
     }
     if !files_open {
-        show_terminals_section(ui, context, &mut layout.terminals_collapsed, &mut action);
+        show_terminals_section(ui, context, &mut layout.terminals_collapsed, edits.session, &mut action);
         return action;
     }
     ui.checkbox(markdown_only, "Markdown only").on_hover_text("Hide files that are not Markdown");
@@ -164,10 +242,11 @@ pub fn show_explorer(
     // text); long names scroll sideways instead.
     egui::ScrollArea::both().id_salt("file-tree").auto_shrink([false, false]).show(ui, |ui| {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-        for root in roots.iter_mut() {
+        for (index, root) in roots.iter_mut().enumerate() {
             let root_path = root.path.clone();
-            let context = TreeContext { root: &root_path, ..context };
-            show_root(ui, root, &context, rename, &mut action);
+            let root_color = context.can_remove_roots.then(|| group_color(index));
+            let context = TreeContext { root: &root_path, root_color, ..context };
+            show_root(ui, root, &context, edits, &mut action);
         }
     });
     action
@@ -212,19 +291,23 @@ fn show_root(
     ui: &mut Ui,
     root: &mut FsNode,
     context: &TreeContext,
-    rename: &mut Option<InlineRename>,
+    edits: &mut ExplorerEdits,
     action: &mut Option<ExplorerAction>,
 ) {
     let label = RichText::new(format!("{ICON_GAP}{}", root.name)).strong();
-    let response = tree_row(ui, false, label).on_hover_text(absolute_path_text(&root.path));
+    let response = tree_row(ui, is_revealed(context, &root.path), label).on_hover_text(absolute_path_text(&root.path));
+    scroll_if_revealed(ui, context, &root.path, &response);
     paint_arrow(ui, &response, root.expanded);
+    if let Some(color) = context.root_color {
+        paint_root_dot(ui, &response, &root.name, color);
+    }
     if response.clicked() {
         root.toggle_expanded();
     }
     root_menu(&response, &root.path, context, action);
     if root.expanded {
         let indent_id = root.path.clone();
-        ui.indent(indent_id, |ui| show_children(ui, root, context, rename, action));
+        ui.indent(indent_id, |ui| show_children(ui, root, context, edits, action));
     }
 }
 
@@ -233,7 +316,7 @@ fn show_children(
     ui: &mut Ui,
     folder: &mut FsNode,
     context: &TreeContext,
-    rename: &mut Option<InlineRename>,
+    edits: &mut ExplorerEdits,
     action: &mut Option<ExplorerAction>,
 ) {
     match &mut folder.children {
@@ -242,11 +325,15 @@ fn show_children(
             ui.label(RichText::new(format!("Cannot read: {error}")).weak().italics());
         }
         Children::Loaded(children) => {
+            // A new entry is named at the top of its folder.
+            if edits.new_entry.as_ref().is_some_and(|new_entry| new_entry.target.folder == folder.path) {
+                rename_row(ui, edits.new_entry);
+            }
             for child in children.iter_mut() {
                 if child.is_folder() {
-                    show_folder(ui, child, context, rename, action);
+                    show_folder(ui, child, context, edits, action);
                 } else if !context.markdown_only || is_markdown_path(&child.path) || is_terminal_path(&child.path) {
-                    show_file(ui, child, context, rename, action);
+                    show_file(ui, child, context, edits, action);
                 }
             }
         }
@@ -258,11 +345,12 @@ fn show_folder(
     ui: &mut Ui,
     folder: &mut FsNode,
     context: &TreeContext,
-    rename: &mut Option<InlineRename>,
+    edits: &mut ExplorerEdits,
     action: &mut Option<ExplorerAction>,
 ) {
     let label = format!("{ICON_GAP}{}{}", folder.name, link_marker(folder));
-    let response = tree_row(ui, false, label);
+    let response = tree_row(ui, is_revealed(context, &folder.path), label);
+    scroll_if_revealed(ui, context, &folder.path, &response);
     if folder.kind == NodeKind::SymlinkLoop {
         response.clone().on_hover_text("Link to a parent folder; not expanded to avoid a loop");
     } else {
@@ -271,10 +359,10 @@ fn show_folder(
     if response.clicked() {
         folder.toggle_expanded();
     }
-    path_menu(&response, &folder.path, context, action);
+    folder_menu(&response, &folder.path, context, action);
     if folder.expanded {
         let indent_id = folder.path.clone();
-        ui.indent(indent_id, |ui| show_children(ui, folder, context, rename, action));
+        ui.indent(indent_id, |ui| show_children(ui, folder, context, edits, action));
     }
 }
 
@@ -284,23 +372,24 @@ fn show_file(
     ui: &mut Ui,
     file: &FsNode,
     context: &TreeContext,
-    rename: &mut Option<InlineRename>,
+    edits: &mut ExplorerEdits,
     action: &mut Option<ExplorerAction>,
 ) {
-    if rename.as_ref().is_some_and(|rename| rename.path == file.path) {
-        rename_row(ui, rename);
+    if edits.rename.as_ref().is_some_and(|rename| rename.target == file.path) {
+        rename_row(ui, edits.rename);
         return;
     }
     if is_terminal_path(&file.path) {
         show_terminal_file(ui, file, context, action);
         return;
     }
-    let is_open = context.open_file == Some(file.path.as_path());
+    let is_open = context.open_file == Some(file.path.as_path()) || is_revealed(context, &file.path);
     let dirty = context.dirty_files.iter().any(|path| path == &file.path);
     let dirty_marker = if dirty { " •" } else { "" };
     let label = format!("{ICON_GAP}{}{}{dirty_marker}", file.name, link_marker(file));
     let label = if dirty { egui::RichText::new(label).color(UNSAVED_COLOR) } else { egui::RichText::new(label) };
     let response = tree_row(ui, is_open, label);
+    scroll_if_revealed(ui, context, &file.path, &response);
     if let Some(marks) = context.note_marks
         && is_markdown_path(&file.path)
         && marks.has_notes(&file.path)
@@ -318,11 +407,12 @@ fn show_file(
     file_menu(&response, &file.path, context, action);
 }
 
-/// The row of the file being renamed: a name field, with the name before
-/// the extension selected. Enter or leaving the field renames; Esc cancels.
-fn rename_row(ui: &mut Ui, slot: &mut Option<InlineRename>) {
+/// The row of an entry being renamed (a file, or a terminal in the
+/// Terminals list): a name field, with the name before the extension
+/// selected. Enter or leaving the field renames; Esc cancels.
+pub(super) fn rename_row<T>(ui: &mut Ui, slot: &mut Option<InlineRename<T>>) {
     ui.horizontal(|ui| {
-        // Line the field up with the file names in the other rows.
+        // Line the field up with the names in the other rows.
         ui.add_space(ui.spacing().button_padding.x + NOTE_MARK_SIZE);
         rename_field(ui, slot, egui::Id::unique("explorer-rename-field"), RENAME_FIELD_WIDTH);
     });
@@ -331,10 +421,11 @@ fn rename_row(ui: &mut Ui, slot: &mut Option<InlineRename>) {
     }
 }
 
-/// The name field of a file renamed in place (in its tree row or its tab).
+/// The name field of something renamed in place (a tree row, a tab, a
+/// terminal in the list).
 /// On its first frame it takes focus with the name before the extension
 /// selected. Enter or leaving the field marks it submitted; Esc clears `slot`.
-pub fn rename_field(ui: &mut Ui, slot: &mut Option<InlineRename>, id: egui::Id, width: f32) {
+pub fn rename_field<T>(ui: &mut Ui, slot: &mut Option<InlineRename<T>>, id: egui::Id, width: f32) {
     let Some(rename) = slot.as_mut() else {
         return;
     };
@@ -365,6 +456,22 @@ fn name_stem_chars(name: &str) -> usize {
     }
 }
 
+/// True when `path` is the entry "Show in files" pointed at.
+pub(super) fn is_revealed(context: &TreeContext, path: &Path) -> bool {
+    context.revealed.is_some_and(|revealed| revealed.path == path)
+}
+
+/// Scroll the row of the revealed entry to the middle of the tree, on the
+/// frame after "Show in files". Only up and down: a thin strip at the left
+/// edge stands in for the row, so a long name does not scroll the tree sideways.
+pub(super) fn scroll_if_revealed(ui: &Ui, context: &TreeContext, path: &Path, response: &egui::Response) {
+    if context.revealed.is_some_and(|revealed| revealed.scroll && revealed.path == path) {
+        let left = ui.clip_rect().left();
+        let strip = response.rect.with_min_x(left).with_max_x(left + 1.0);
+        ui.scroll_to_rect(strip, Some(egui::Align::Center));
+    }
+}
+
 /// One explorer row on a single line (the tree scrolls sideways for long names).
 pub(super) fn tree_row(ui: &mut Ui, selected: bool, label: impl Into<egui::WidgetText>) -> egui::Response {
     ui.add(egui::Button::selectable(selected, label.into()))
@@ -378,6 +485,10 @@ const UNSAVED_COLOR: egui::Color32 = egui::Color32::from_rgb(0x34, 0xa8, 0x53);
 pub(super) const ICON_GAP: &str = "     ";
 /// Width of the folder arrow, in points (for placing it).
 const ARROW_SIZE: f32 = 7.0;
+/// Radius of the color dot after a root's name.
+const ROOT_DOT_RADIUS: f32 = 3.5;
+/// Space between a root's name and its color dot.
+const ROOT_DOT_GAP: f32 = 9.0;
 /// Size of the buttons in a section header.
 pub(super) const HEADER_BUTTON_SIZE: f32 = 22.0;
 /// Width of the note marker's icon box, in points.
@@ -397,6 +508,15 @@ fn paint_note_mark(ui: &Ui, response: &egui::Response) {
     paint_icon(ui.painter(), Icon::Bubble, center, visuals.weak_text_color(), visuals.hyperlink_color, behind);
 }
 
+/// Paint the dot of a root's color after its name: its tabs carry the same color.
+fn paint_root_dot(ui: &Ui, response: &egui::Response, name: &str, color: egui::Color32) {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let name_width =
+        ui.fonts_mut(|fonts| fonts.layout_no_wrap(format!("{ICON_GAP}{name}"), font, egui::Color32::WHITE).size().x);
+    let x = response.rect.left() + ui.spacing().button_padding.x + name_width + ROOT_DOT_GAP;
+    ui.painter().circle_filled(egui::pos2(x, response.rect.center().y), ROOT_DOT_RADIUS, color);
+}
+
 /// Paint the fold arrow in the gap before a folder name.
 fn paint_arrow(ui: &Ui, response: &egui::Response, expanded: bool) {
     let center =
@@ -413,9 +533,11 @@ fn link_marker(node: &FsNode) -> &'static str {
 /// Right-click menu of a root: the copy actions, then "Remove from explorer".
 fn root_menu(response: &egui::Response, path: &Path, context: &TreeContext, action: &mut Option<ExplorerAction>) {
     response.context_menu(|ui| {
+        if new_menu(ui, path, context, action) {
+            ui.separator();
+        }
         copy_items(ui, path, context, action);
         ui.separator();
-        new_terminal_item(ui, path, context, action);
         let remove = ui
             .add_enabled(context.can_remove_roots, egui::Button::new("Remove from explorer"))
             .on_hover_text("Hide this folder here; nothing on disk changes")
@@ -448,27 +570,42 @@ pub(super) fn file_menu(
     });
 }
 
-/// Right-click menu with the three copy actions.
-fn path_menu(response: &egui::Response, path: &Path, context: &TreeContext, action: &mut Option<ExplorerAction>) {
+/// Right-click menu of a folder: "New", then the three copy actions.
+fn folder_menu(response: &egui::Response, path: &Path, context: &TreeContext, action: &mut Option<ExplorerAction>) {
     response.context_menu(|ui| {
-        copy_items(ui, path, context, action);
-        if new_terminal_item(ui, path, context, action) {
+        if new_menu(ui, path, context, action) {
             ui.separator();
         }
+        copy_items(ui, path, context, action);
     });
 }
 
-/// "New terminal here" for a local folder, when tmux is installed. Returns
-/// true when the item was shown.
-fn new_terminal_item(ui: &mut Ui, folder: &Path, context: &TreeContext, action: &mut Option<ExplorerAction>) -> bool {
-    if context.terminals.is_none() || crate::remote::is_mirror(folder) {
+/// The "New" submenu of a local folder: File, Folder, and Terminal when
+/// tmux is installed. Remote folders get none (creating there is not
+/// supported). Returns true when the menu was shown.
+fn new_menu(ui: &mut Ui, folder: &Path, context: &TreeContext, action: &mut Option<ExplorerAction>) -> bool {
+    if crate::remote::is_mirror(folder) {
         return false;
     }
-    let tip = "Add a .tmux file here: opening it starts a terminal in this folder";
-    if ui.button("New terminal here").on_hover_text(tip).clicked() {
-        *action = Some(ExplorerAction::NewTerminalFile(folder.to_path_buf()));
-        ui.close();
-    }
+    ui.menu_button("New", |ui| {
+        let mut choices = vec![
+            (NewKind::File, "File", "A new file here; type its name in the tree"),
+            (NewKind::Folder, "Folder", "A new folder here; type its name in the tree"),
+        ];
+        if context.terminals.is_some() {
+            choices.push((
+                NewKind::Terminal,
+                "Terminal",
+                "A .tmux file here: opening it starts a terminal in this folder",
+            ));
+        }
+        for (kind, label, tip) in choices {
+            if ui.button(label).on_hover_text(tip).clicked() {
+                *action = Some(ExplorerAction::New(folder.to_path_buf(), kind));
+                ui.close();
+            }
+        }
+    });
     true
 }
 
