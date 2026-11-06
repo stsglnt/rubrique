@@ -8,6 +8,20 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Added
+
+- **Encrypt one scratch at a time**: a scratch can be encrypted or plain on
+  its own, without turning on encryption for all of them. On an open
+  scratch, the **Encrypt** button (a padlock) in the status bar seals it
+  with the scratch password; on an encrypted one it reads **Encrypted**,
+  and clicking it offers **Remove encryption**. `Cmd/Ctrl+Shift+N` makes a
+  new encrypted scratch, and right-clicking the New scratch button offers
+  **New plain scratch** and **New encrypted scratch**. With no password yet,
+  rubrique asks you to choose one first; when locked, it asks for it. Unsaved
+  edits stay in the tab, and their kept draft is sealed or made plain too.
+  Settings → Privacy → **Encrypt every new scratch** still sets what
+  `Cmd/Ctrl+N` makes.
+
 ## [0.7.0] - 2026-11-06
 
 ### Added

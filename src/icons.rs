@@ -50,6 +50,8 @@ pub enum Icon {
     Plus,
     /// Show or hide the right panel: a window whose right column is the accent.
     SidePanel,
+    /// An encrypted file: a padlock whose keyhole is the accent.
+    Lock,
 }
 
 /// A flat button with `icon` and a hover tip. `active` keeps it highlighted
@@ -158,6 +160,7 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
         Icon::Plus => plus(painter, center, 5.0, line),
         Icon::SidePanel => paint_side_panel(painter, center, line, detail),
         Icon::NewScratch => paint_new_scratch(painter, center, line, detail),
+        Icon::Lock => paint_lock(painter, center, line, accent),
         Icon::Refresh => {
             // Most of a circle; the arrowhead at its end is the accent.
             let radius = 5.6;
@@ -272,6 +275,23 @@ fn paint_new_scratch(painter: &Painter, center: Pos2, line: Stroke, detail: Stro
     let body = [cone + across, back + across, back - across, cone - across];
     stroke_path(painter, &body, true, line);
     stroke_path(painter, &[cone + across, tip, cone - across], false, detail);
+}
+
+/// A padlock: a body with a rounded shackle on top; the keyhole is the accent.
+fn paint_lock(painter: &Painter, center: Pos2, line: Stroke, accent: Color32) {
+    let at = |x: f32, y: f32| center + vec2(x, y);
+    let body = [at(-5.5, -0.5), at(5.5, -0.5), at(5.5, 6.5), at(-5.5, 6.5)];
+    stroke_path(painter, &round_corners(&body, CORNER, true), true, line);
+    // Half a circle from left to right over the top, with short legs down.
+    let radius = 3.4;
+    let mut shackle = vec![at(-radius, -0.5)];
+    shackle.extend(
+        (0..=12_u8).map(|step| at(0.0, -3.4) + Vec2::angled(TAU / 2.0 + f32::from(step) / 12.0 * TAU / 2.0) * radius),
+    );
+    shackle.push(at(radius, -0.5));
+    stroke_path(painter, &shackle, false, line);
+    painter.circle_filled(at(0.0, 2.4), 1.3, accent);
+    stroke_path(painter, &[at(0.0, 2.4), at(0.0, 4.4)], false, Stroke::new(LINE, accent));
 }
 
 /// A window split in two; the lines in the right column are the accent.
