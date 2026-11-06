@@ -8,8 +8,8 @@ use eframe::egui::{self, Align, Color32, FontSelection, RichText, Ui, Visuals};
 
 use super::section::{SECTION_HEADER_HEIGHT, paint_fold_arrow, section_header};
 use super::view::{
-    ExplorerAction, HEADER_BUTTON_SIZE, ICON_GAP, InlineRename, NOTE_MARK_SIZE, SessionEdit, TreeContext, file_menu,
-    is_revealed, rename_row, scroll_if_revealed, tree_row,
+    ExplorerAction, HEADER_BUTTON_SIZE, ICON_GAP, InlineRename, NOTE_MARK_SIZE, SessionEdit, TreeContext,
+    file_menu_with_exit, is_revealed, rename_row, scroll_if_revealed, tree_row,
 };
 use crate::explorer::tree::FsNode;
 use crate::icons::{Icon, paint_icon, small_icon_button};
@@ -276,7 +276,7 @@ pub(super) fn show_terminal_file(
     } else if response.clicked() {
         *action = Some(ExplorerAction::OpenFile(file.path.clone()));
     }
-    file_menu(&response, &file.path, context, action);
+    file_menu_with_exit(&response, &file.path, context, Some((&session, row.is_some())), action);
 }
 
 /// The name, room for the status dot, then the status and opening time in

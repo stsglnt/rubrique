@@ -22,10 +22,12 @@ const CHIP_MARGIN: f32 = 6.0;
 const CHIP_TINT: f32 = 0.22;
 
 /// What a chip asks for.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct ChipClick {
-    /// The group whose fold state changes.
-    pub group: Option<usize>,
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum ChipClick {
+    /// Fold or unfold the group.
+    Toggle(Option<usize>),
+    /// The chip was dragged and dropped with the pointer at screen `x`.
+    Drop { group: usize, x: f32 },
 }
 
 impl RubriqueApp {
@@ -94,13 +96,39 @@ impl RubriqueApp {
         let font = egui::TextStyle::Small.resolve(ui.style());
         let galley = ui.painter().layout_no_wrap(text, font, color);
         let size = vec2(galley.size().x + CHIP_PADDING * 2.0 + CHIP_MARGIN * 2.0, super::tabs::TAB_HEIGHT);
-        let (slot, response) = ui.allocate_exact_size(size, Sense::click());
+        let (slot, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
         let chip = egui::Rect::from_center_size(slot.center(), vec2(size.x - CHIP_MARGIN * 2.0, CHIP_HEIGHT));
         let fill = color.gamma_multiply(if response.hovered() { CHIP_TINT * 1.6 } else { CHIP_TINT });
         ui.painter().rect_filled(chip, CHIP_HEIGHT / 2.0, fill);
         ui.painter().galley(chip.center() - galley.size() / 2.0, galley, color);
         let tip = if folded { "Show this group's tabs" } else { "Fold this group's tabs" };
-        response.on_hover_text(tip).clicked().then_some(ChipClick { group })
+        let tip = if group.is_some() { format!("{tip}. Drag to move the group") } else { tip.to_string() };
+        let response = response.on_hover_text(tip);
+        let mut click = response.clicked().then_some(ChipClick::Toggle(group));
+        // Drag a chip to put its group elsewhere; "Other" always stays last.
+        if let Some(group) = group {
+            if response.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            }
+            if response.drag_stopped()
+                && let Some(pos) = response.interact_pointer_pos()
+            {
+                click = Some(ChipClick::Drop { group, x: pos.x });
+            }
+        }
+        click
+    }
+
+    /// Put folder `group` at place `to` among the folders: the explorer and
+    /// the tab groups follow the same order, so both move.
+    pub(super) fn move_group(&mut self, group: usize, to: usize) {
+        if group == to || group >= self.roots.len() || to >= self.roots.len() {
+            return;
+        }
+        let root = self.roots.remove(group);
+        self.roots.insert(to, root);
+        self.remember_roots();
+        self.sort_tabs_into_groups();
     }
 
     /// Fold or unfold a group's tabs.
