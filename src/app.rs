@@ -1478,6 +1478,7 @@ impl RubriqueApp {
             Some(ExplorerAction::New(folder, kind)) => self.start_new_entry(folder, kind),
             Some(ExplorerAction::ShowTerminalInFiles(name)) => self.show_terminal_in_files(&name),
             Some(ExplorerAction::RenameTerminal(name)) => self.start_terminal_rename(name),
+            Some(ExplorerAction::ExitTerminal(name)) => self.exit_terminal(&name),
             Some(ExplorerAction::ToggleAgentSessions(name)) => self.toggle_agent_sessions(name),
             Some(ExplorerAction::ResumeAgentSession { terminal, id, new_terminal }) => {
                 self.resume_agent_session(&terminal, &id, new_terminal);

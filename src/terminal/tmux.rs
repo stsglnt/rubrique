@@ -207,6 +207,15 @@ impl Tmux {
         self.run(&["rename-session", "-t", &format!("={from}"), to]).map(|_| ())
     }
 
+    /// End session `name` and everything running in it.
+    ///
+    /// # Errors
+    ///
+    /// The session is gone, or tmux failed.
+    pub fn kill_session(&self, name: &str) -> io::Result<()> {
+        self.run(&["kill-session", "-t", &format!("={name}")]).map(|_| ())
+    }
+
     /// Stop the session and everything running in it (tests only: closing
     /// a tab leaves the session running).
     #[cfg(test)]
