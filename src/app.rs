@@ -28,7 +28,7 @@ mod voice;
 
 use crate::ai::agents::{self, Agent};
 use crate::ai::mention_list::{self, Suggestion};
-use crate::ai::skills::{self, Skill};
+use crate::ai::skills::{self, Skill, SourceFolder};
 use crate::ai::{self, AiTool};
 use crate::document::highlighting::Syntax;
 use crate::document::media_view::{MediaEvent, image_pixels, show_image, show_video};
@@ -70,6 +70,7 @@ use crate::terminal::view::show_terminal;
 use crate::theme::catalog::Themes;
 use crate::theme::style::{apply_accessibility, apply_theme, page_fill};
 use crate::voice::view::set_memo_states;
+use privacy::AfterPassword;
 
 /// How long a status message ("Copied ...") stays visible.
 const STATUS_MESSAGE_SECONDS: f64 = 4.0;
@@ -106,12 +107,19 @@ const ADD_NOTE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus
 const FORMAT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::F);
 const OPEN_IN_BROWSER: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::B);
 const NEW_SCRATCH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
+const NEW_ENCRYPTED_SCRATCH: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::N);
 const TOGGLE_SETTINGS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma);
 const ASK: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::K);
 const RECORD: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::R);
 const COPY_OPEN_PATH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::C);
 const CLOSE_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::W);
 const FIND: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::F);
+/// Find with the replace row: Cmd+Alt+F on macOS, Ctrl+H elsewhere.
+#[cfg(target_os = "macos")]
+const FIND_REPLACE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::ALT), Key::F);
+#[cfg(not(target_os = "macos"))]
+const FIND_REPLACE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::H);
 const FIND_NEXT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::G);
 const FIND_PREVIOUS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::G);
 const NEXT_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::Tab);
@@ -261,6 +269,8 @@ pub struct RubriqueApp {
     ask: ask::AskState,
     /// Skills from the skills folders, read when Settings or Ask opens.
     skills: Vec<Skill>,
+    /// Every skill source's folder and whether it exists, read with the skills.
+    skill_folders: Vec<SourceFolder>,
     /// Agents from the agents folders, read at start and when Settings or Ask opens.
     agents: Vec<Agent>,
     /// Hover summaries in the explorer.
@@ -381,6 +391,7 @@ impl RubriqueApp {
             settings_group: SettingsGroup::default(),
             ask: ask::AskState::default(),
             skills: Vec::new(),
+            skill_folders: Vec::new(),
             agents: Vec::new(),
             summaries: summary::SummaryState::default(),
             naming: naming::NamingState::default(),
@@ -734,16 +745,21 @@ impl RubriqueApp {
             self.load_skills_and_agents();
             self.open_ask(ctx);
         }
+        // Shortcuts with more modifiers first: egui lets Cmd+Shift+F and
+        // Cmd+Alt+F also match Cmd+F.
+        if ctx.input_mut(|input| input.consume_shortcut(&FORMAT)) {
+            self.format_text(ctx);
+        }
+        if ctx.input_mut(|input| input.consume_shortcut(&FIND_REPLACE)) {
+            self.open_find(ctx, true);
+        }
         if ctx.input_mut(|input| input.consume_shortcut(&FIND)) {
-            self.open_find();
+            self.open_find(ctx, false);
         }
         self.find_shortcuts(ctx);
         self.side_panel_shortcut(ctx);
         if ctx.input_mut(|input| input.consume_shortcut(&ADD_NOTE)) {
             self.start_note(ctx);
-        }
-        if ctx.input_mut(|input| input.consume_shortcut(&FORMAT)) {
-            self.format_text(ctx);
         }
         if ctx.input_mut(|input| input.consume_shortcut(&OPEN_IN_BROWSER)) {
             self.open_in_browser(ctx);
@@ -751,8 +767,12 @@ impl RubriqueApp {
         if ctx.input_mut(|input| input.consume_shortcut(&RECORD)) {
             self.toggle_recording(ctx);
         }
+        // The longer shortcut first: Cmd+N alone would also match Cmd+Shift+N.
+        if ctx.input_mut(|input| input.consume_shortcut(&NEW_ENCRYPTED_SCRATCH)) {
+            self.new_scratch(ctx, true);
+        }
         if ctx.input_mut(|input| input.consume_shortcut(&NEW_SCRATCH)) {
-            self.new_scratch(ctx);
+            self.new_scratch(ctx, self.encrypt_new_scratches());
         }
         if self.settings_open
             && self.pending.is_none()
@@ -860,7 +880,9 @@ impl RubriqueApp {
 
     /// Read the skills and agents from their folders.
     fn load_skills_and_agents(&mut self) {
-        self.skills = skills::load_skills(&self.settings.ai.skill_folders(default_skills_folder()));
+        self.skills = skills::load_skills(&self.settings.ai.skill_folders(default_skills_folder().as_deref()));
+        self.skill_folders =
+            skills::source_folders(self.settings.ai.all_skill_folders(default_skills_folder().as_deref()));
         self.agents = agents::load_agents(&self.settings.ai.agent_folders(default_agents_folder()));
     }
 
@@ -973,7 +995,7 @@ impl RubriqueApp {
             settings: &mut self.settings.ai,
             found: &self.ai_found,
             skills: &self.skills,
-            skills_folder: skills_folder.as_deref(),
+            skill_folders: &self.skill_folders,
             agents: &self.agents,
             agents_folder: agents_folder.as_deref(),
             recipes: &self.install.ai,
@@ -1043,6 +1065,11 @@ impl RubriqueApp {
             SettingsAction::OpenFile(path) => {
                 self.settings_open = false;
                 self.open_in_tab(path);
+            }
+            SettingsAction::ShowFolder(folder) => {
+                if let Err(error) = crate::media::open_with_system(&folder) {
+                    self.show_status(error);
+                }
             }
             SettingsAction::VoiceCommandChanged => self.check_voice_tool(),
             SettingsAction::Copy(text) => {
@@ -1198,15 +1225,21 @@ impl RubriqueApp {
         self.themes.for_base(base).palette
     }
 
-    /// Create a scratch file, show its folder in the explorer, and open it for typing.
-    fn new_scratch(&mut self, ctx: &Context) {
+    /// Create a scratch file, encrypted or plain, show its folder in the
+    /// explorer, and open it for typing.
+    fn new_scratch(&mut self, ctx: &Context, encrypted: bool) {
         let Some(folder) = self.settings.scratch_folder_or_default() else {
             self.show_status("No folder for scratch files: set one in Settings".to_string());
             return;
         };
-        let Ok(vault) = self.new_scratch_vault() else {
-            // The password dialog opens and makes the scratch after.
-            return;
+        let vault = if encrypted {
+            let Some(vault) = self.scratch_vault_or_ask(AfterPassword::NewEncryptedScratch) else {
+                // The password dialog opens and makes the scratch after.
+                return;
+            };
+            Some(vault)
+        } else {
+            None
         };
         let path = match create_scratch(&folder, &crate::date::today_iso(), vault.as_deref()) {
             Ok(path) => path,
@@ -1445,6 +1478,7 @@ impl RubriqueApp {
             Some(ExplorerAction::New(folder, kind)) => self.start_new_entry(folder, kind),
             Some(ExplorerAction::ShowTerminalInFiles(name)) => self.show_terminal_in_files(&name),
             Some(ExplorerAction::RenameTerminal(name)) => self.start_terminal_rename(name),
+            Some(ExplorerAction::ExitTerminal(name)) => self.exit_terminal(&name),
             Some(ExplorerAction::ToggleAgentSessions(name)) => self.toggle_agent_sessions(name),
             Some(ExplorerAction::ResumeAgentSession { terminal, id, new_terminal }) => {
                 self.resume_agent_session(&terminal, &id, new_terminal);
@@ -1452,7 +1486,10 @@ impl RubriqueApp {
             Some(ExplorerAction::RemoveRoot(path)) => self.request_remove_root(path),
             Some(ExplorerAction::AddFolder) => self.choose_folder_to_add(),
             Some(ExplorerAction::AddRemoteFolder) => self.open_add_remote(),
-            Some(ExplorerAction::NewScratch) => self.new_scratch(ui.ctx()),
+            Some(ExplorerAction::NewScratch { encrypted }) => {
+                let encrypted = encrypted.unwrap_or_else(|| self.encrypt_new_scratches());
+                self.new_scratch(ui.ctx(), encrypted);
+            }
             Some(ExplorerAction::Rename(path)) => self.start_rename(path),
             Some(ExplorerAction::RenameInTree(path)) => {
                 self.clear_name_fields();
@@ -2090,6 +2127,7 @@ impl RubriqueApp {
                 if is_markdown || is_html {
                     self.voice_buttons(ui);
                 }
+                self.scratch_lock_button(ui);
                 if !showing_preview && let Some(stats) = &self.stats {
                     ui.label(format!("{}   ", stats.summary()));
                 }
@@ -2099,6 +2137,33 @@ impl RubriqueApp {
                 ui.add(egui::Label::new(path_text.as_str()).truncate()).on_hover_text(path_text.as_str());
             });
         });
+    }
+
+    /// "Encrypt" on a plain scratch, "Encrypted" (with a menu to undo it)
+    /// on an encrypted one. Nothing on other files.
+    fn scratch_lock_button(&mut self, ui: &mut Ui) {
+        let (Some(encrypted), Some(path)) =
+            (self.open_scratch_encrypted(), self.open_file.path().map(Path::to_path_buf))
+        else {
+            return;
+        };
+        if !encrypted {
+            let tip = "Save this scratch encrypted with the scratch password. AI tools are then off for it";
+            if icon_text_button(ui, Icon::Lock, "Encrypt", tip, false).clicked() {
+                self.set_scratch_encrypted(&path, true);
+            }
+            return;
+        }
+        let tip = "Saved encrypted with the scratch password. AI tools are off for it";
+        let response = icon_text_button(ui, Icon::Lock, "Encrypted", tip, true);
+        let mut decrypt = false;
+        egui::Popup::menu(&response).show(|ui| {
+            ui.label(RichText::new("Anyone who can read the file sees its text.").weak());
+            decrypt = ui.button("Remove encryption").clicked();
+        });
+        if decrypt {
+            self.set_scratch_encrypted(&path, false);
+        }
     }
 
     /// Ask about unsaved changes while an action is pending, then run it or drop it.

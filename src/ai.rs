@@ -17,6 +17,8 @@ pub mod skills;
 pub mod summary;
 pub mod view;
 
+use skills::SkillSource;
+
 /// Placeholder in a command template for the request text.
 pub const PROMPT: &str = "{prompt}";
 /// Placeholder for rubrique's instructions (how to answer). Tools without a
@@ -101,8 +103,8 @@ pub struct AiSettings {
     pub allowed_folders: Vec<PathBuf>,
     /// Folder with rubrique's skills; `None` means the default one.
     pub skills_folder: Option<PathBuf>,
-    /// Also offer Claude Code's skills from `~/.claude/skills`.
-    pub use_claude_skills: bool,
+    /// Skill sources the user switched off (all others are read).
+    pub skill_sources_off: Vec<SkillSource>,
     /// Folder with rubrique's agents; `None` means the default one.
     pub agents_folder: Option<PathBuf>,
     /// Also offer Claude Code's agents from `~/.claude/agents`.
@@ -117,7 +119,7 @@ impl Default for AiSettings {
             commands: AiTool::ALL.map(|tool| tool.default_command().to_string()),
             allowed_folders: Vec::new(),
             skills_folder: None,
-            use_claude_skills: true,
+            skill_sources_off: Vec::new(),
             agents_folder: None,
             use_claude_agents: true,
         }
@@ -153,7 +155,8 @@ impl AiSettings {
             "ai_summary_tool" if value == "off" => self.summary_tool = None,
             "ai_summary_tool" => self.summary_tool = AiTool::from_id(value).or(self.summary_tool),
             "skills_folder" => self.skills_folder = (!value.is_empty()).then(|| PathBuf::from(value)),
-            "ai_use_claude_skills" => self.use_claude_skills = value != "false",
+            // `ai_use_<source>_skills=false`, for example `ai_use_claude_skills`.
+            _ if let Some(source) = skill_source_key(key) => self.set_skill_source(source, value != "false"),
             "agents_folder" => self.agents_folder = (!value.is_empty()).then(|| PathBuf::from(value)),
             "ai_use_claude_agents" => self.use_claude_agents = value != "false",
             "ai_allowed_folder" => {
@@ -184,8 +187,8 @@ impl AiSettings {
         if let Some(folder) = &self.skills_folder {
             let _ = writeln!(lines, "skills_folder={}", folder.display());
         }
-        if !self.use_claude_skills {
-            lines.push_str("ai_use_claude_skills=false\n");
+        for source in &self.skill_sources_off {
+            let _ = writeln!(lines, "ai_use_{}_skills=false", source.id());
         }
         if let Some(folder) = &self.agents_folder {
             let _ = writeln!(lines, "agents_folder={}", folder.display());
@@ -200,6 +203,12 @@ impl AiSettings {
     }
 }
 
+/// The source in a settings key like `ai_use_claude_skills`.
+fn skill_source_key(key: &str) -> Option<SkillSource> {
+    let id = key.strip_prefix("ai_use_")?.strip_suffix("_skills")?;
+    SkillSource::ALL.into_iter().find(|source| source.id() == id)
+}
+
 fn index(tool: AiTool) -> usize {
     AiTool::ALL.iter().position(|each| *each == tool).unwrap_or_default()
 }
@@ -210,13 +219,41 @@ impl AiSettings {
         self.allowed_folders.iter().any(|allowed| allowed == folder)
     }
 
-    /// Folders to read skills from, rubrique's own first.
-    pub fn skill_folders(&self, default_folder: Option<PathBuf>) -> Vec<PathBuf> {
-        let mut folders: Vec<PathBuf> = self.skills_folder.clone().or(default_folder).into_iter().collect();
-        if self.use_claude_skills {
-            folders.extend(skills::claude_skills_folder());
-        }
+    /// Every skill source with its folder, in reading order, whether it is
+    /// switched on or not (Settings lists them all).
+    pub fn all_skill_folders(&self, default_folder: Option<&Path>) -> Vec<(SkillSource, PathBuf)> {
+        SkillSource::ALL
+            .into_iter()
+            .filter_map(|source| {
+                let folder = match source {
+                    SkillSource::Rubrique => {
+                        self.skills_folder.clone().or_else(|| default_folder.map(Path::to_path_buf))
+                    }
+                    _ => source.home_folder(),
+                };
+                folder.map(|folder| (source, folder))
+            })
+            .collect()
+    }
+
+    /// The skill sources that are switched on, with their folders, in reading order.
+    pub fn skill_folders(&self, default_folder: Option<&Path>) -> Vec<(SkillSource, PathBuf)> {
+        let mut folders = self.all_skill_folders(default_folder);
+        folders.retain(|(source, _)| self.uses_skill_source(*source));
         folders
+    }
+
+    /// The source is switched on. rubrique's own folder always is.
+    pub fn uses_skill_source(&self, source: SkillSource) -> bool {
+        source == SkillSource::Rubrique || !self.skill_sources_off.contains(&source)
+    }
+
+    /// Switch a source on or off. rubrique's own folder stays on.
+    pub fn set_skill_source(&mut self, source: SkillSource, on: bool) {
+        self.skill_sources_off.retain(|each| *each != source);
+        if !on && source != SkillSource::Rubrique {
+            self.skill_sources_off.push(source);
+        }
     }
 
     /// Folders to read agents from, rubrique's own first, each with the tool
@@ -652,13 +689,15 @@ mod tests {
     fn remembers_allowed_folders() {
         let mut settings = AiSettings {
             skills_folder: Some(PathBuf::from("/s")),
-            use_claude_skills: false,
+            skill_sources_off: vec![SkillSource::Agents, SkillSource::Claude, SkillSource::Grok],
             agents_folder: Some(PathBuf::from("/agents")),
             use_claude_agents: false,
             ..AiSettings::default()
         };
         assert_eq!(settings.agent_folders(None), [(PathBuf::from("/agents"), None)]);
-        assert_eq!(settings.skill_folders(Some(PathBuf::from("/default"))), [PathBuf::from("/s")]);
+        assert_eq!(settings.skill_folders(Some(Path::new("/default"))), [(SkillSource::Rubrique, PathBuf::from("/s"))]);
+        let all: Vec<SkillSource> = settings.all_skill_folders(None).into_iter().map(|(source, _)| source).collect();
+        assert_eq!(all.first(), Some(&SkillSource::Rubrique));
         settings.allow(Path::new("/home/a/notes"));
         settings.allow(Path::new("/home/a/notes"));
         assert!(settings.is_allowed(Path::new("/home/a/notes")));

@@ -112,7 +112,7 @@ pub(super) fn show_terminals_section(
 }
 
 /// One session in the list: a click shows it in a tab, a double click
-/// renames it in place, a right click offers "Show in files".
+/// renames it in place, a right click offers "Show in files", "Rename" and "Exit terminal".
 fn terminal_row(
     ui: &mut Ui,
     row: &TerminalRow,
@@ -153,6 +153,10 @@ fn terminal_row(
         }
         if ui.button("Rename").on_hover_text("Or double-click it").clicked() {
             *action = Some(ExplorerAction::RenameTerminal(row.info.name.clone()));
+            ui.close();
+        }
+        if ui.button("Exit terminal").on_hover_text("End the session and everything running in it").clicked() {
+            *action = Some(ExplorerAction::ExitTerminal(row.info.name.clone()));
             ui.close();
         }
     });

@@ -8,6 +8,36 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Added
+
+- **Skills from more agents**: besides rubrique's own folder and Claude
+  Code's, skills now come from `~/.agents/skills` (the shared folder Codex
+  reads) and Grok's `~/.grok/skills`. Each source can be switched off.
+- **All skills in Settings → Skills**: every loaded skill in one list, with a
+  filter field and a button per source. Click a skill to see where it lives,
+  the start of its instructions, and to open its SKILL.md or folder. A skill
+  linked into several folders shows once, with a badge per source; a
+  different skill with a taken name is listed as skipped.
+- **Encrypt one scratch at a time**: a scratch can be encrypted or plain on
+  its own, without turning on encryption for all of them. On an open
+  scratch, the **Encrypt** button (a padlock) in the status bar seals it
+  with the scratch password; on an encrypted one it reads **Encrypted**,
+  and clicking it offers **Remove encryption**. `Cmd/Ctrl+Shift+N` makes a
+  new encrypted scratch, and right-clicking the New scratch button offers
+  **New plain scratch** and **New encrypted scratch**. With no password yet,
+  rubrique asks you to choose one first; when locked, it asks for it. Unsaved
+  edits stay in the tab, and their kept draft is sealed or made plain too.
+  Settings → Privacy → **Encrypt every new scratch** still sets what
+  `Cmd/Ctrl+N` makes.
+- **Find options**: **Aa** (match case) and **W** (whole word) toggles in
+  the find bar, for the open file and for All files.
+- **Replace**: `Cmd+Alt+F` (`Ctrl+H` on Linux), or the **Replace** switch
+  in the find bar, adds a row under the search field. **Replace** (Enter)
+  changes the current match and moves to the next one; **Replace all**
+  (`Cmd+Enter`) changes every match. Each is one undo step, so one `Cmd+Z`
+  brings the old text back. The status bar says how many were replaced.
+- Opening the find bar with text selected (one line) searches for it.
+
 ### Changed
 
 - **Settings → AI** is simpler. The two choices come first: **Ask and
@@ -23,6 +53,10 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   local model, **Permissions** for Claude Code and **Sandbox** for Codex.
   A chip rewrites just its flag in the command; everything else you typed
   stays, and the command field remains the source of truth.
+
+### Fixed
+
+- `Cmd+Shift+F` (Format) also opened the find bar.
 
 ## [0.7.0] - 2026-11-06
 

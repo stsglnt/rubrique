@@ -1,6 +1,7 @@
 //! Scratch files: quick, empty notes with a random readable name, like
-//! `2026-10-28-brave-otter.md`, in one folder. With encryption on they are
-//! sealed with the scratch password (see [`crate::crypto`]).
+//! `2026-10-28-brave-otter.md`, in one folder. Each scratch can be sealed
+//! with the scratch password (see [`crate::crypto`]) or kept plain; the
+//! file's first bytes say which.
 
 use std::collections::hash_map::RandomState;
 use std::fs::{self, OpenOptions};
@@ -108,6 +109,43 @@ pub fn encrypt_scratches(folder: &Path, vault: &Vault) -> io::Result<Vec<PathBuf
         }
     }
     Ok(changed)
+}
+
+/// `path` is a file directly in the scratch `folder`.
+pub fn is_scratch(path: &Path, folder: &Path) -> bool {
+    let absolute = |path: &Path| std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    path.parent().is_some_and(|parent| absolute(parent) == absolute(folder))
+}
+
+/// Encrypt the one scratch at `path` with `vault`. Does nothing when it is
+/// encrypted already.
+///
+/// # Errors
+///
+/// The file cannot be read or written.
+pub fn encrypt_scratch(path: &Path, vault: &Vault) -> io::Result<()> {
+    let bytes = fs::read(path)?;
+    if crypto::is_encrypted(&bytes) {
+        return Ok(());
+    }
+    write_atomically(path, &vault.encrypt(&bytes))
+}
+
+/// Store the one scratch at `path`, sealed with `vault`, as plain text again.
+/// Does nothing when it is plain already.
+///
+/// # Errors
+///
+/// The file cannot be read or written, or `vault` does not open it.
+pub fn decrypt_scratch(path: &Path, vault: &Vault) -> io::Result<()> {
+    let bytes = fs::read(path)?;
+    if !crypto::is_encrypted(&bytes) {
+        return Ok(());
+    }
+    let plain = vault
+        .decrypt(&bytes)
+        .map_err(|_| io::Error::new(ErrorKind::InvalidData, "it is encrypted with another password"))?;
+    write_atomically(path, &plain)
 }
 
 /// Seal every scratch encrypted with `old` again with `new` (a new
@@ -237,5 +275,36 @@ mod tests {
         assert_eq!(reencrypt_scratches(temp.path(), &old, &new).unwrap().len(), 2);
         assert_eq!(new.decrypt(&fs::read(&plain).unwrap()).unwrap(), b"words");
         assert!(old.decrypt(&fs::read(&plain).unwrap()).is_err());
+    }
+
+    #[test]
+    fn one_scratch_can_be_encrypted_and_made_plain_again() {
+        let temp = TempFolder::new();
+        let vault = Vault::create("password").0;
+        let other = Vault::create("another").0;
+        let path = temp.write("note.md", "secret words");
+
+        encrypt_scratch(&path, &vault).unwrap();
+        let sealed = fs::read(&path).unwrap();
+        assert!(crypto::is_encrypted(&sealed));
+        assert_eq!(vault.decrypt(&sealed).unwrap(), b"secret words");
+        encrypt_scratch(&path, &vault).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), sealed, "not sealed twice");
+
+        assert!(decrypt_scratch(&path, &other).is_err());
+        assert_eq!(fs::read(&path).unwrap(), sealed, "left alone with the wrong key");
+        decrypt_scratch(&path, &vault).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "secret words");
+        decrypt_scratch(&path, &vault).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "secret words");
+    }
+
+    #[test]
+    fn knows_which_files_are_scratches() {
+        let temp = TempFolder::new();
+        let folder = temp.path().join("scratches");
+        assert!(is_scratch(&folder.join("a.md"), &folder));
+        assert!(!is_scratch(&folder.join("sub").join("a.md"), &folder));
+        assert!(!is_scratch(&temp.path().join("a.md"), &folder));
     }
 }

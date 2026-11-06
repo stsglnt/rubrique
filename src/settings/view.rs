@@ -11,7 +11,7 @@ use eframe::egui::{
 
 use crate::ai::agents::Agent;
 use crate::ai::flags::{self, FlagKind};
-use crate::ai::skills::Skill;
+use crate::ai::skills::{Skill, SourceFolder};
 use crate::ai::{AiSettings, AiTool, CommandProblem, PROMPT, SYSTEM, check_command};
 use crate::install::view::{InstallAction, install_prompt};
 use crate::install::{InstallStatus, Recipe};
@@ -20,6 +20,10 @@ use crate::settings::privacy::{LOCK_AFTER_CHOICES, PrivacySettings};
 use crate::theme::catalog::{ThemeChoice, Themes};
 use crate::theme::palette::{Base, Palette, Rgb, Theme};
 use crate::voice::VoiceSettings;
+
+mod skill_list;
+
+use skill_list::{SkillsInfo, skills_section};
 
 /// Something the user asked for in the settings panel.
 #[derive(Debug)]
@@ -54,6 +58,8 @@ pub enum SettingsAction {
     CreateExampleAgent,
     /// Open this file in a tab (and close Settings).
     OpenFile(PathBuf),
+    /// Show this folder in the system's file manager.
+    ShowFolder(PathBuf),
     /// Ask again before the next run in every folder.
     ForgetAllowedFolders,
     /// The transcription command changed, so look for its program again.
@@ -101,8 +107,8 @@ pub struct AiInfo<'a> {
     pub found: &'a [Option<PathBuf>; 4],
     /// Skills found in the skills folders.
     pub skills: &'a [Skill],
-    /// rubrique's skills folder (the chosen one or the default).
-    pub skills_folder: Option<&'a Path>,
+    /// Every skill source's folder, in reading order, switched on or not.
+    pub skill_folders: &'a [SourceFolder],
     /// Agents found in the agents folders.
     pub agents: &'a [Agent],
     /// rubrique's agents folder (the chosen one or the default).
@@ -274,8 +280,8 @@ pub fn show_settings(
                     SettingsGroup::Privacy => privacy_section(ui, privacy),
                     SettingsGroup::Ai => ai_section(ui, ai),
                     SettingsGroup::Skills => {
-                        let AiInfo { settings, skills, skills_folder, .. } = ai;
-                        skills_section(ui, settings, skills, skills_folder)
+                        let AiInfo { settings, skills, skill_folders, .. } = ai;
+                        skills_section(ui, SkillsInfo { settings, skills, folders: skill_folders })
                     }
                     SettingsGroup::Agents => {
                         let AiInfo { settings, agents, agents_folder, .. } = ai;
@@ -442,14 +448,15 @@ fn privacy_section(ui: &mut Ui, privacy: PrivacyInfo) -> Option<SettingsAction> 
     ui.label(RichText::new("Encrypted scratches").strong());
     ui.label(
         RichText::new(
-            "New scratch files are saved encrypted with a password. They open only after you enter it, \
-             and AI tools never see them.",
+            "Encrypted scratches are saved with a password. They open only after you enter it, and AI \
+             tools never see them. Each scratch can be encrypted on its own: the lock button in the status \
+             bar, or Cmd+Shift+N for a new encrypted one.",
         )
         .weak(),
     );
     let has_password = settings.vault.is_some();
     let mut encrypt = settings.encrypt_scratches;
-    if ui.checkbox(&mut encrypt, "Encrypt new scratches").changed() {
+    if ui.checkbox(&mut encrypt, "Encrypt every new scratch (Cmd+N)").changed() {
         if encrypt && !has_password {
             action = Some(SettingsAction::SetScratchPassword);
         } else {
@@ -929,62 +936,6 @@ fn prompt(ui: &mut Ui, message: &str, recipe: &Recipe, install: &InstallStatus) 
 
 fn tool_index(tool: AiTool) -> usize {
     AiTool::ALL.iter().position(|each| *each == tool).unwrap_or_default()
-}
-
-/// Longest list of skill names shown before "and N more".
-const SKILLS_LISTED: usize = 6;
-
-/// Skills: the folder, Claude's skills, and what was found.
-fn skills_section(
-    ui: &mut Ui,
-    settings: &mut AiSettings,
-    skills: &[Skill],
-    folder: Option<&Path>,
-) -> Option<SettingsAction> {
-    let mut action = None;
-    ui.label(RichText::new("Skills").strong());
-    ui.label(
-        RichText::new(
-            "Reusable instructions for Ask, one folder per skill with a SKILL.md file \
-             (the same format as Claude Code).",
-        )
-        .weak(),
-    );
-    if let Some(folder) = folder {
-        path_box(ui, folder);
-    }
-    ui.horizontal(|ui| {
-        if ui.button("Change…").clicked() {
-            action = Some(SettingsAction::ChooseSkillsFolder);
-        }
-        if ui.add_enabled(settings.skills_folder.is_some(), egui::Button::new("Use default")).clicked() {
-            action = Some(SettingsAction::ResetSkillsFolder);
-        }
-    });
-    if ui.checkbox(&mut settings.use_claude_skills, "Also use Claude's skills (~/.claude/skills)").changed() {
-        action = Some(SettingsAction::ReloadSkills);
-    }
-    let found = match skills.len() {
-        0 => "No skills found yet.".to_string(),
-        count => {
-            let mut names: Vec<&str> = skills.iter().take(SKILLS_LISTED).map(|skill| skill.name.as_str()).collect();
-            let more = count.saturating_sub(SKILLS_LISTED);
-            let more = if more > 0 { format!(" and {more} more") } else { String::new() };
-            let noun = if count == 1 { "skill" } else { "skills" };
-            names.sort_unstable();
-            format!("{count} {noun}: {}{more}", names.join(", "))
-        }
-    };
-    ui.label(RichText::new(found).weak());
-    ui.horizontal(|ui| {
-        if ui.button("Reload").clicked() {
-            action = Some(SettingsAction::ReloadSkills);
-        }
-        if ui.button("Create example skill").on_hover_text("Adds an \"action-items\" skill to the folder").clicked() {
-            action = Some(SettingsAction::CreateExampleSkill);
-        }
-    });
-    action
 }
 
 /// Agents: the folder, Claude Code's agents, and every agent found, each

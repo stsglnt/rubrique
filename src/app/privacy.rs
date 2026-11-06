@@ -1,6 +1,11 @@
 //! Encrypted scratches and the app PIN: the scratch key for this session,
 //! the lock screen, and the password and PIN dialogs.
 //!
+//! Each scratch is encrypted or plain on its own: `Cmd+N` follows the
+//! "Encrypt every new scratch" setting, `Cmd+Shift+N` always makes an encrypted
+//! one, and the lock button in the status bar turns encryption on or off
+//! for the open scratch.
+//!
 //! The PIN and the scratch password are separate. The PIN only covers the
 //! window; the password is the key the scratches are encrypted with.
 //! Locking the window also forgets the password.
@@ -16,7 +21,7 @@ use super::{OpenFile, RubriqueApp};
 use crate::crypto::{Vault, pin_hash, verify_pin};
 use crate::document::view::restore_editor_state;
 use crate::explorer::paths::name_text;
-use crate::scratch::{encrypt_scratches, reencrypt_scratches};
+use crate::scratch::{decrypt_scratch, encrypt_scratch, encrypt_scratches, is_scratch, reencrypt_scratches};
 use crate::settings::view::SettingsAction;
 
 /// Shortest scratch password: it is the only thing between a copied file
@@ -33,17 +38,24 @@ const FIELD_WIDTH: f32 = 260.0;
 /// Shown instead of running any AI on an encrypted scratch.
 pub(super) const AI_OFF_MESSAGE: &str = "AI is off for encrypted scratches";
 
+/// What to do once the scratch password is chosen or entered.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum AfterPassword {
+    /// Make a new encrypted scratch.
+    NewEncryptedScratch,
+    /// Encrypt the scratch at this path.
+    Encrypt(PathBuf),
+}
+
 /// What a secret dialog is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Purpose {
-    /// Choose the scratch password (turns encryption on).
+    /// Choose the scratch password.
     NewPassword,
     /// Choose a new scratch password and seal every scratch with it.
     ChangePassword,
-    /// Enter the scratch password; then make a new scratch when asked to.
-    Unlock {
-        then_new_scratch: bool,
-    },
+    /// Enter the scratch password.
+    Unlock,
     /// Choose a PIN (or a new one).
     NewPin,
     RemovePin,
@@ -54,7 +66,7 @@ impl Purpose {
         match self {
             Purpose::NewPassword => "Encrypt scratches",
             Purpose::ChangePassword => "Change scratch password",
-            Purpose::Unlock { .. } => "Unlock encrypted scratches",
+            Purpose::Unlock => "Unlock encrypted scratches",
             Purpose::NewPin => "App PIN",
             Purpose::RemovePin => "Remove PIN",
         }
@@ -73,6 +85,8 @@ struct SecretDialog {
     error: Option<String>,
     /// The first field got focus when the dialog opened.
     focused: bool,
+    /// Run after a password dialog succeeds.
+    then: Option<AfterPassword>,
 }
 
 /// Privacy state for this run.
@@ -103,6 +117,10 @@ impl PrivacyState {
     }
 
     fn open_dialog(&mut self, purpose: Purpose) {
+        self.open_dialog_then(purpose, None);
+    }
+
+    fn open_dialog_then(&mut self, purpose: Purpose, then: Option<AfterPassword>) {
         self.dialog = Some(SecretDialog {
             purpose,
             current: Zeroizing::default(),
@@ -110,6 +128,7 @@ impl PrivacyState {
             second: Zeroizing::default(),
             error: None,
             focused: false,
+            then,
         });
     }
 }
@@ -130,18 +149,78 @@ impl RubriqueApp {
         blocked
     }
 
-    /// The key for a new scratch: `Ok(None)` when scratches are plain,
-    /// `Err` when the password must be entered first (the dialog opens).
-    pub(super) fn new_scratch_vault(&mut self) -> Result<Option<Arc<Vault>>, ()> {
+    /// New scratches are encrypted unless asked otherwise (the setting is
+    /// on and a password exists).
+    pub(super) fn encrypt_new_scratches(&self) -> bool {
         let privacy = &self.settings.privacy;
-        if !privacy.encrypt_scratches || privacy.vault.is_none() {
-            return Ok(None);
-        }
+        privacy.encrypt_scratches && privacy.vault.is_some()
+    }
+
+    /// The scratch key, when it was entered in this session. Otherwise a
+    /// dialog opens (to enter the password, or to choose one when there is
+    /// none yet) and runs `then` once it succeeds.
+    pub(super) fn scratch_vault_or_ask(&mut self, then: AfterPassword) -> Option<Arc<Vault>> {
         if let Some(vault) = &self.privacy.vault {
-            return Ok(Some(Arc::clone(vault)));
+            return Some(Arc::clone(vault));
         }
-        self.privacy.open_dialog(Purpose::Unlock { then_new_scratch: true });
-        Err(())
+        let purpose = if self.settings.privacy.vault.is_some() { Purpose::Unlock } else { Purpose::NewPassword };
+        self.privacy.open_dialog_then(purpose, Some(then));
+        None
+    }
+
+    /// The open file is a local scratch (for the status bar's lock button).
+    pub(super) fn open_scratch_encrypted(&self) -> Option<bool> {
+        let OpenFile::Text { document, .. } = &self.open_file else {
+            return None;
+        };
+        let folder = self.settings.scratch_folder_or_default()?;
+        let scratch = is_scratch(&document.path, &folder) && !crate::remote::is_mirror(&document.path);
+        scratch.then(|| document.is_encrypted())
+    }
+
+    /// Store the scratch at `path` encrypted (`true`) or plain. Encrypting
+    /// may ask for the password first, then carries on. Unsaved edits stay
+    /// in the tab and are saved the new way.
+    pub(super) fn set_scratch_encrypted(&mut self, path: &Path, encrypt: bool) {
+        let vault = if encrypt {
+            let Some(vault) = self.scratch_vault_or_ask(AfterPassword::Encrypt(path.to_path_buf())) else {
+                return;
+            };
+            vault
+        } else {
+            let Some(vault) = self.privacy.vault.clone() else {
+                self.show_status("Unlock encrypted scratches first".to_string());
+                return;
+            };
+            vault
+        };
+        let result = if encrypt { encrypt_scratch(path, &vault) } else { decrypt_scratch(path, &vault) };
+        if let Err(error) = result {
+            let verb = if encrypt { "encrypt" } else { "remove encryption from" };
+            self.show_status(format!("Could not {verb} {}: {error}", name_text(path)));
+            return;
+        }
+        let key = encrypt.then_some(vault);
+        self.follow_new_key(&[path.to_path_buf()], key.as_ref());
+        self.rewrite_draft(path);
+        let message = if encrypt {
+            if self.open_file.path() == Some(path) {
+                // AI never gets an encrypted scratch's text.
+                self.ask.close_bar();
+            }
+            "This scratch is encrypted now. AI tools are off for it"
+        } else {
+            "This scratch is plain text now"
+        };
+        self.show_status(message.to_string());
+    }
+
+    /// Carry on with what waited for the scratch password.
+    fn after_password(&mut self, ctx: &Context, then: AfterPassword) {
+        match then {
+            AfterPassword::NewEncryptedScratch => self.new_scratch(ctx, true),
+            AfterPassword::Encrypt(path) => self.set_scratch_encrypted(&path, true),
+        }
     }
 
     /// Note input and lock the window once it sat idle long enough.
@@ -330,7 +409,7 @@ impl RubriqueApp {
         let purpose = match action {
             SettingsAction::SetScratchPassword => Purpose::NewPassword,
             SettingsAction::ChangeScratchPassword => Purpose::ChangePassword,
-            SettingsAction::UnlockScratches => Purpose::Unlock { then_new_scratch: false },
+            SettingsAction::UnlockScratches => Purpose::Unlock,
             SettingsAction::SetPin => Purpose::NewPin,
             SettingsAction::RemovePin => Purpose::RemovePin,
             SettingsAction::LockScratches => {
@@ -359,7 +438,7 @@ impl RubriqueApp {
         };
         match encrypt_scratches(&folder, &vault) {
             Ok(changed) => {
-                self.follow_new_key(&changed, &vault);
+                self.follow_new_key(&changed, Some(&vault));
                 let count = changed.len();
                 self.show_status(format!("Encrypted {count} scratch{}", if count == 1 { "" } else { "es" }));
             }
@@ -367,13 +446,13 @@ impl RubriqueApp {
         }
     }
 
-    /// Open tabs of `changed` files are now stored with `vault`.
-    fn follow_new_key(&mut self, changed: &[PathBuf], vault: &Arc<Vault>) {
+    /// Open tabs of `changed` files are now stored with `vault` (`None`: plain).
+    fn follow_new_key(&mut self, changed: &[PathBuf], vault: Option<&Arc<Vault>>) {
         for file in self.all_tabs_mut() {
             if let OpenFile::Text { document, .. } = file
                 && changed.contains(&document.path)
             {
-                document.set_vault(Some(Arc::clone(vault)));
+                document.set_vault(vault.cloned());
             }
         }
     }
@@ -387,7 +466,7 @@ impl RubriqueApp {
         let (asks_current, asks_new, is_pin) = match dialog.purpose {
             Purpose::NewPassword => (false, true, false),
             Purpose::ChangePassword => (true, true, false),
-            Purpose::Unlock { .. } => (true, false, false),
+            Purpose::Unlock => (true, false, false),
             Purpose::NewPin => (has_pin, true, true),
             Purpose::RemovePin => (true, false, true),
         };
@@ -450,16 +529,14 @@ impl RubriqueApp {
             return;
         };
         let current = dialog.current.as_str();
+        // From Settings, a first password also turns the setting on; from a
+        // single scratch it only gives that scratch a key.
+        let from_settings = dialog.then.is_none();
         let result = match dialog.purpose {
-            Purpose::NewPassword => {
-                new_secret(&dialog, MIN_PASSWORD_CHARS, "password").map(|()| self.set_scratch_password(&dialog.first))
-            }
+            Purpose::NewPassword => new_secret(&dialog, MIN_PASSWORD_CHARS, "password")
+                .map(|()| self.set_scratch_password(&dialog.first, from_settings)),
             Purpose::ChangePassword => self.change_scratch_password(&dialog),
-            Purpose::Unlock { then_new_scratch } => self.unlock_scratches(current, None).map(|()| {
-                if then_new_scratch {
-                    self.new_scratch(ctx);
-                }
-            }),
+            Purpose::Unlock => self.unlock_scratches(current, None),
             Purpose::NewPin => self.set_pin(&dialog),
             Purpose::RemovePin => self.check_pin(current).map(|()| {
                 self.settings.privacy.pin_hash = None;
@@ -467,20 +544,30 @@ impl RubriqueApp {
                 self.show_status("The PIN is off".to_string());
             }),
         };
-        if let Err(error) = result {
-            self.privacy.dialog = Some(SecretDialog { error: Some(error), ..dialog });
+        match result {
+            Ok(()) => {
+                if let Some(then) = dialog.then {
+                    self.after_password(ctx, then);
+                }
+            }
+            Err(error) => self.privacy.dialog = Some(SecretDialog { error: Some(error), ..dialog }),
         }
     }
 
-    /// Turn encryption on with a first password.
-    fn set_scratch_password(&mut self, password: &str) {
+    /// Choose the first scratch password; `make_default` also encrypts
+    /// every new scratch from now on.
+    fn set_scratch_password(&mut self, password: &str, make_default: bool) {
         let (vault, info) = Vault::create(password);
         self.settings.privacy.vault = Some(info);
-        self.settings.privacy.encrypt_scratches = true;
+        if make_default {
+            self.settings.privacy.encrypt_scratches = true;
+        }
         self.privacy.vault = Some(Arc::new(vault));
         // Written at once: without it the scratches could not be opened.
         self.write_settings();
-        self.show_status("New scratches are encrypted from now on".to_string());
+        if make_default {
+            self.show_status("New scratches are encrypted from now on".to_string());
+        }
     }
 
     /// Seal every scratch and sealed draft with a new password.
@@ -496,7 +583,7 @@ impl RubriqueApp {
         self.reseal_drafts(&old, &new);
         self.settings.privacy.vault = Some(new_info);
         self.write_settings();
-        self.follow_new_key(&changed, &new);
+        self.follow_new_key(&changed, Some(&new));
         self.privacy.vault = Some(new);
         self.reopen_locked_tabs();
         self.show_status("The scratch password is changed".to_string());

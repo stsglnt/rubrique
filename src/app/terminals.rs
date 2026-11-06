@@ -86,6 +86,27 @@ impl RubriqueApp {
         Ok(())
     }
 
+    /// "Exit terminal": end session `name` and close its tab, if any.
+    pub(super) fn exit_terminal(&mut self, name: &str) {
+        let Some(monitor) = &self.terminals else {
+            return;
+        };
+        if let Err(error) = monitor.tmux().kill_session(name) {
+            self.show_status(format!("Cannot exit the terminal: {error}"));
+            return;
+        }
+        monitor.refresh();
+        let shows_session = |file: &OpenFile| matches!(file, OpenFile::Terminal { terminal } if terminal.name == name);
+        for index in (0..self.tabs.len()).rev() {
+            if index != self.active_tab && shows_session(&self.tabs[index]) {
+                self.close_hidden_tab(index);
+            }
+        }
+        if shows_session(&self.open_file) {
+            self.close_active_tab_now();
+        }
+    }
+
     /// "Show in files": open the tree down to the session's `.tmux` file,
     /// or to the folder it runs in, and highlight it there.
     pub(super) fn show_terminal_in_files(&mut self, name: &str) {

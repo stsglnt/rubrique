@@ -29,7 +29,7 @@ macOS blocks the first open (the app is not notarized yet). Fix:
 - **Ask** (`Cmd+K`): a request, or Shorter, Fix grammar, Table, Translate, Explain.
 - **Review**: every change opens in a merge screen. Nothing applies until you accept.
 - **Compare**: one request to two agents, keep the best of each.
-- **Named agents and skills**: type `@ai-` to pick one. Claude Code agents and skills work too.
+- **Named agents and skills**: type `@ai-` to pick one. Claude Code agents work too, and skills from Claude Code, Codex (`~/.agents/skills`) and Grok. See them all in Settings → Skills.
 - **Notes**: leave a note on a passage, let an agent resolve it.
 
 Agents run only when you ask, read-only by default.
@@ -40,7 +40,8 @@ Agents run only when you ask, read-only by default.
 - Side panel (the button at the right of the tabs): Structure, the file's headings (`Cmd+Shift+O`), or its Notes.
 - Voice memos (`Cmd+Shift+R`), transcribed locally with whisper.cpp.
 - Drop images and audio onto the page.
-- Scratch files (`Cmd+N`), optionally encrypted, and an optional app PIN.
+- Scratch files (`Cmd+N`), each one encrypted or not: the lock button in the
+  status bar, or `Cmd+Shift+N` for a new encrypted one. Optional app PIN.
 - Format JSON, SQL, XML (`Cmd+Shift+F`). Render and lint Helm charts.
 
 **Files**
@@ -48,7 +49,8 @@ Agents run only when you ask, read-only by default.
 - Several folders in one explorer. Right-click a folder → New file, folder or terminal. Double-click a file or tab to rename it, right-click to delete.
 - Tabs keep unsaved changes, cursor and undo.
 - Safe saves: your file is never reformatted; outside changes open a merge.
-- Find in a file or across all folders (`Cmd+F`).
+- Find in a file or across all folders (`Cmd+F`), match case or whole
+  words, and replace one match or all of them (`Cmd+Alt+F`).
 - Remote folders over SSH (off by default, Settings → Files).
 - Terminals: tmux sessions as tabs, listed under the files with their agent's
   status (working, needs you, idle) and the agent sessions they ran, ready to
@@ -88,9 +90,11 @@ numbers and other options are in Settings → Accessibility.
 | Cmd+Shift+F | Format JSON, SQL or XML |
 | Cmd+Shift+C | Copy the open file's path |
 | Cmd+G / Cmd+Shift+G | Next / previous match |
+| Cmd+Alt+F (Ctrl+H on Linux) | Find and replace |
 | Alt+Up / Alt+Down | Move lines |
 | Cmd+D | Duplicate lines |
 | Cmd+Shift+D | Insert today's date |
+| Cmd+Shift+N | New encrypted scratch file |
 | Cmd+L | Lock the window (with a PIN set) |
 
 </details>
