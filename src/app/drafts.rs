@@ -168,6 +168,25 @@ impl RubriqueApp {
         }
     }
 
+    /// Write the draft of `path` again, if one is kept, so it is sealed or
+    /// plain like its document is now. When that fails the draft is
+    /// deleted instead (never left plain beside an encrypted file); the
+    /// next pause in typing writes it again.
+    pub(super) fn rewrite_draft(&mut self, path: &Path) {
+        let key = draft::key(path);
+        let (Some(store), true) = (&self.drafts.store, self.drafts.written.contains_key(&key)) else {
+            return;
+        };
+        let document = std::iter::once(&self.open_file).chain(self.tabs.iter()).find_map(|file| match file {
+            OpenFile::Text { document, .. } if draft::key(&document.path) == key => Some(document),
+            _ => None,
+        });
+        let written = document.is_some_and(|document| store.write(&Draft::of(document), document.vault()).is_ok());
+        if !written {
+            forget(store, &mut self.drafts.written, &key);
+        }
+    }
+
     /// Note that the draft on disk holds `document` as it is now.
     fn remember_draft(&mut self, document: &Document) {
         self.drafts.written.insert(draft::key(&document.path), document.revision());

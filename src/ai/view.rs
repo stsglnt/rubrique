@@ -442,7 +442,7 @@ fn skills_menu(ui: &mut Ui, typed: &str, skills: &[Skill]) -> Option<AskEvent> {
     let mut event = None;
     ui.menu_button(RichText::new("Skills…").weak(), |ui| {
         if skills.is_empty() {
-            ui.label(RichText::new("No skills yet. Add them in Settings → AI.").weak());
+            ui.label(RichText::new("No skills yet. Add them in Settings → Skills.").weak());
         }
         for skill in skills {
             if ui.button(&skill.name).on_hover_text(&skill.description).clicked() {
