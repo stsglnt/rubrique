@@ -301,7 +301,7 @@ fn show_root(
     if let Some(color) = context.root_color {
         paint_root_dot(ui, &response, &root.name, color);
     }
-    if response.clicked() {
+    if toggles_fold(&response) {
         root.toggle_expanded();
     }
     root_menu(&response, &root.path, context, action);
@@ -356,7 +356,7 @@ fn show_folder(
     } else {
         paint_arrow(ui, &response, folder.expanded);
     }
-    if response.clicked() {
+    if toggles_fold(&response) {
         folder.toggle_expanded();
     }
     folder_menu(&response, &folder.path, context, action);
@@ -470,6 +470,13 @@ pub(super) fn scroll_if_revealed(ui: &Ui, context: &TreeContext, path: &Path, re
         let strip = response.rect.with_min_x(left).with_max_x(left + 1.0);
         ui.scroll_to_rect(strip, Some(egui::Align::Center));
     }
+}
+
+/// True when a click on a folder row should fold or unfold it. egui reports
+/// both clicks of a double click as clicks, so the second one is skipped:
+/// otherwise a double click opens the folder and closes it again at once.
+fn toggles_fold(response: &egui::Response) -> bool {
+    response.clicked() && !response.double_clicked()
 }
 
 /// One explorer row on a single line (the tree scrolls sideways for long names).
