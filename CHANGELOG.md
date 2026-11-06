@@ -55,6 +55,9 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   moved under the files, docked at the bottom of the panel: drag its top edge
   to resize it. While folded, its header still shows how many agents need
   you or are working.
+- Encryption libraries updated (argon2 0.6, chacha20poly1305 0.11).
+  Encrypted scratches and the app PIN made with earlier versions keep
+  working; a test checks values made with the old libraries.
 - Terminal status is a colored dot before the status text, like herdr:
   blue working, orange needs you, green idle, gray shell; a hollow ring for
   a `.tmux` file that is not running. The terminal icon is one quiet color.
