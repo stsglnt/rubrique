@@ -1,15 +1,18 @@
 //! The settings window: groups on the left, the open group on the right.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+use eframe::egui::collapsing_header::CollapsingState;
 use eframe::egui::{
     self, Align, Align2, Color32, FontId, Layout, Rect, Response, RichText, Sense, Stroke, StrokeKind, Ui, WidgetInfo,
     pos2, vec2,
 };
 
 use crate::ai::agents::Agent;
+use crate::ai::flags::{self, FlagKind};
 use crate::ai::skills::{Skill, SourceFolder};
-use crate::ai::{AiSettings, AiTool, CommandProblem, check_command};
+use crate::ai::{AiSettings, AiTool, CommandProblem, PROMPT, SYSTEM, check_command};
 use crate::install::view::{InstallAction, install_prompt};
 use crate::install::{InstallStatus, Recipe};
 use crate::settings::accessibility::{AccessibilitySettings, EDITOR_FONT_SIZES, TextSize};
@@ -522,79 +525,413 @@ fn privacy_section(ui: &mut Ui, privacy: PrivacyInfo) -> Option<SettingsAction> 
     action
 }
 
-/// Width of the "Summaries use" drop-down.
-const SUMMARY_PICKER_WIDTH: f32 = 170.0;
 /// Size of help lines under a command.
 const SMALL_SIZE: f32 = 11.5;
 /// Size of the Installed / Not found text.
 const STATUS_SIZE: f32 = 12.0;
+/// Size of the Ask and Summaries tags on a tool row.
+const TAG_SIZE: f32 = 11.0;
+/// Corner radius of the box around the tool rows.
+const LIST_RADIUS: u8 = 6;
+const TAG_RADIUS: u8 = 8;
+/// Radius of the dot that marks a tool that was not found.
+const MISSING_DOT_RADIUS: f32 = 3.5;
+/// Space inside one tool row.
+const ROW_MARGIN: egui::Margin = egui::Margin { left: 12, right: 10, top: 8, bottom: 8 };
+/// What the Ask picker offers, in the order of the tools list.
+const ASK_CHOICES: [Option<AiTool>; 4] =
+    [Some(AiTool::Claude), Some(AiTool::Codex), Some(AiTool::Grok), Some(AiTool::Local)];
+/// What the summaries picker offers: the local model first (text stays on
+/// this computer), then the others, then Off.
+const SUMMARY_CHOICES: [Option<AiTool>; 5] =
+    [Some(AiTool::Local), Some(AiTool::Claude), Some(AiTool::Codex), Some(AiTool::Grok), None];
 
-/// The AI section: default tool, each tool's command, summaries, skills and safety.
+/// The AI section: which tool answers Ask and which writes summaries, then
+/// every tool with its status, install help and (folded) command, then safety.
 fn ai_section(ui: &mut Ui, ai: AiInfo) -> Option<SettingsAction> {
     let AiInfo { settings, found, recipes, local_model, install, .. } = ai;
-    let is_found = |tool: AiTool| found[tool_index(tool)].is_some();
     let mut action = None;
 
-    ui.label(RichText::new("Default tool").strong());
-    ui.label(RichText::new("Used by Ask (Cmd+K) and Resolve notes.").weak());
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        for tool in AiTool::ALL {
-            let short = if tool == AiTool::Local { "Local" } else { tool.name() };
-            ui.add_enabled_ui(is_found(tool), |ui| ui.selectable_value(&mut settings.default_tool, tool, short))
-                .response
-                .on_disabled_hover_text(format!("{} was not found. Set its command below.", tool.name()));
+    role_pickers(ui, settings, found);
+
+    ui.add_space(6.0);
+    section_title(ui, "Tools", "Programs already on this computer. rubrique starts them for you, no API keys.");
+    list_frame(ui, |ui| {
+        for (index, tool) in AiTool::ALL.into_iter().enumerate() {
+            if index > 0 {
+                ui.add(egui::Separator::default().spacing(0.0));
+            }
+            let row = ToolRow {
+                tool,
+                found: found[index].as_deref(),
+                recipe: recipes[index].as_ref().filter(|_| found[index].is_none()),
+                model_recipe: local_model.filter(|_| tool == AiTool::Local),
+                install,
+            };
+            if let Some(picked) = tool_row(ui, settings, &row) {
+                action = Some(picked);
+            }
         }
     });
 
     ui.add_space(6.0);
-    ui.separator();
-    ui.label(RichText::new("Commands").strong());
-    ui.label(RichText::new("rubrique starts these programs. {prompt} becomes your request.").weak());
-    for tool in AiTool::ALL {
-        ui.add_space(2.0);
-        let index = tool_index(tool);
-        let recipe = recipes[index].as_ref().filter(|_| found[index].is_none());
-        let (changed, clicked) = command_row(ui, settings, tool, found[index].as_deref(), recipe, install);
-        if changed {
-            action = Some(SettingsAction::AiCommandChanged);
+    if let Some(picked) = safety_row(ui, settings) {
+        action = Some(picked);
+    }
+    action
+}
+
+/// A section's name and, under it, what it is for.
+fn section_title(ui: &mut Ui, title: &str, hint: &str) {
+    ui.label(RichText::new(title).strong());
+    ui.label(RichText::new(hint).weak());
+}
+
+/// The two choices that matter most, side by side: the tool behind Ask and
+/// the tool behind summaries.
+fn role_pickers(ui: &mut Ui, settings: &mut AiSettings, found: &[Option<PathBuf>; 4]) {
+    let is_found = |tool: AiTool| found[tool_index(tool)].is_some();
+    ui.columns(2, |columns| {
+        let ui = &mut columns[0];
+        ui.label(RichText::new("Ask and notes").strong());
+        ui.label(RichText::new("Cmd+K, Resolve notes, Compare").weak().size(SMALL_SIZE));
+        // The Ask tool is never Off, so it borrows the Option-based picker.
+        let mut choice = Some(settings.default_tool);
+        tool_picker(ui, "ai-ask-tool", &ASK_CHOICES, &mut choice, &is_found);
+        if let Some(tool) = choice {
+            settings.default_tool = tool;
         }
-        if let Some(clicked) = clicked {
+
+        let ui = &mut columns[1];
+        ui.label(RichText::new("Summaries and names").strong());
+        ui.label(RichText::new("Hover summaries in the explorer, scratch names").weak().size(SMALL_SIZE));
+        tool_picker(ui, "ai-summary-tool", &SUMMARY_CHOICES, &mut settings.summary_tool, &is_found);
+    });
+}
+
+/// A drop-down over `choices`, as wide as the space it gets. Tools that were
+/// not found cannot be picked; `None` is Off.
+fn tool_picker(
+    ui: &mut Ui,
+    salt: &str,
+    choices: &[Option<AiTool>],
+    choice: &mut Option<AiTool>,
+    is_found: &dyn Fn(AiTool) -> bool,
+) {
+    let selected = match *choice {
+        Some(tool) if !is_found(tool) => format!("{} (not found)", tool.full_name()),
+        other => choice_name(other).to_string(),
+    };
+    egui::ComboBox::from_id_salt(salt).selected_text(selected).width(ui.available_width()).show_ui(ui, |ui| {
+        for each in choices {
+            if each.is_none() {
+                ui.separator();
+            }
+            let enabled = each.is_none_or(is_found);
+            ui.add_enabled_ui(enabled, |ui| ui.selectable_value(choice, *each, choice_name(*each)))
+                .response
+                .on_disabled_hover_text("Not found. See Tools below.");
+        }
+    });
+}
+
+fn choice_name(choice: Option<AiTool>) -> &'static str {
+    choice.map_or("Off", AiTool::full_name)
+}
+
+/// The outlined box around the tool rows; the rows draw their own separators.
+fn list_frame(ui: &mut Ui, add_rows: impl FnOnce(&mut Ui)) {
+    egui::Frame::new().stroke(ui.visuals().widgets.noninteractive.bg_stroke).corner_radius(LIST_RADIUS).show(
+        ui,
+        |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 0.0;
+            add_rows(ui);
+        },
+    );
+}
+
+/// What one row of the tools list shows.
+struct ToolRow<'a> {
+    tool: AiTool,
+    /// Where the program was found.
+    found: Option<&'a Path>,
+    /// How to install the program, when it is missing.
+    recipe: Option<&'a Recipe>,
+    /// How to download the local model, when Ollama is there but the model is not.
+    model_recipe: Option<&'a Recipe>,
+    install: &'a InstallStatus,
+}
+
+/// One tool: a status mark, the name, Ask and Summaries tags, where it was
+/// found and a Command button. Under that, an install prompt when the program
+/// or model is missing, and the command field when opened. A broken command
+/// stays open until it is fixed.
+fn tool_row(ui: &mut Ui, settings: &mut AiSettings, row: &ToolRow) -> Option<SettingsAction> {
+    let mut action = None;
+    let problem = check_command(settings.command(row.tool));
+    let id = ui.make_persistent_id(("ai-command", row.tool.id()));
+    let mut open = CollapsingState::load_with_default_open(ui.ctx(), id, false);
+    if problem.is_some() {
+        open.set_open(true);
+    }
+    egui::Frame::new().inner_margin(ROW_MARGIN).show(ui, |ui| {
+        ui.spacing_mut().item_spacing.y = 4.0;
+        ui.horizontal(|ui| {
+            status_mark(ui, row.found.is_some());
+            ui.label(RichText::new(row.tool.full_name()).strong());
+            if settings.default_tool == row.tool {
+                tag(ui, "Ask");
+            }
+            if settings.summary_tool == Some(row.tool) {
+                tag(ui, "Summaries");
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let label = if open.is_open() { "Hide command" } else { "Command" };
+                if ui.add_enabled(problem.is_none(), egui::Button::new(label).small()).clicked() {
+                    open.toggle(ui);
+                }
+                found_text(ui, row.found);
+            });
+        });
+        if let Some(clicked) = install_lines(ui, row, problem.is_none()) {
             action = Some(SettingsAction::Install(clicked));
         }
-        if tool == AiTool::Local
-            && let Some(recipe) = local_model
-        {
-            let message = format!("Model {} is not downloaded yet. Ollama gets it on first use, or now:", recipe.name);
-            if let Some(clicked) = prompt(ui, &message, recipe, install) {
-                action = Some(SettingsAction::Install(clicked));
-            }
+        let body = open.show_body_unindented(ui, |ui| command_editor(ui, settings, row.tool, problem));
+        if body.is_some_and(|body| body.inner) {
+            action = Some(SettingsAction::AiCommandChanged);
+        }
+    });
+    action
+}
+
+/// A check for a tool that was found, a warning dot for one that was not.
+fn status_mark(ui: &mut Ui, found: bool) {
+    let (rect, _) = ui.allocate_exact_size(vec2(CHECK_SIZE, CHECK_SIZE), Sense::hover());
+    let visuals = ui.visuals();
+    if found {
+        paint_check(ui.painter(), rect.center(), visuals.hyperlink_color);
+    } else {
+        ui.painter().circle_filled(rect.center(), MISSING_DOT_RADIUS, visuals.warn_fg_color);
+    }
+}
+
+/// A small tag on a tool row: "Ask" or "Summaries".
+fn tag(ui: &mut Ui, text: &str) {
+    egui::Frame::new()
+        .fill(ui.visuals().selection.bg_fill)
+        .corner_radius(TAG_RADIUS)
+        .inner_margin(egui::Margin::symmetric(7, 1))
+        .show(ui, |ui| {
+            ui.label(RichText::new(text).size(TAG_SIZE).strong());
+        });
+}
+
+/// Where the program was found, as a short path (the full one on hover), or
+/// "Not found".
+fn found_text(ui: &mut Ui, found: Option<&Path>) {
+    match found {
+        Some(path) => {
+            let short = RichText::new(home_relative(path)).monospace().size(SMALL_SIZE).weak();
+            ui.add(egui::Label::new(short).truncate())
+                .on_hover_text(RichText::new(path.display().to_string()).monospace());
+        }
+        None => {
+            ui.label(RichText::new("Not found").size(STATUS_SIZE).color(ui.visuals().warn_fg_color));
         }
     }
+}
 
-    ui.add_space(6.0);
-    ui.separator();
-    ui.label(RichText::new("Summaries use").strong());
-    ui.label(RichText::new("Hover summaries in the explorer and scratch names.").weak());
-    summary_picker(ui, &mut settings.summary_tool, &is_found);
+/// Under a row: how to install a missing program, or download the missing
+/// local model. Nothing while the command is broken: that comes first.
+fn install_lines(ui: &mut Ui, row: &ToolRow, command_ok: bool) -> Option<InstallAction> {
+    if !command_ok {
+        return None;
+    }
+    let mut clicked = None;
+    match (row.found, row.recipe) {
+        (Some(_), _) => {}
+        (None, Some(recipe)) => {
+            let message = format!("{} is not installed, or not on PATH.", recipe.name);
+            clicked = prompt(ui, &message, recipe, row.install);
+        }
+        (None, None) => {
+            ui.label(RichText::new(missing_help(row.tool)).size(SMALL_SIZE).weak());
+        }
+    }
+    if let Some(recipe) = row.model_recipe {
+        let message = format!("Model {} is not downloaded yet. Ollama gets it on first use, or now:", recipe.name);
+        if let Some(choice) = prompt(ui, &message, recipe, row.install) {
+            clicked = Some(choice);
+        }
+    }
+    clicked
+}
 
-    ui.add_space(6.0);
-    ui.separator();
-    ui.label(RichText::new("Safety").strong());
-    ui.label(RichText::new("You start every run. The first run in a folder shows the command and asks once.").weak());
+/// What to do about a program that was not found and has no install recipe.
+fn missing_help(tool: AiTool) -> String {
+    match tool {
+        AiTool::Local => {
+            "Ollama is not on PATH. Install Ollama or llama.cpp, or put the full path in the command.".to_string()
+        }
+        AiTool::Grok => "No Grok tool on PATH. Install one, then set its command.".to_string(),
+        tool => format!("{} is not on PATH. Install it, or put the full path in the command.", tool.full_name()),
+    }
+}
+
+/// The command field, Reset when it was changed, and a line under it: the
+/// problem, or what the placeholders mean. Returns whether the command changed.
+fn command_editor(ui: &mut Ui, settings: &mut AiSettings, tool: AiTool, problem: Option<CommandProblem>) -> bool {
+    let mut changed = flag_chips(ui, settings, tool);
+    let visuals = ui.visuals().clone();
+    field_box(ui, &visuals, problem.is_some(), |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Command").size(SMALL_SIZE).weak());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if settings.is_custom(tool) && ui.small_button("Reset").on_hover_text(tool.default_command()).clicked()
+                {
+                    settings.reset_command(tool);
+                    changed = true;
+                }
+                let edit = egui::TextEdit::singleline(settings.command_mut(tool))
+                    .font(FontId::monospace(12.0))
+                    .frame(egui::Frame::NONE)
+                    .hint_text(format!("{} command with {PROMPT}", tool.id()))
+                    .desired_width(ui.available_width());
+                changed |= ui.add(edit).changed();
+            });
+        });
+    });
+    let (text, color) = match problem {
+        Some(problem) => (problem.message().to_string(), visuals.warn_fg_color),
+        None => (command_hint(tool, settings.command(tool)), visuals.weak_text_color()),
+    };
+    ui.label(RichText::new(text).size(SMALL_SIZE).color(color));
+    changed
+}
+
+/// Width of the model field in a chip.
+const MODEL_CHIP_WIDTH: f32 = 110.0;
+/// Width of a choice drop-down in a chip.
+const CHOICE_CHIP_WIDTH: f32 = 150.0;
+/// What a choice chip says when the option is not in the command.
+const TOOL_DEFAULT: &str = "tool default";
+
+/// The flags rubrique knows for `tool`, as chips above the command field:
+/// a model field and the tool's choice options. A chip rewrites its flag in
+/// the command; the rest of the command stays as typed. Returns whether the
+/// command changed.
+fn flag_chips(ui: &mut Ui, settings: &mut AiSettings, tool: AiTool) -> bool {
+    let mut changed = false;
+    ui.horizontal_wrapped(|ui| {
+        for flag in flags::known_flags(tool) {
+            ui.label(RichText::new(flag.label).size(SMALL_SIZE).weak());
+            let current = flags::value(settings.command(tool), tool, flag);
+            let edit = match flag.kind {
+                FlagKind::Model => model_chip(ui, tool, current),
+                FlagKind::Choice { values, .. } => choice_chip(ui, tool, flag.label, values, current.as_deref()),
+            };
+            if let Some(edit) = edit {
+                let command = flags::with_value(settings.command(tool), tool, flag, edit.value());
+                settings.set_command(tool, &command);
+                changed = true;
+            }
+            ui.add_space(6.0);
+        }
+    });
+    changed
+}
+
+/// What a chip asks for.
+enum ChipEdit {
+    /// Set the flag to this value.
+    Set(String),
+    /// Take the flag out, back to the tool's own default.
+    Clear,
+}
+
+impl ChipEdit {
+    fn value(&self) -> Option<&str> {
+        match self {
+            ChipEdit::Set(value) => Some(value),
+            ChipEdit::Clear => None,
+        }
+    }
+}
+
+/// A small text field with the model. Returns the edit when the field was
+/// typed in; an emptied field clears the flag.
+fn model_chip(ui: &mut Ui, tool: AiTool, current: Option<String>) -> Option<ChipEdit> {
+    let mut text = current.unwrap_or_default();
+    let edit = egui::TextEdit::singleline(&mut text)
+        .id_salt(("ai-model-chip", tool.id()))
+        .font(FontId::monospace(12.0))
+        .hint_text(TOOL_DEFAULT)
+        .desired_width(MODEL_CHIP_WIDTH);
+    let response = ui.add(edit);
+    if !response.changed() {
+        return None;
+    }
+    let text = text.trim();
+    Some(if text.is_empty() { ChipEdit::Clear } else { ChipEdit::Set(text.to_string()) })
+}
+
+/// A drop-down over the option's values, plus the tool's default (the
+/// option taken out). Returns the pick when it differs from `current`.
+fn choice_chip(ui: &mut Ui, tool: AiTool, label: &str, values: &[&str], current: Option<&str>) -> Option<ChipEdit> {
+    let mut choice = current;
+    egui::ComboBox::from_id_salt(("ai-choice-chip", tool.id(), label))
+        .selected_text(choice.unwrap_or(TOOL_DEFAULT))
+        .width(CHOICE_CHIP_WIDTH)
+        .show_ui(ui, |ui| {
+            for value in values {
+                ui.selectable_value(&mut choice, Some(*value), *value);
+            }
+            ui.separator();
+            ui.selectable_value(&mut choice, None, TOOL_DEFAULT);
+        });
+    if choice == current {
+        return None;
+    }
+    Some(choice.map_or(ChipEdit::Clear, |value| ChipEdit::Set(value.to_string())))
+}
+
+/// What the placeholders in `command` mean, and for the local model which
+/// programs work.
+fn command_hint(tool: AiTool, command: &str) -> String {
+    let mut hint = format!("{PROMPT} becomes your request");
+    if command.contains(SYSTEM) {
+        let _ = write!(hint, ", {SYSTEM} rubrique's instructions");
+    }
+    hint.push('.');
+    if tool == AiTool::Local {
+        let _ = write!(hint, " Ollama or llama.cpp (llama-cli -m model.gguf -p {PROMPT}).");
+    }
+    hint
+}
+
+/// Safety: how many folders run without asking, and a way to forget them.
+fn safety_row(ui: &mut Ui, settings: &AiSettings) -> Option<SettingsAction> {
+    section_title(ui, "Safety", "You start every run. The first run in a folder shows the command and asks once.");
+    let count = settings.allowed_folders.len();
+    let text = match count {
+        0 => "No folder runs without asking yet".to_string(),
+        1 => "1 folder runs without asking".to_string(),
+        count => format!("{count} folders run without asking"),
+    };
+    let mut action = None;
     ui.horizontal(|ui| {
-        let count = settings.allowed_folders.len();
+        ui.label(text);
         if ui.add_enabled(count > 0, egui::Button::new("Forget allowed folders")).clicked() {
             action = Some(SettingsAction::ForgetAllowedFolders);
         }
-        let text = match count {
-            0 => "None yet".to_string(),
-            1 => "1 folder".to_string(),
-            count => format!("{count} folders"),
-        };
-        ui.label(RichText::new(text).weak());
     });
     action
+}
+
+/// The install prompt for `recipe`, with how its install went.
+fn prompt(ui: &mut Ui, message: &str, recipe: &Recipe, install: &InstallStatus) -> Option<InstallAction> {
+    install_prompt(ui, message, recipe, install.of(recipe), install.busy)
 }
 
 fn tool_index(tool: AiTool) -> usize {
@@ -668,115 +1005,6 @@ fn agents_section(
         }
     });
     action
-}
-
-/// The "Summaries use" drop-down: a tool, or Off.
-fn summary_picker(ui: &mut Ui, choice: &mut Option<AiTool>, is_found: &dyn Fn(AiTool) -> bool) {
-    let label = |choice: Option<AiTool>| choice.map_or("Off", AiTool::name);
-    egui::ComboBox::from_id_salt("ai-summary-tool").selected_text(label(*choice)).width(SUMMARY_PICKER_WIDTH).show_ui(
-        ui,
-        |ui| {
-            for tool in [AiTool::Local, AiTool::Claude, AiTool::Codex, AiTool::Grok] {
-                ui.add_enabled_ui(is_found(tool), |ui| ui.selectable_value(choice, Some(tool), tool.name()))
-                    .response
-                    .on_disabled_hover_text(format!("{} was not found", tool.name()));
-            }
-            ui.separator();
-            ui.selectable_value(choice, None, "Off");
-        },
-    );
-}
-
-/// The install prompt for `recipe`, with how its install went.
-fn prompt(ui: &mut Ui, message: &str, recipe: &Recipe, install: &InstallStatus) -> Option<InstallAction> {
-    install_prompt(ui, message, recipe, install.of(recipe), install.busy)
-}
-
-/// One tool: name, Reset (when changed), Installed or Not found, the
-/// command field, and a help line or an install prompt when needed.
-/// Returns whether the command changed, and an install click.
-fn command_row(
-    ui: &mut Ui,
-    settings: &mut AiSettings,
-    tool: AiTool,
-    found: Option<&Path>,
-    recipe: Option<&Recipe>,
-    install: &InstallStatus,
-) -> (bool, Option<InstallAction>) {
-    let mut changed = false;
-    let mut clicked = None;
-    let visuals = ui.visuals().clone();
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 4.0;
-        ui.horizontal(|ui| {
-            ui.label(tool.full_name());
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if let Some(path) = found {
-                    let status = ui.label(RichText::new("Installed").size(STATUS_SIZE).weak());
-                    let (check, _) = ui.allocate_exact_size(vec2(CHECK_SIZE, CHECK_SIZE), Sense::hover());
-                    paint_check(ui.painter(), check.center(), visuals.hyperlink_color);
-                    status.on_hover_text(RichText::new(path.display().to_string()).monospace());
-                } else {
-                    ui.label(RichText::new("Not found").size(STATUS_SIZE).color(visuals.warn_fg_color));
-                }
-                if settings.is_custom(tool) && ui.small_button("Reset").on_hover_text(tool.default_command()).clicked()
-                {
-                    settings.reset_command(tool);
-                    changed = true;
-                }
-            });
-        });
-        let problem = check_command(settings.command(tool));
-        let border = if problem.is_some() {
-            Stroke::new(1.0, visuals.warn_fg_color)
-        } else {
-            visuals.widgets.noninteractive.bg_stroke
-        };
-        egui::Frame::new()
-            .fill(visuals.text_edit_bg_color())
-            .stroke(border)
-            .corner_radius(PREVIEW_RADIUS)
-            .inner_margin(egui::Margin::symmetric(7, 4))
-            .show(ui, |ui| {
-                let edit = egui::TextEdit::singleline(settings.command_mut(tool))
-                    .font(FontId::monospace(12.0))
-                    .frame(egui::Frame::NONE)
-                    .hint_text(format!("{} command with {{prompt}}", tool.id()))
-                    .desired_width(f32::INFINITY);
-                changed |= ui.add(edit).changed();
-            });
-        match recipe.filter(|_| problem.is_none()) {
-            Some(recipe) => {
-                let message = format!("{} is not installed, or not on PATH.", recipe.name);
-                clicked = prompt(ui, &message, recipe, install);
-            }
-            None => {
-                if let Some(help) = command_help(tool, problem, found.is_some()) {
-                    let color = if problem.is_some() { visuals.warn_fg_color } else { visuals.weak_text_color() };
-                    ui.label(RichText::new(help).size(SMALL_SIZE).color(color));
-                }
-            }
-        }
-    });
-    (changed, clicked)
-}
-
-/// The line under a command, only when there is something to say.
-fn command_help(tool: AiTool, problem: Option<CommandProblem>, found: bool) -> Option<String> {
-    let text = match (problem, found, tool) {
-        (Some(CommandProblem::NoPrompt), ..) => "Add {prompt} so rubrique can pass your request.".to_string(),
-        (Some(CommandProblem::Empty), ..) => "Enter a command.".to_string(),
-        (None, true, AiTool::Local) => "Ollama or llama.cpp (llama-cli -m model.gguf -p {prompt}).".to_string(),
-        (None, false, AiTool::Local) => {
-            "Ollama is not on PATH. Install Ollama or llama.cpp, or put the full path in the command.".to_string()
-        }
-        (None, false, AiTool::Grok) => "No Grok tool on PATH. Install one, then set its command.".to_string(),
-        (None, false, tool) => {
-            format!("{} is not on PATH. Install it, or put the full path in the command.", tool.full_name())
-        }
-        (None, true, _) => return None,
-    };
-    Some(text)
 }
 
 /// Voice memos: where they go, dropped files, and transcription.

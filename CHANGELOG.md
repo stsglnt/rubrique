@@ -38,6 +38,22 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   brings the old text back. The status bar says how many were replaced.
 - Opening the find bar with text selected (one line) searches for it.
 
+### Changed
+
+- **Settings → AI** is simpler. The two choices come first: **Ask and
+  notes** (the tool behind `Cmd+K`, Resolve notes and Compare) and
+  **Summaries and names**, each a drop-down over the tools that were found.
+  Under them, **Tools** lists Claude Code, Codex, Grok and the local model
+  with a check or a warning dot, where each was found, Ask and Summaries
+  tags, and the install or model download prompt when something is missing.
+  The command templates are folded behind a **Command** button on each row;
+  a command without `{prompt}` opens by itself with the warning. Safety is
+  one line with the folder count and **Forget allowed folders**.
+- **Flag chips** above a command: **Model** for Claude Code, Codex and the
+  local model, **Permissions** for Claude Code and **Sandbox** for Codex.
+  A chip rewrites just its flag in the command; everything else you typed
+  stays, and the command field remains the source of truth.
+
 ### Fixed
 
 - `Cmd+Shift+F` (Format) also opened the find bar.

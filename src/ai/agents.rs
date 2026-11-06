@@ -21,8 +21,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::AiTool;
+use super::flags::{insert_at, is_ollama};
 use super::skills::{Skill, split_front_matter, unquote};
+use super::{AiTool, join_command, split_command};
 
 /// The file that makes a folder an agent.
 pub const AGENT_FILE: &str = "AGENT.md";
@@ -232,7 +233,7 @@ pub fn find_skills<'a>(agent: &Agent, skills: &'a [Skill]) -> (Vec<&'a Skill>, V
 /// replaced; otherwise the option goes after the program (after `exec` for
 /// Codex). For `ollama run <model>` the model word is replaced.
 pub fn with_model(command: &str, tool: AiTool, model: &str) -> String {
-    let mut words = super::split_command(command);
+    let mut words = split_command(command);
     if words.is_empty() {
         return command.to_string();
     }
@@ -243,32 +244,14 @@ pub fn with_model(command: &str, tool: AiTool, model: &str) -> String {
     } else if let Some(index) = words.iter().position(|word| word.starts_with("--model=")) {
         words[index] = format!("--model={model}");
     } else if tool == AiTool::Local {
-        let is_ollama = Path::new(&words[0]).file_name().is_some_and(|name| name == "ollama");
-        if is_ollama && words.get(1).is_some_and(|word| word == "run") && words.len() > 2 {
+        if is_ollama(&words[0]) && words.get(1).is_some_and(|word| word == "run") && words.len() > 2 {
             model.clone_into(&mut words[2]);
         }
     } else {
-        let at = if tool == AiTool::Codex && words.get(1).is_some_and(|word| word == "exec") { 2 } else { 1 };
+        let at = insert_at(&words, tool);
         words.splice(at..at, ["--model".to_string(), model.to_string()]);
     }
     join_command(&words)
-}
-
-/// Words back into a template that [`super::split_command`] reads the same.
-fn join_command(words: &[String]) -> String {
-    words
-        .iter()
-        .map(|word| {
-            if !word.is_empty() && !word.contains(|c: char| c.is_whitespace() || c == '"' || c == '\'') {
-                word.clone()
-            } else if word.contains('"') {
-                format!("'{word}'")
-            } else {
-                format!("\"{word}\"")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 /// Folder name of the example agent.
