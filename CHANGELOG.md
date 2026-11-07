@@ -10,6 +10,7 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Added
 
+- **Indigo** replaces the Dark theme (same id, so saved choices keep working) and is the default for new installs. **System** shows Light or Indigo. New lowercase "r" app icon in indigo.
 - **Rename and delete folders**: right-click a folder in the explorer, or double-click it to rename in place, like files.
 - **Move tabs and groups**: drag a tab sideways to reorder it (inside its group), or drag a group chip onto another group to reorder it (and its folder in the explorer).
 - **Exit terminal** in the right-click menu of a terminal tab and of a `.tmux` file.
