@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, Color32, CornerRadius, Sense, Ui, pos2, vec2};
 
+use super::tab_groups::ChipClick;
 use super::{GuardedAction, OpenFile, RubriqueApp, side_panel};
 use crate::document::preview_selection;
 use crate::document::view::{focus_editor, restore_editor_state, take_editor_state};
@@ -56,6 +57,13 @@ enum TabAction {
     CopyPath(usize),
     /// Edit the file's name right in its tab.
     Rename(usize),
+    /// The tab was dragged and dropped with the pointer at screen `x`.
+    Drop {
+        index: usize,
+        x: f32,
+    },
+    /// End the tmux session this tab shows, and close the tab.
+    ExitTerminal(usize),
 }
 
 impl RubriqueApp {
@@ -122,6 +130,28 @@ impl RubriqueApp {
             }
             self.switch_to_tab(index);
         }
+    }
+
+    /// Move tab `index` to place `to` (inside its group when tabs are
+    /// grouped); the active tab stays active.
+    fn move_tab(&mut self, index: usize, to: usize) {
+        if index == to || index >= self.tabs.len() || to >= self.tabs.len() {
+            return;
+        }
+        if self.tabs_grouped() && self.group_of(self.tab(index)) != self.group_of(self.tab(to)) {
+            return;
+        }
+        let tab = self.tabs.remove(index);
+        self.tabs.insert(to, tab);
+        self.active_tab = if self.active_tab == index {
+            to
+        } else if index < self.active_tab && to >= self.active_tab {
+            self.active_tab - 1
+        } else if index > self.active_tab && to <= self.active_tab {
+            self.active_tab + 1
+        } else {
+            self.active_tab
+        };
     }
 
     /// Make tab `index` the one on screen.
@@ -275,6 +305,10 @@ impl RubriqueApp {
     pub(super) fn tab_bar(&mut self, ui: &mut Ui) {
         let mut action = None;
         let mut chip_click = None;
+        // Where each drawn tab (and each group, chip included) is, to find
+        // what a dragged tab or chip was dropped on.
+        let mut tab_spans: Vec<(usize, f32, f32)> = Vec::new();
+        let mut group_spans: Vec<(Option<usize>, f32, f32)> = Vec::new();
         let strip_fill = ui.visuals().panel_fill;
         let (strip, _) = ui.allocate_exact_size(vec2(ui.available_width(), TAB_HEIGHT), Sense::hover());
         ui.painter().rect_filled(strip, 0, strip_fill);
@@ -321,6 +355,7 @@ impl RubriqueApp {
                             // Each group starts with its chip.
                             if grouped && (index == 0 || current_group != Some(group)) {
                                 current_group = Some(group);
+                                group_spans.push((group, ui.cursor().left(), ui.cursor().left()));
                                 if let Some(click) = self.group_chip(ui, group, folded) {
                                     chip_click = Some(click);
                                 }
@@ -336,41 +371,85 @@ impl RubriqueApp {
                                 dirty: file.is_dirty(),
                                 active: index == self.active_tab,
                                 group_color: self.group_color_of(group),
+                                terminal: match file {
+                                    OpenFile::Terminal { terminal } => Some(terminal.name.clone()),
+                                    _ => None,
+                                },
                             };
+                            let left = ui.cursor().left();
                             if let Some(found) = show_tab(ui, &tab, index, self.tabs.len(), &mut self.tab_rename) {
                                 action = Some(found);
+                            }
+                            tab_spans.push((index, left, ui.cursor().left()));
+                            if let Some(span) = group_spans.last_mut() {
+                                span.2 = ui.cursor().left();
                             }
                         }
                     });
                 });
         });
-        if let Some(click) = chip_click {
-            self.toggle_group(click.group);
-        }
-        match action {
-            Some(TabAction::Switch(index)) => self.switch_to_tab(index),
-            Some(TabAction::Close(index)) => self.request_close_tab(index),
-            Some(TabAction::CloseOthers(index)) => {
-                self.switch_to_tab(index);
-                self.close_clean_tabs((0..self.tabs.len()).filter(|&other| other != index).collect());
-            }
-            Some(TabAction::CloseToTheRight(index)) => {
-                self.close_clean_tabs((index + 1..self.tabs.len()).collect());
-            }
-            Some(TabAction::Rename(index)) => {
-                if let Some(path) = self.tab(index).path() {
-                    self.tab_rename = Some(InlineRename::new(path.to_path_buf()));
-                }
-            }
-            Some(TabAction::CopyPath(index)) => {
-                if let Some(path) = self.tab(index).path() {
-                    let text = absolute_path_text(path);
-                    self.copy_to_clipboard(ui.ctx(), text);
+        match chip_click {
+            Some(ChipClick::Toggle(group)) => self.toggle_group(group),
+            Some(ChipClick::Drop { group, x }) => {
+                // Dropped on a folder's group: take its place.
+                if let Some((Some(to), ..)) = group_spans.iter().find(|(_, left, right)| (*left..=*right).contains(&x))
+                {
+                    self.move_group(group, *to);
                 }
             }
             None => {}
         }
+        if let Some(TabAction::Drop { index, x }) = action {
+            if let Some(to) = drop_target(&tab_spans, x) {
+                self.move_tab(index, to);
+            }
+        } else if let Some(action) = action {
+            self.apply_tab_action(ui.ctx(), action);
+        }
     }
+
+    /// Do what the user asked for on the tab strip.
+    fn apply_tab_action(&mut self, ctx: &egui::Context, action: TabAction) {
+        match action {
+            TabAction::Switch(index) => self.switch_to_tab(index),
+            TabAction::Close(index) => self.request_close_tab(index),
+            TabAction::CloseOthers(index) => {
+                self.switch_to_tab(index);
+                self.close_clean_tabs((0..self.tabs.len()).filter(|&other| other != index).collect());
+            }
+            TabAction::CloseToTheRight(index) => {
+                self.close_clean_tabs((index + 1..self.tabs.len()).collect());
+            }
+            TabAction::Rename(index) => {
+                if let Some(path) = self.tab(index).path() {
+                    self.tab_rename = Some(InlineRename::new(path.to_path_buf()));
+                }
+            }
+            TabAction::Drop { .. } => {}
+            TabAction::ExitTerminal(index) => {
+                if let OpenFile::Terminal { terminal } = self.tab(index) {
+                    let name = terminal.name.clone();
+                    self.exit_terminal(&name);
+                }
+            }
+            TabAction::CopyPath(index) => {
+                if let Some(path) = self.tab(index).path() {
+                    let text = absolute_path_text(path);
+                    self.copy_to_clipboard(ctx, text);
+                }
+            }
+        }
+    }
+}
+
+/// The tab a drop at screen `x` lands on: the one under it, else the first
+/// or last tab when dropped past either end.
+fn drop_target(spans: &[(usize, f32, f32)], x: f32) -> Option<usize> {
+    let (first, last) = (spans.first()?, spans.last()?);
+    if x < first.1 {
+        return Some(first.0);
+    }
+    spans.iter().find(|(_, left, right)| (*left..=*right).contains(&x)).map_or(Some(last.0), |span| Some(span.0))
 }
 
 /// The Preview | Source switch: two icon halves (the eye, the code
@@ -422,6 +501,8 @@ struct TabView {
     active: bool,
     /// The color of the tab's folder, when tabs are grouped.
     group_color: Option<Color32>,
+    /// The tmux session the tab shows, if it is a terminal.
+    terminal: Option<String>,
 }
 
 /// One tab: the file name, then a close cross (a dot instead while the file
@@ -446,7 +527,7 @@ fn show_tab(
     job.wrap = egui::text::TextWrapping::truncate_at_width(max_text);
     let galley = ui.painter().layout_job(job);
     let width = TAB_PADDING * 2.0 + galley.size().x + CLOSE_SIZE;
-    let (rect, response) = ui.allocate_exact_size(vec2(width, TAB_HEIGHT), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(width, TAB_HEIGHT), Sense::click_and_drag());
     // Pointer anywhere on the tab, the close cross included. `hovered()` turns
     // false over the cross (a widget on top), which swapped the cross back to
     // the unsaved dot and lost the click.
@@ -507,6 +588,15 @@ fn show_tab(
     } else if action.is_none() && response.clicked() {
         action = Some(TabAction::Switch(index));
     }
+    // Drag a tab sideways and drop it where it should go.
+    if response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
+    if response.drag_stopped()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        action = Some(TabAction::Drop { index, x: pos.x });
+    }
     if response.middle_clicked() {
         action = Some(TabAction::Close(index));
     }
@@ -521,6 +611,9 @@ fn show_tab(
             action = Some(TabAction::CloseToTheRight(index));
         }
         ui.separator();
+        if tab.terminal.is_some() && ui.button("Exit terminal").clicked() {
+            action = Some(TabAction::ExitTerminal(index));
+        }
         if ui
             .add_enabled(tab.file.is_some(), egui::Button::new("Rename"))
             .on_hover_text("Or double-click the tab")
@@ -579,6 +672,7 @@ mod layout_tests {
                                 dirty: index == 2,
                                 active: index == 1,
                                 group_color: None,
+                                terminal: None,
                             };
                             let left = ui.cursor().left();
                             show_tab(ui, &tab, index, 3, &mut None);
