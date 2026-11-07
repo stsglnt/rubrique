@@ -822,23 +822,34 @@ mod layout_tests {
         assert_eq!(still, third);
     }
 
-    /// Open the startup tab plus `a.md`, `b.md`, `c.md` in a temp folder and
-    /// drag from screen `from` to `to` over many small steps, like a hand.
-    /// Returns the tab names before and after.
-    fn drag_in_the_tab_bar(from: f32, to: f32) -> (Vec<String>, Vec<String>) {
+    /// Open `file-0.md` to `file-3.md` in a temp folder (the last one ends up
+    /// active) and drag tab `from` onto tab `to` over many small steps, like
+    /// a hand. Returns the tab names before and after.
+    fn drag_in_the_tab_bar(from: u8, to: u8) -> (Vec<String>, Vec<String>) {
         use eframe::egui::PointerButton;
         let dir = std::env::temp_dir().join(format!("rubrique-drag-{}-{from}-{to}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let ctx = Context::default();
         let mut app = RubriqueApp::new(&ctx, crate::settings::Settings::default(), vec![dir.clone()], None);
-        for name in ["a.md", "b.md", "c.md"] {
-            let path = dir.join(name);
+        // `new` reopens the drafts in this machine's config folder as tabs
+        // (none on CI, some on a developer's Mac). Only the four below count.
+        app.tabs.clear();
+        app.active_tab = 0;
+        app.open_file = OpenFile::Nothing;
+        for index in 0..4 {
+            let path = dir.join(format!("file-{index}.md"));
             std::fs::write(&path, "x").unwrap();
             app.open_in_tab(path);
         }
         let names = |app: &RubriqueApp| (0..app.tabs.len()).map(|i| app.tab(i).title()).collect::<Vec<_>>();
         let before = names(&app);
-        // Settle on the first tab, press, move in 40 steps, release.
+        // Where the tabs are: the same names laid out by `tab_positions`, so
+        // the first tab's left edge and the width of one tab are known.
+        let positions = tab_positions(None);
+        let (left, width) = (positions[0].0, positions[1].0 - positions[0].0);
+        let center = |index: u8| left + width * (f32::from(index) + 0.5);
+        let (from, to) = (center(from), center(to));
+        // Settle on the tab, press, move in 40 steps, release.
         let mut steps: Vec<(f32, Option<bool>)> = vec![(from, None), (from, None), (from, Some(true))];
         steps.extend((1..=40_u8).map(|n| (from + (to - from) * f32::from(n) / 40.0, None)));
         steps.push((to, Some(false)));
@@ -868,14 +879,14 @@ mod layout_tests {
 
     #[test]
     fn dragging_a_tab_right_moves_it() {
-        let (before, after) = drag_in_the_tab_bar(100.0, 300.0);
+        let (before, after) = drag_in_the_tab_bar(0, 2);
         assert_eq!(after, [before[1].clone(), before[2].clone(), before[0].clone(), before[3].clone()]);
     }
 
     #[test]
     fn dragging_a_tab_left_moves_it() {
         // From the last tab (the active one) to the first.
-        let (before, after) = drag_in_the_tab_bar(360.0, 100.0);
+        let (before, after) = drag_in_the_tab_bar(3, 0);
         assert_eq!(after, [before[3].clone(), before[0].clone(), before[1].clone(), before[2].clone()]);
     }
 }
