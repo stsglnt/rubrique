@@ -58,6 +58,14 @@ pub enum Icon {
     Format,
     /// Open the file in the web browser: a window with an arrow leaving it.
     Browser,
+    /// Add a table row: a table split into two rows, with the plus badge.
+    RowPlus,
+    /// Remove a table row: the same table with the minus badge.
+    RowMinus,
+    /// Add a table column: a table split into two columns, with the plus badge.
+    ColumnPlus,
+    /// Remove a table column: the same table with the minus badge.
+    ColumnMinus,
 }
 
 /// A flat button with `icon` and a hover tip. `active` keeps it highlighted
@@ -169,12 +177,10 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
         Icon::Lock => paint_lock(painter, center, 1.0, color, accent),
         Icon::AudioPlus => paint_audio_plus(painter, center, line, accent, behind),
         Icon::Browser => paint_browser(painter, center, line, detail),
-        Icon::Format => {
-            // Three lines of text; the indented middle one is the accent.
-            stroke_path(painter, &[at(-6.0, -4.5), at(6.0, -4.5)], false, line);
-            stroke_path(painter, &[at(-2.5, 0.0), at(6.0, 0.0)], false, detail);
-            stroke_path(painter, &[at(-6.0, 4.5), at(2.0, 4.5)], false, line);
+        Icon::RowPlus | Icon::RowMinus | Icon::ColumnPlus | Icon::ColumnMinus => {
+            paint_table_icon(painter, icon, center, colors);
         }
+        Icon::Format => paint_format(painter, center, line, detail),
         Icon::Refresh => {
             // Most of a circle; the arrowhead at its end is the accent.
             let radius = 5.6;
@@ -330,6 +336,33 @@ fn paint_audio_plus(painter: &Painter, center: Pos2, line: Stroke, accent: Color
     plus_badge(painter, at(4.0, 3.5), accent, behind);
 }
 
+/// Three lines of text; the indented middle one is the accent.
+fn paint_format(painter: &Painter, center: Pos2, line: Stroke, detail: Stroke) {
+    let at = |x: f32, y: f32| center + vec2(x, y);
+    stroke_path(painter, &[at(-6.0, -4.5), at(6.0, -4.5)], false, line);
+    stroke_path(painter, &[at(-2.5, 0.0), at(6.0, 0.0)], false, detail);
+    stroke_path(painter, &[at(-6.0, 4.5), at(2.0, 4.5)], false, line);
+}
+
+/// A table as a box split in two (rows, or columns for the column icons),
+/// with a plus or minus badge at the bottom right as the accent.
+fn paint_table_icon(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
+    let at = |x: f32, y: f32| center + vec2(x, y);
+    let line = Stroke::new(LINE, colors.line);
+    let outline = [at(-6.5, -5.5), at(6.5, -5.5), at(6.5, 5.5), at(-6.5, 5.5)];
+    stroke_path(painter, &round_corners(&outline, CORNER, true), true, line);
+    let divider = match icon {
+        Icon::ColumnPlus | Icon::ColumnMinus => [at(0.0, -5.5), at(0.0, 5.5)],
+        _ => [at(-6.5, 0.0), at(6.5, 0.0)],
+    };
+    stroke_path(painter, &divider, false, line);
+    let badge_at = at(4.0, 3.5);
+    match icon {
+        Icon::RowMinus | Icon::ColumnMinus => minus_badge(painter, badge_at, colors.accent, colors.behind),
+        _ => plus_badge(painter, badge_at, colors.accent, colors.behind),
+    }
+}
+
 /// A window open at its top right corner, where an arrow (the accent)
 /// points out of it.
 fn paint_browser(painter: &Painter, center: Pos2, line: Stroke, detail: Stroke) {
@@ -386,6 +419,14 @@ fn plus_badge(painter: &Painter, center: Pos2, accent: Color32, behind: Color32)
     painter.circle_filled(center, BADGE_GAP, behind);
     painter.circle_filled(center, BADGE, accent);
     plus(painter, center, PLUS_HALF, Stroke::new(LINE, behind));
+}
+
+/// Like [`plus_badge`], with a minus sign.
+fn minus_badge(painter: &Painter, center: Pos2, accent: Color32, behind: Color32) {
+    painter.circle_filled(center, BADGE_GAP, behind);
+    painter.circle_filled(center, BADGE, accent);
+    let stroke = Stroke::new(LINE, behind);
+    stroke_path(painter, &[pos2(center.x - PLUS_HALF, center.y), pos2(center.x + PLUS_HALF, center.y)], false, stroke);
 }
 
 /// A path with round joins and round ends: the line, plus a dot of the
