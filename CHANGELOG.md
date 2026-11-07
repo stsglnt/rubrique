@@ -8,6 +8,8 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-07
+
 ### Added
 
 - **Indigo** replaces the Dark theme (same id, so saved choices keep working) and is the default for new installs. **System** shows Light or Indigo. New lowercase "r" app icon in indigo.
@@ -31,6 +33,14 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 - **Settings → Files checks the ssh program**: under the field, "Found:
   /usr/bin/ssh", or why the setting cannot run (a command line such as
   `ssh myhost` is not a program).
+- **Edit table cells in the preview**: click a cell to change just that
+  cell, in a box that wraps like the cell does. Enter, Esc or a click
+  outside finishes; a click on another cell moves there. Buttons under the
+  table add a row below, remove the row, add a column after, or remove the
+  column of that cell, and a new row or column opens its cell for typing
+  right away. Pipes you type are escaped and line breaks become spaces, so
+  the table stays whole. Tables wider than the page scroll sideways, and a
+  click beside the cells still opens the whole table's Markdown.
 
 ### Changed
 
