@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use eframe::egui::{self, Context, Ui};
+use eframe::egui::{self, Context, Ui, vec2};
 
 use super::images::copy_into;
 use super::{OpenFile, RubriqueApp, char_to_byte};
@@ -15,6 +15,7 @@ use crate::document::merge::MergeSession;
 use crate::document::view::{editor_cursor, set_editor_cursor};
 use crate::explorer::paths::name_text;
 use crate::explorer::tree::FsNode;
+use crate::icons::{Icon, icon_button, icon_text_button};
 use crate::markdown::blocks::{Block, SourceBlock};
 use crate::media::is_image_path;
 use crate::voice::audio::{Player, Recorder};
@@ -36,6 +37,10 @@ const PLAYING_REPAINT: Duration = Duration::from_millis(100);
 const METER_FALL: f32 = 0.85;
 /// Bytes read to find a WAV file's length.
 const HEADER_READ: usize = 4096;
+/// Radius of the red dot on the microphone button while recording, and
+/// how far in from the button's top right corner it sits.
+const RECORDING_DOT_RADIUS: f32 = 3.0;
+const RECORDING_DOT_INSET: f32 = 5.0;
 
 /// Recording, playback and transcription state.
 #[derive(Debug, Default)]
@@ -541,20 +546,27 @@ impl RubriqueApp {
     }
 
     /// The Voice memos part of the status bar: Record and Audio….
+    /// The status bar's memo buttons, right to left: add an audio file, then
+    /// the microphone. While recording, the microphone button is highlighted
+    /// and shows the elapsed time with a red dot in its corner.
     pub(super) fn voice_buttons(&mut self, ui: &mut Ui) {
-        let recording = self.voice.recording.is_some();
-        let tip = if recording {
-            "Stop and add the memo (Cmd+Shift+R)"
-        } else {
-            "Record a voice memo into this note (Cmd+Shift+R)"
-        };
-        let text = if recording { "Stop" } else { "Record" };
-        if crate::icons::icon_text_button(ui, crate::icons::Icon::Mic, text, tip, recording).clicked() {
-            self.toggle_recording(ui.ctx());
-        }
-        let audio = ui.small_button("Audio…").on_hover_text("Add an audio file as a memo (or drop one on the page)");
-        if audio.clicked() {
+        let audio_tip = "Add an audio file as a memo (or drop one on the page)";
+        if icon_button(ui, Icon::AudioPlus, "Add audio file", audio_tip, false).clicked() {
             self.choose_audio_file(ui.ctx());
+        }
+        let microphone = match &self.voice.recording {
+            Some(recording) => {
+                let elapsed = format_elapsed(recording.recorder.elapsed_seconds());
+                let tip = "Stop and add the memo (Cmd+Shift+R)";
+                let response = icon_text_button(ui, Icon::Mic, &elapsed, tip, true);
+                let dot = response.rect.right_top() + vec2(-RECORDING_DOT_INSET, RECORDING_DOT_INSET);
+                ui.painter().circle_filled(dot, RECORDING_DOT_RADIUS, ui.visuals().error_fg_color);
+                response
+            }
+            None => icon_button(ui, Icon::Mic, "Record", "Record a voice memo into this note (Cmd+Shift+R)", false),
+        };
+        if microphone.clicked() {
+            self.toggle_recording(ui.ctx());
         }
     }
 }

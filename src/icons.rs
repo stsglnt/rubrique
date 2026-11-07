@@ -52,6 +52,12 @@ pub enum Icon {
     SidePanel,
     /// An encrypted file: a padlock whose keyhole is the accent.
     Lock,
+    /// Add an audio file as a memo: a waveform with the plus badge.
+    AudioPlus,
+    /// Pretty-print the file: three text lines, the indented one the accent.
+    Format,
+    /// Open the file in the web browser: a window with an arrow leaving it.
+    Browser,
 }
 
 /// A flat button with `icon` and a hover tip. `active` keeps it highlighted
@@ -161,6 +167,14 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
         Icon::SidePanel => paint_side_panel(painter, center, line, detail),
         Icon::NewScratch => paint_new_scratch(painter, center, line, detail),
         Icon::Lock => paint_lock(painter, center, line, accent),
+        Icon::AudioPlus => paint_audio_plus(painter, center, line, accent, behind),
+        Icon::Browser => paint_browser(painter, center, line, detail),
+        Icon::Format => {
+            // Three lines of text; the indented middle one is the accent.
+            stroke_path(painter, &[at(-6.0, -4.5), at(6.0, -4.5)], false, line);
+            stroke_path(painter, &[at(-2.5, 0.0), at(6.0, 0.0)], false, detail);
+            stroke_path(painter, &[at(-6.0, 4.5), at(2.0, 4.5)], false, line);
+        }
         Icon::Refresh => {
             // Most of a circle; the arrowhead at its end is the accent.
             let radius = 5.6;
@@ -292,6 +306,26 @@ fn paint_lock(painter: &Painter, center: Pos2, line: Stroke, accent: Color32) {
     stroke_path(painter, &shackle, false, line);
     painter.circle_filled(at(0.0, 2.4), 1.3, accent);
     stroke_path(painter, &[at(0.0, 2.4), at(0.0, 4.4)], false, Stroke::new(LINE, accent));
+}
+
+/// Four waveform bars; the plus badge at the bottom right is the accent.
+fn paint_audio_plus(painter: &Painter, center: Pos2, line: Stroke, accent: Color32, behind: Color32) {
+    let at = |x: f32, y: f32| center + vec2(x, y);
+    let bars = [(-6.0, -2.0, 2.0), (-3.0, -5.0, 5.0), (0.0, -3.0, 3.0), (3.0, -5.5, -1.0)];
+    for (x, top, bottom) in bars {
+        stroke_path(painter, &[at(x, top), at(x, bottom)], false, line);
+    }
+    plus_badge(painter, at(4.0, 3.5), accent, behind);
+}
+
+/// A window open at its top right corner, where an arrow (the accent)
+/// points out of it.
+fn paint_browser(painter: &Painter, center: Pos2, line: Stroke, detail: Stroke) {
+    let at = |x: f32, y: f32| center + vec2(x, y);
+    let frame = [at(1.5, -6.0), at(-6.5, -6.0), at(-6.5, 6.5), at(6.5, 6.5), at(6.5, -1.5)];
+    stroke_path(painter, &round_corners(&frame, CORNER, false), false, line);
+    stroke_path(painter, &[at(1.5, -6.5), at(6.5, -6.5), at(6.5, -1.5)], false, detail);
+    stroke_path(painter, &[at(6.5, -6.5), at(0.5, -0.5)], false, detail);
 }
 
 /// A window split in two; the lines in the right column are the accent.

@@ -7,19 +7,32 @@
 //! Tabs stay next to their group: a new tab opens at the end of its group,
 //! and the tabs restored at startup are sorted into groups.
 
-use eframe::egui::{self, Color32, Sense, Ui, vec2};
+use eframe::egui::{self, Color32, Sense, Ui, WidgetInfo, pos2, vec2};
 
 use super::{OpenFile, RubriqueApp};
 use crate::theme::style::group_color;
 
-/// Height of a group chip.
-const CHIP_HEIGHT: f32 = 20.0;
-/// Space left and right of a chip's text.
+/// Height of a group chip: the same as the Preview | Source switch at the
+/// other end of the strip.
+const CHIP_HEIGHT: f32 = 22.0;
+/// Space left and right of a chip's contents.
 const CHIP_PADDING: f32 = 8.0;
 /// Space around a chip in the tab strip.
 const CHIP_MARGIN: f32 = 6.0;
-/// How strongly a chip is filled with its group color.
-const CHIP_TINT: f32 = 0.22;
+/// Corner radius of a chip: the widget radius, like the buttons around it
+/// (a pill was the only fully round shape in the window).
+const CHIP_RADIUS: u8 = 5;
+/// Radius of the folder's color dot at the start of a chip, the same dot
+/// as on the folder's row in the explorer.
+const CHIP_DOT: f32 = 3.0;
+/// Space between the dot and the folder's name.
+const CHIP_DOT_GAP: f32 = 6.0;
+/// How strongly a chip is filled with its group color; a folded chip,
+/// which stands for its tabs, a little more.
+const CHIP_TINT: f32 = 0.16;
+const FOLDED_CHIP_TINT: f32 = 0.26;
+/// How much stronger the fill gets under the pointer.
+const HOVER_TINT: f32 = 1.6;
 
 /// What a chip asks for.
 #[derive(Clone, Debug, PartialEq)]
@@ -86,21 +99,30 @@ impl RubriqueApp {
         self.active_tab = order.iter().position(|&index| index == self.active_tab).unwrap_or(0);
     }
 
-    /// The chip that starts a group: its folder's name (and how many tabs
-    /// it has while folded) in the group color. Returns a click on it.
+    /// The chip that starts a group: the folder's color dot and its name
+    /// (and how many tabs it has while folded) on a soft fill in the group
+    /// color. Returns a click on it.
     pub(super) fn group_chip(&self, ui: &mut Ui, group: Option<usize>, folded: bool) -> Option<ChipClick> {
         let name = group.and_then(|index| self.roots.get(index)).map_or("Other", |root| root.name.as_str());
         let count = (0..self.tabs.len()).filter(|&index| self.group_of(self.tab(index)) == group).count();
         let text = if folded { format!("{name} · {count}") } else { name.to_string() };
         let color = self.group_color_of(group).unwrap_or_else(|| ui.visuals().weak_text_color());
         let font = egui::TextStyle::Small.resolve(ui.style());
-        let galley = ui.painter().layout_no_wrap(text, font, color);
-        let size = vec2(galley.size().x + CHIP_PADDING * 2.0 + CHIP_MARGIN * 2.0, super::tabs::TAB_HEIGHT);
+        let galley = ui.painter().layout_no_wrap(text.clone(), font, color);
+        let dot_width = CHIP_DOT * 2.0 + CHIP_DOT_GAP;
+        let chip_width = CHIP_PADDING * 2.0 + dot_width + galley.size().x;
+        let size = vec2(chip_width + CHIP_MARGIN * 2.0, super::tabs::TAB_HEIGHT);
+        // Click to fold, drag to move the group.
         let (slot, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
-        let chip = egui::Rect::from_center_size(slot.center(), vec2(size.x - CHIP_MARGIN * 2.0, CHIP_HEIGHT));
-        let fill = color.gamma_multiply(if response.hovered() { CHIP_TINT * 1.6 } else { CHIP_TINT });
-        ui.painter().rect_filled(chip, CHIP_HEIGHT / 2.0, fill);
-        ui.painter().galley(chip.center() - galley.size() / 2.0, galley, color);
+        response.widget_info(|| WidgetInfo::labeled(egui::Role::Button, true, &text));
+        let chip = egui::Rect::from_center_size(slot.center(), vec2(chip_width, CHIP_HEIGHT));
+        let tint = if folded { FOLDED_CHIP_TINT } else { CHIP_TINT };
+        let fill = color.gamma_multiply(if response.hovered() { tint * HOVER_TINT } else { tint });
+        ui.painter().rect_filled(chip, CHIP_RADIUS, fill);
+        let dot = pos2(chip.left() + CHIP_PADDING + CHIP_DOT, chip.center().y);
+        ui.painter().circle_filled(dot, CHIP_DOT, color);
+        let text_pos = pos2(chip.left() + CHIP_PADDING + dot_width, chip.center().y - galley.size().y / 2.0);
+        ui.painter().galley(text_pos, galley, color);
         let tip = if folded { "Show this group's tabs" } else { "Fold this group's tabs" };
         let tip = if group.is_some() { format!("{tip}. Drag to move the group") } else { tip.to_string() };
         let response = response.on_hover_text(tip);
