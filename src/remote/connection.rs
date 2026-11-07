@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, PoisonError};
 use std::thread;
@@ -87,9 +87,7 @@ fn run_now(host: &str, script: &str, args: &[&OsStr], input: Option<&[u8]>, time
     command.args(ssh_options(host)).arg("--").arg(host).arg(remote_command(script, args));
     command.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() });
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = command.spawn().map_err(|error| {
-        io::Error::new(error.kind(), format!("cannot run {}: {error}", super::ssh_program().display()))
-    })?;
+    let mut child = command.spawn().map_err(|error| cannot_run(&super::ssh_program(), &error))?;
 
     let writer = match (input, child.stdin.take()) {
         (Some(input), Some(mut stdin)) => {
@@ -131,6 +129,19 @@ fn run_now(host: &str, script: &str, args: &[&OsStr], input: Option<&[u8]>, time
     }
 }
 
+/// The error for an ssh program that cannot be started. Never `NotFound`:
+/// to every caller that kind means "no such file on the host", and the
+/// dialog would then blame the folder (and a file check would say the file
+/// is gone) when the setting is wrong.
+fn cannot_run(program: &Path, error: &io::Error) -> io::Error {
+    let reason =
+        if error.kind() == io::ErrorKind::NotFound { "no such program".to_string() } else { error.to_string() };
+    io::Error::other(format!(
+        "Cannot run \"{}\": {reason}. Set the ssh program in Settings \u{2192} Files.",
+        program.display()
+    ))
+}
+
 /// Read a pipe to its end on a thread of its own, so a full pipe never blocks the other.
 fn read_all(mut pipe: impl Read + Send + 'static) -> thread::JoinHandle<Vec<u8>> {
     thread::spawn(move || {
@@ -151,6 +162,12 @@ fn ssh_options(host: &str) -> Vec<String> {
         "ServerAliveInterval=5".to_string(),
         "-o".to_string(),
         "ServerAliveCountMax=3".to_string(),
+        // A `RemoteCommand` in ~/.ssh/config (a host that opens tmux, say)
+        // makes ssh refuse any other command; our scripts need no terminal.
+        "-o".to_string(),
+        "RemoteCommand=none".to_string(),
+        "-o".to_string(),
+        "RequestTTY=no".to_string(),
     ];
     if let Some(socket) = control_socket(host) {
         options.extend([
@@ -307,6 +324,27 @@ mod tests {
     fn bad_hosts_never_reach_ssh() {
         let error = run("-oProxyCommand=touch /tmp/x", "true", &[], None, COMMAND_TIMEOUT).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn options_turn_off_remote_commands_and_terminals() {
+        let options = ssh_options("box");
+        assert!(options.contains(&"RemoteCommand=none".to_string()), "{options:?}");
+        assert!(options.contains(&"RequestTTY=no".to_string()), "{options:?}");
+        assert!(options.contains(&"BatchMode=yes".to_string()), "{options:?}");
+    }
+
+    #[test]
+    fn a_missing_program_is_not_a_missing_file() {
+        let missing = io::Error::new(io::ErrorKind::NotFound, "No such file or directory");
+        let error = cannot_run(Path::new("ssh gpu-workstation"), &missing);
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(
+            error.to_string(),
+            "Cannot run \"ssh gpu-workstation\": no such program. Set the ssh program in Settings \u{2192} Files."
+        );
+        let denied = io::Error::new(io::ErrorKind::PermissionDenied, "Permission denied");
+        assert!(cannot_run(Path::new("/opt/ssh"), &denied).to_string().contains("Permission denied"));
     }
 
     #[test]

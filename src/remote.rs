@@ -62,6 +62,44 @@ pub fn set_ssh_program(program: &str) {
     *SSH_PROGRAM.write().unwrap_or_else(PoisonError::into_inner) = Some(PathBuf::from(program));
 }
 
+/// What a look for the ssh program setting found on this computer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProgramCheck {
+    /// Where the program is.
+    Found(PathBuf),
+    /// Why it cannot run, in words for the user.
+    Problem(String),
+}
+
+/// Look for the program the ssh setting names: a path, or a name searched
+/// in `PATH`. Never connects anywhere.
+pub fn check_ssh_program(program: &str) -> ProgramCheck {
+    let program = program.trim();
+    let program = if program.is_empty() { DEFAULT_SSH_PROGRAM } else { program };
+    if program.chars().any(char::is_whitespace) {
+        return ProgramCheck::Problem(format!(
+            "Not a program: \"{program}\". Enter the program only, without a computer or options: ssh, or a path such as /opt/homebrew/bin/ssh."
+        ));
+    }
+    let found = if program.contains('/') {
+        Path::new(program).is_file().then(|| PathBuf::from(program))
+    } else {
+        find_in_path(program)
+    };
+    match found {
+        Some(path) => ProgramCheck::Found(path),
+        None => ProgramCheck::Problem(format!(
+            "No program \"{program}\" on this computer. Enter ssh, or the path of an OpenSSH client such as /opt/homebrew/bin/ssh."
+        )),
+    }
+}
+
+/// The first file called `name` in the folders of `PATH`.
+fn find_in_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).map(|folder| folder.join(name)).find(|candidate| candidate.is_file())
+}
+
 /// The `ssh` program to run.
 pub fn ssh_program() -> PathBuf {
     SSH_PROGRAM
@@ -155,6 +193,20 @@ mod tests {
         }
         assert_eq!(back, settings);
         assert!(!back.parse_line("theme", "dark"));
+    }
+
+    #[test]
+    fn checks_the_ssh_program_setting() {
+        assert!(matches!(check_ssh_program("sh"), ProgramCheck::Found(path) if path.ends_with("sh")));
+        assert!(matches!(check_ssh_program("/bin/sh"), ProgramCheck::Found(path) if path == Path::new("/bin/sh")));
+        let ProgramCheck::Problem(command_line) = check_ssh_program("ssh gpu-workstation") else {
+            panic!("a command line is not a program");
+        };
+        assert!(command_line.starts_with("Not a program: \"ssh gpu-workstation\""), "{command_line}");
+        assert!(matches!(check_ssh_program("no-such-program-rubrique"), ProgramCheck::Problem(_)));
+        assert!(matches!(check_ssh_program("/no/such/ssh"), ProgramCheck::Problem(_)));
+        // Empty means the default.
+        assert_eq!(check_ssh_program("  "), check_ssh_program("ssh"));
     }
 
     #[test]
