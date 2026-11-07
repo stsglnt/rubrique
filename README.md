@@ -36,7 +36,8 @@ Agents run only when you ask, read-only by default.
 
 **Writing**
 
-- Live preview: click a block to edit it.
+- Live preview: click a block to edit it. In a table, click a cell to edit
+  just that cell; buttons under it add or remove rows and columns.
 - Side panel (the button at the right of the tabs): Structure, the file's headings (`Cmd+Shift+O`), or its Notes.
 - Voice memos (`Cmd+Shift+R`), transcribed locally with whisper.cpp.
 - Drop images and audio onto the page.
@@ -47,7 +48,7 @@ Agents run only when you ask, read-only by default.
 
 **Files**
 
-- Several folders in one explorer. Right-click a folder → New file, folder or terminal. Double-click a file or tab to rename it, right-click to delete.
+- Several folders in one explorer. Right-click a folder → New file, folder or terminal. Double-click a file, folder or tab to rename it, right-click to delete.
 - Tabs keep unsaved changes, cursor and undo.
 - Safe saves: your file is never reformatted; outside changes open a merge.
 - Find in a file or across all folders (`Cmd+F`), match case or whole
@@ -57,9 +58,9 @@ Agents run only when you ask, read-only by default.
   status (working, needs you, idle) and the agent sessions they ran, ready to
   resume. A `.tmux` file opens a terminal in its folder.
 - Hand a step of any document to a terminal's agent: `@tmux-qa: check this`, then Send.
-- Tabs grouped and colored by explorer folder.
+- Tabs grouped and colored by explorer folder; drag tabs and groups to reorder them.
 
-<img src="docs/screenshots/themes.png" alt="One rubrique window shown in five themes: Light, Dark, Sepia, Midnight and High contrast" width="880">
+<img src="docs/screenshots/themes.png" alt="One rubrique window shown in five themes: Light, Indigo, Sepia, Midnight and High contrast" width="880">
 
 Five themes (Indigo is the default dark one), or follow the system, or [add your own](themes/). Text size, line
 numbers and other options are in Settings → Accessibility.
@@ -131,5 +132,7 @@ cargo run --release -- ~/notes
 Before a pull request: `cargo test`, `cargo clippy --all-targets -- -D warnings`,
 `cargo fmt --check`, `cargo deny check`.
 
-Releases: bump `CHANGELOG.md` and `Cargo.toml`, push to `main`. See
-[`CHANGELOG.md`](CHANGELOG.md).
+Releases: a `release X.Y.Z` commit on `main` (changelog section, version in
+`Cargo.toml` and `Cargo.lock`) pushed together with the `rubrique-vX.Y.Z`
+tag; the Release workflow builds the packages. Steps in
+[`AGENTS.md`](AGENTS.md), notes in [`CHANGELOG.md`](CHANGELOG.md).

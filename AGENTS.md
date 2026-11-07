@@ -1,0 +1,70 @@
+# Instructions for agents
+
+Read this before changing rubrique. The code is Rust (edition 2024) with
+egui; `README.md` says what the app does and `CHANGELOG.md` what changed.
+
+## Before a pull request
+
+Run all four and fix what they report; CI runs the same with `--locked`:
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked
+cargo deny check
+```
+
+Add a line to the `Unreleased` section of `CHANGELOG.md` for anything a
+user would notice (Added, Changed or Fixed), in the same voice as the
+entries there: bold name, then what it does for the user.
+
+Branch names are words joined by `-` only (`table-cell-edit-preview`), no
+`claude/` prefix. Commit messages are one short imperative line.
+
+## Releasing
+
+A release is a commit on `main` plus a tag; no release branch or pull
+request. Minor versions (0.x.0) are for new features, patch versions for
+fixes only.
+
+1. In `CHANGELOG.md`, insert `## [X.Y.Z] - YYYY-MM-DD` under the
+   `## [Unreleased]` heading (keep that heading, empty, above it), so the
+   unreleased entries become the release notes.
+2. Set `version = "X.Y.Z"` in `Cargo.toml` and in the `rubrique` package
+   entry of `Cargo.lock` (or run `cargo check --locked` after editing
+   `Cargo.toml` and commit the lock change it asks for).
+3. Run the four checks above.
+4. Commit as `release X.Y.Z`, tag it, and push both in one command so the
+   workflows see the tag:
+
+   ```sh
+   git tag -a rubrique-vX.Y.Z -m "rubrique X.Y.Z"
+   git push origin main refs/tags/rubrique-vX.Y.Z
+   ```
+
+The `Release` workflow (`.github/workflows/release.yml`) builds the macOS
+and Linux packages and publishes the GitHub release with the changelog
+section for that version. It runs on the tag push, and also on any push
+to `main` whose `Cargo.toml` version has no tag yet. If Actions did not
+run (for example the account's spending limit was reached), start it by
+hand from the Actions tab (`workflow_dispatch`) once that is fixed.
+
+## Screenshots
+
+`docs/screenshots/themes.png` is remade by a script (macOS only):
+
+```sh
+cargo build && docs/screenshots/tools/themes.sh target/debug/rubrique
+```
+
+It opens `docs/screenshots/sample/notes/todo.md` in a 1100 x 700 window
+once per theme, with its own settings folder and no tmux on the PATH,
+captures each window, and joins a vertical strip of each capture into one
+image with the theme name under it. Change the sample folder rather than
+the script when the picture should show something else.
+
+`docs/screenshots/ai.png` is a staged Compare run (Claude and Codex on the
+same sample file, the merge screen open, the Ask bar and a hover summary
+showing). It needs the agents, or stand-ins on the PATH that print a
+prepared answer, and someone at the keyboard; take it at 1100 x 700 points
+on the same sample folder.

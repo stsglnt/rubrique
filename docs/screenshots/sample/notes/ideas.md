@@ -1,0 +1,3 @@
+# Ideas
+
+Ideas for rubrique after 0.3: tabs, a word count goal and AI notes.
