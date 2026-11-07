@@ -71,6 +71,10 @@ pub struct FsNode {
     pub expanded: bool,
     /// Entries of a folder, loaded on first expand.
     pub children: Children,
+    /// The file starts with rubrique's encryption header (an encrypted
+    /// scratch), read when the folder is listed. Never set for folders, nor
+    /// for files on other computers (their bytes are not here).
+    pub encrypted: bool,
 }
 
 impl FsNode {
@@ -84,6 +88,7 @@ impl FsNode {
             is_symlink: false,
             expanded: true,
             children: Children::NotLoaded,
+            encrypted: false,
         };
         root.load_children();
         root
@@ -219,6 +224,7 @@ fn read_remote_folder(folder: &Path, remote: &crate::remote::RemotePath) -> std:
             name: entry.name,
             expanded: false,
             children: Children::NotLoaded,
+            encrypted: false,
         })
         .collect();
     nodes.sort_by(compare_nodes);
@@ -239,6 +245,8 @@ fn node_from_entry(entry: &fs::DirEntry, canonical_parent: &Path) -> FsNode {
     } else {
         NodeKind::Folder
     };
+    // Only the first bytes are read, once per listing.
+    let encrypted = kind == NodeKind::File && crate::crypto::file_is_encrypted(&path);
     FsNode {
         name: entry.file_name().to_string_lossy().into_owned(),
         path,
@@ -246,6 +254,7 @@ fn node_from_entry(entry: &fs::DirEntry, canonical_parent: &Path) -> FsNode {
         is_symlink,
         expanded: false,
         children: Children::NotLoaded,
+        encrypted,
     }
 }
 
@@ -355,6 +364,17 @@ mod tests {
         assert!(matches!(docs.children, Children::NotLoaded));
         docs.toggle_expanded();
         assert_eq!(names(loaded(docs)), ["inner.md"]);
+    }
+
+    #[test]
+    fn marks_encrypted_files() {
+        let temp = TempFolder::new();
+        temp.write("plain.md", "words");
+        let vault = crate::crypto::Vault::create("password").0;
+        fs::write(temp.path().join("secret.md"), vault.encrypt(b"words")).unwrap();
+        let root = FsNode::new_root(temp.path().to_path_buf());
+        let marks: Vec<(&str, bool)> = loaded(&root).iter().map(|node| (node.name.as_str(), node.encrypted)).collect();
+        assert_eq!(marks, vec![("plain.md", false), ("secret.md", true)]);
     }
 
     #[test]

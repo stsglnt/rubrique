@@ -15,7 +15,7 @@ use crate::document::preview_selection;
 use crate::document::view::{focus_editor, restore_editor_state, take_editor_state};
 use crate::explorer::paths::absolute_path_text;
 use crate::explorer::view::{InlineRename, rename_field};
-use crate::icons::{Icon, paint_icon, small_icon_button};
+use crate::icons::{Icon, LOCK_MARK_SIZE, paint_icon, paint_lock_mark, small_icon_button};
 use crate::media::image_uri;
 use crate::theme::style::page_fill;
 
@@ -35,6 +35,8 @@ const ACTIVE_LINE: f32 = 2.0;
 const GROUP_LINE_TINT: f32 = 0.55;
 /// Radius of the unsaved-changes dot.
 const DIRTY_DOT: f32 = 3.5;
+/// Space between an encrypted tab's name and its padlock.
+const LOCK_GAP: f32 = 6.0;
 /// Width of each half of the Preview | Source switch: room for one icon.
 const SWITCH_SEGMENT: f32 = 28.0;
 const SWITCH_HEIGHT: f32 = 22.0;
@@ -377,6 +379,7 @@ impl RubriqueApp {
                                     OpenFile::Terminal { terminal } => Some(terminal.name.clone()),
                                     _ => None,
                                 },
+                                encrypted: file.is_encrypted(),
                             };
                             let left = ui.cursor().left();
                             if let Some(found) = show_tab(ui, &tab, index, self.tabs.len(), &mut self.tab_rename) {
@@ -602,6 +605,8 @@ struct TabView {
     group_color: Option<Color32>,
     /// The tmux session the tab shows, if it is a terminal.
     terminal: Option<String>,
+    /// The file is stored encrypted: a padlock after the name.
+    encrypted: bool,
 }
 
 /// One tab: the file name, then a close cross (a dot instead while the file
@@ -621,11 +626,13 @@ fn show_tab(
     let visuals = ui.visuals().clone();
     let font = egui::TextStyle::Body.resolve(ui.style());
     let text_color = if tab.active { visuals.strong_text_color() } else { visuals.weak_text_color() };
-    let max_text = TAB_MAX_WIDTH - TAB_PADDING * 2.0 - CLOSE_SIZE;
+    let lock_width = if tab.encrypted { LOCK_GAP + LOCK_MARK_SIZE } else { 0.0 };
+    let max_text = TAB_MAX_WIDTH - TAB_PADDING * 2.0 - lock_width - CLOSE_SIZE;
     let mut job = egui::text::LayoutJob::simple_singleline(tab.name.clone(), font, text_color);
     job.wrap = egui::text::TextWrapping::truncate_at_width(max_text);
     let galley = ui.painter().layout_job(job);
-    let width = TAB_PADDING * 2.0 + galley.size().x + CLOSE_SIZE;
+    let text_width = galley.size().x;
+    let width = TAB_PADDING * 2.0 + text_width + lock_width + CLOSE_SIZE;
     // Own id: a hovered tab's cross takes an automatic id, renumbering the rest.
     let (rect, _) = ui.allocate_exact_size(vec2(width, TAB_HEIGHT), Sense::hover());
     let response = ui.interact(rect, ui.scope_id().with(("tab", index)), Sense::click_and_drag());
@@ -662,6 +669,10 @@ fn show_tab(
     }
     let text_pos = pos2(rect.left() + TAB_PADDING, rect.center().y - galley.size().y / 2.0);
     painter.galley(text_pos, galley.clone(), text_color);
+    if tab.encrypted {
+        let center = pos2(text_pos.x + text_width + LOCK_GAP + LOCK_MARK_SIZE / 2.0, rect.center().y);
+        paint_lock_mark(painter, center, text_color, visuals.hyperlink_color);
+    }
     paint_dragged_tab(ui, &response, fill, line, (text_pos, galley, text_color));
     let close_rect = egui::Rect::from_center_size(
         pos2(rect.right() - TAB_PADDING / 2.0 - CLOSE_SIZE / 2.0, rect.center().y),
@@ -682,7 +693,14 @@ fn show_tab(
             action = Some(TabAction::Close(index));
         }
     }
-    let tip = if tab.dirty { format!("{}\nUnsaved changes", tab.path) } else { tab.path.clone() };
+
+    let mut tip = tab.path.clone();
+    if tab.encrypted {
+        tip.push_str("\nEncrypted");
+    }
+    if tab.dirty {
+        tip.push_str("\nUnsaved changes");
+    }
     let response = response.on_hover_text(tip);
     if response.double_clicked() && tab.file.is_some() {
         action = Some(TabAction::Rename(index));
@@ -700,32 +718,38 @@ fn show_tab(
     if response.middle_clicked() {
         action = Some(TabAction::Close(index));
     }
+    tab_menu(&response, tab, index, count, &mut action);
+    action
+}
+
+/// The tab's right-click menu: the close actions, then Exit terminal (for
+/// a terminal), Rename (for a file) and Copy path.
+fn tab_menu(response: &egui::Response, tab: &TabView, index: usize, count: usize, action: &mut Option<TabAction>) {
     response.context_menu(|ui| {
         if ui.button("Close").clicked() {
-            action = Some(TabAction::Close(index));
+            *action = Some(TabAction::Close(index));
         }
         if ui.add_enabled(count > 1, egui::Button::new("Close others")).clicked() {
-            action = Some(TabAction::CloseOthers(index));
+            *action = Some(TabAction::CloseOthers(index));
         }
         if ui.add_enabled(index + 1 < count, egui::Button::new("Close to the right")).clicked() {
-            action = Some(TabAction::CloseToTheRight(index));
+            *action = Some(TabAction::CloseToTheRight(index));
         }
         ui.separator();
         if tab.terminal.is_some() && ui.button("Exit terminal").clicked() {
-            action = Some(TabAction::ExitTerminal(index));
+            *action = Some(TabAction::ExitTerminal(index));
         }
         if ui
             .add_enabled(tab.file.is_some(), egui::Button::new("Rename"))
             .on_hover_text("Or double-click the tab")
             .clicked()
         {
-            action = Some(TabAction::Rename(index));
+            *action = Some(TabAction::Rename(index));
         }
         if ui.button("Copy path").clicked() {
-            action = Some(TabAction::CopyPath(index));
+            *action = Some(TabAction::CopyPath(index));
         }
     });
-    action
 }
 
 /// A tab whose file is being renamed: the name field in place of its label.
@@ -773,6 +797,7 @@ mod layout_tests {
                                 active: index == 1,
                                 group_color: None,
                                 terminal: None,
+                                encrypted: false,
                             };
                             let left = ui.cursor().left();
                             show_tab(ui, &tab, index, 3, &mut None);

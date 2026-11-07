@@ -8,7 +8,8 @@ use egui::text::{CCursor, CCursorRange};
 use super::note_marks::NoteMarks;
 use super::section::{paint_fold_arrow, section_header};
 use super::terminals::{show_docked_terminals, show_terminal_file, show_terminals_section};
-use crate::icons::{Icon, paint_icon, small_icon_button};
+use crate::icons::{Icon, LOCK_MARK_SIZE, paint_icon, paint_lock_mark, small_icon_button};
+use crate::scratch::is_scratch;
 use crate::settings::layout::LayoutSettings;
 use crate::terminal::agent_sessions::SessionHistory;
 use crate::terminal::is_terminal_path;
@@ -42,6 +43,8 @@ pub enum ExplorerAction {
     RenameInTree(PathBuf),
     /// Ask, then move this file to the Trash.
     Delete(PathBuf),
+    /// Store this scratch encrypted (`true`) or as plain text.
+    SetEncrypted { path: PathBuf, encrypt: bool },
     /// Show this tmux session in a tab.
     OpenTerminal(String),
     /// Start a new tmux session and show it.
@@ -197,6 +200,9 @@ pub struct TreeContext<'a> {
     pub agent_history: Option<&'a SessionHistory>,
     /// The terminals whose agent sessions are unfolded in the list.
     pub expanded_terminals: &'a [String],
+    /// The scratch folder: its files get "Encrypt" or "Remove encryption"
+    /// in their right-click menu.
+    pub scratch_folder: Option<&'a Path>,
 }
 
 /// The tree entry "Show in files" pointed at.
@@ -406,10 +412,14 @@ fn show_file(
     let is_open = context.open_file == Some(file.path.as_path()) || is_revealed(context, &file.path);
     let dirty = context.dirty_files.iter().any(|path| path == &file.path);
     let dirty_marker = if dirty { " •" } else { "" };
-    let label = format!("{ICON_GAP}{}{}{dirty_marker}", file.name, link_marker(file));
+    let lock_gap = if file.encrypted { LOCK_GAP } else { "" };
+    let label = format!("{ICON_GAP}{}{}{dirty_marker}{lock_gap}", file.name, link_marker(file));
     let label = if dirty { egui::RichText::new(label).color(UNSAVED_COLOR) } else { egui::RichText::new(label) };
     let response = tree_row(ui, is_open, label);
     scroll_if_revealed(ui, context, &file.path, &response);
+    if file.encrypted {
+        paint_file_lock(ui, &response);
+    }
     if let Some(marks) = context.note_marks
         && is_markdown_path(&file.path)
         && marks.has_notes(&file.path)
@@ -520,6 +530,9 @@ const ROOT_DOT_GAP: f32 = 9.0;
 pub(super) const HEADER_BUTTON_SIZE: f32 = 22.0;
 /// Width of the note marker's icon box, in points.
 pub(super) const NOTE_MARK_SIZE: f32 = 14.0;
+/// Room after an encrypted file's name for its padlock (wide enough for
+/// [`LOCK_MARK_SIZE`] and a gap before it).
+const LOCK_GAP: &str = "      ";
 /// Width of the name field of a file being renamed in the tree.
 const RENAME_FIELD_WIDTH: f32 = 220.0;
 
@@ -533,6 +546,17 @@ fn paint_note_mark(ui: &Ui, response: &egui::Response) {
     );
     let behind = if response.hovered() { visuals.widgets.hovered.weak_bg_fill } else { visuals.panel_fill };
     paint_icon(ui.painter(), Icon::Bubble, center, visuals.weak_text_color(), visuals.hyperlink_color, behind);
+}
+
+/// Paint the padlock at the end of an encrypted file's row, in the room
+/// [`LOCK_GAP`] left after its name.
+fn paint_file_lock(ui: &Ui, response: &egui::Response) {
+    let visuals = ui.visuals();
+    let center = egui::pos2(
+        response.rect.right() - ui.spacing().button_padding.x - LOCK_MARK_SIZE / 2.0,
+        response.rect.center().y,
+    );
+    paint_lock_mark(ui.painter(), center, visuals.weak_text_color(), visuals.hyperlink_color);
 }
 
 /// Paint the dot of a root's color after its name: its tabs carry the same color.
@@ -609,8 +633,34 @@ pub(super) fn file_menu_with_exit(
         }
         copy_items(ui, path, context, action);
         ui.separator();
+        if encryption_item(ui, path, context, action) {
+            ui.separator();
+        }
         rename_delete_items(ui, path, action);
     });
+}
+
+/// "Encrypt" on a plain scratch, "Remove encryption" on an encrypted one;
+/// nothing for files outside the scratch folder. Returns true when shown.
+fn encryption_item(ui: &mut Ui, path: &Path, context: &TreeContext, action: &mut Option<ExplorerAction>) -> bool {
+    let Some(folder) = context.scratch_folder else {
+        return false;
+    };
+    if !is_scratch(path, folder) {
+        return false;
+    }
+    // Only the first bytes are read, so this is cheap while the menu is open.
+    let encrypted = crate::crypto::file_is_encrypted(path);
+    let (label, tip) = if encrypted {
+        ("Remove encryption", "Store this scratch as plain text; anyone who can read the file sees its text")
+    } else {
+        ("Encrypt", "Store this scratch encrypted with the scratch password. AI tools are then off for it")
+    };
+    if ui.button(label).on_hover_text(tip).clicked() {
+        *action = Some(ExplorerAction::SetEncrypted { path: path.to_path_buf(), encrypt: !encrypted });
+        ui.close();
+    }
+    true
 }
 
 /// "Rename…" (also a double click) and "Delete…" for a file or folder.

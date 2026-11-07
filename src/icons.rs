@@ -166,7 +166,7 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
         Icon::Plus => plus(painter, center, 5.0, line),
         Icon::SidePanel => paint_side_panel(painter, center, line, detail),
         Icon::NewScratch => paint_new_scratch(painter, center, line, detail),
-        Icon::Lock => paint_lock(painter, center, line, accent),
+        Icon::Lock => paint_lock(painter, center, 1.0, color, accent),
         Icon::AudioPlus => paint_audio_plus(painter, center, line, accent, behind),
         Icon::Browser => paint_browser(painter, center, line, detail),
         Icon::Format => {
@@ -292,20 +292,32 @@ fn paint_new_scratch(painter: &Painter, center: Pos2, line: Stroke, detail: Stro
 }
 
 /// A padlock: a body with a rounded shackle on top; the keyhole is the accent.
-fn paint_lock(painter: &Painter, center: Pos2, line: Stroke, accent: Color32) {
-    let at = |x: f32, y: f32| center + vec2(x, y);
+/// The padlock, drawn at `scale` times the icon size (1.0 in buttons;
+/// smaller as the mark after a file name).
+fn paint_lock(painter: &Painter, center: Pos2, scale: f32, line: Color32, accent: Color32) {
+    let at = |x: f32, y: f32| center + vec2(x, y) * scale;
+    let stroke = Stroke::new(LINE * scale, line);
     let body = [at(-5.5, -0.5), at(5.5, -0.5), at(5.5, 6.5), at(-5.5, 6.5)];
-    stroke_path(painter, &round_corners(&body, CORNER, true), true, line);
+    stroke_path(painter, &round_corners(&body, CORNER * scale, true), true, stroke);
     // Half a circle from left to right over the top, with short legs down.
-    let radius = 3.4;
-    let mut shackle = vec![at(-radius, -0.5)];
+    let radius = 3.4 * scale;
+    let mut shackle = vec![at(-3.4, -0.5)];
     shackle.extend(
         (0..=12_u8).map(|step| at(0.0, -3.4) + Vec2::angled(TAU / 2.0 + f32::from(step) / 12.0 * TAU / 2.0) * radius),
     );
-    shackle.push(at(radius, -0.5));
-    stroke_path(painter, &shackle, false, line);
-    painter.circle_filled(at(0.0, 2.4), 1.3, accent);
-    stroke_path(painter, &[at(0.0, 2.4), at(0.0, 4.4)], false, Stroke::new(LINE, accent));
+    shackle.push(at(3.4, -0.5));
+    stroke_path(painter, &shackle, false, stroke);
+    painter.circle_filled(at(0.0, 2.4), 1.3 * scale, accent);
+    stroke_path(painter, &[at(0.0, 2.4), at(0.0, 4.4)], false, Stroke::new(LINE * scale, accent));
+}
+
+/// Width of the padlock drawn after an encrypted file's name, in a tab and
+/// in the explorer: smaller than the icons (14) so it does not crowd the text.
+pub const LOCK_MARK_SIZE: f32 = 10.0;
+
+/// Paint the padlock mark at [`LOCK_MARK_SIZE`], centered on `center`.
+pub fn paint_lock_mark(painter: &Painter, center: Pos2, line: Color32, accent: Color32) {
+    paint_lock(painter, center.round(), LOCK_MARK_SIZE / 14.0, line, accent);
 }
 
 /// Four waveform bars; the plus badge at the bottom right is the accent.

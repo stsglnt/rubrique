@@ -15,6 +15,13 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 - **Move tabs and groups**: drag a tab sideways to reorder it (inside its group), or drag a group chip onto another group to reorder it (and its folder in the explorer).
 - **Dragging a tab or group shows where it lands**: a half visible copy follows the pointer, the original is dimmed in place, and a line in the strip marks the spot where it will be inserted. Dragging a tab to the left over other tabs no longer drops the drag halfway.
 - **Exit terminal** in the right-click menu of a terminal tab and of a `.tmux` file.
+- **Encrypt or decrypt a scratch from the explorer**: right-click a file in
+  the scratch folder for **Encrypt** or **Remove encryption**, open or not.
+  Both ask for the scratch password when it was not entered yet (before,
+  removing encryption only worked after unlocking in Settings), so a
+  scratch can change at any time, whatever **Encrypt every new scratch** says.
+  An encrypted scratch shows a padlock after its name, in its tab and in
+  the explorer.
 - **Add remote folder shows what is there**: pick a computer and the dialog
   lists the folders of your home there. Click one to look inside it, "up"
   to go back, or type a path; the list follows what you type, Tab completes

@@ -210,6 +210,15 @@ impl OpenFile {
     fn is_dirty(&self) -> bool {
         matches!(self, OpenFile::Text { document, .. } if document.is_dirty())
     }
+
+    /// The file is stored encrypted: open with its key, or waiting for the password.
+    fn is_encrypted(&self) -> bool {
+        match self {
+            OpenFile::Text { document, .. } => document.is_encrypted(),
+            OpenFile::Locked { .. } => true,
+            _ => false,
+        }
+    }
 }
 
 /// An action that closes files, so it may need the "unsaved changes"
@@ -1435,6 +1444,7 @@ impl RubriqueApp {
             .filter_map(|file| file.path().map(Path::to_path_buf))
             .collect();
         let terminal_rows = self.terminals.as_ref().map(TerminalMonitor::rows);
+        let scratch_folder = self.settings.scratch_folder_or_default();
         let context = TreeContext {
             root: Path::new(""),
             can_remove_roots: self.roots.len() > 1,
@@ -1452,6 +1462,7 @@ impl RubriqueApp {
             root_color: None,
             agent_history: Some(&self.agent_history),
             expanded_terminals: &self.expanded_terminals,
+            scratch_folder: scratch_folder.as_deref(),
         };
         let action = show_explorer(
             ui,
@@ -1502,6 +1513,7 @@ impl RubriqueApp {
                 self.new_scratch(ui.ctx(), encrypted);
             }
             Some(ExplorerAction::Rename(path)) => self.start_rename(path),
+            Some(ExplorerAction::SetEncrypted { path, encrypt }) => self.set_scratch_encrypted(&path, encrypt),
             Some(ExplorerAction::RenameInTree(path)) => {
                 self.clear_name_fields();
                 self.tree_rename = Some(InlineRename::new(path));
