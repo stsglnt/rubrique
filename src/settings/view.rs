@@ -412,13 +412,21 @@ fn files_section(ui: &mut Ui, scratch: ScratchInfo, note_marks: &mut bool) -> Op
         .weak(),
     );
     if remote.enabled {
+        // A few file checks on this computer; it never connects anywhere.
+        let check = crate::remote::check_ssh_program(&remote.ssh_program);
         ui.horizontal(|ui| {
             ui.label("ssh program");
             let field = ui.add(egui::TextEdit::singleline(&mut remote.ssh_program).desired_width(220.0));
             if field.lost_focus() || (field.changed() && !field.has_focus()) {
                 action = Some(SettingsAction::RemoteChanged);
             }
+            if let crate::remote::ProgramCheck::Found(path) = &check {
+                ui.label(RichText::new(format!("Found: {}", path.display())).weak());
+            }
         });
+        if let crate::remote::ProgramCheck::Problem(message) = &check {
+            ui.colored_label(ui.visuals().warn_fg_color, message);
+        }
     }
     action
 }

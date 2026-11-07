@@ -13,6 +13,7 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 - **Indigo** replaces the Dark theme (same id, so saved choices keep working) and is the default for new installs. **System** shows Light or Indigo. New lowercase "r" app icon in indigo.
 - **Rename and delete folders**: right-click a folder in the explorer, or double-click it to rename in place, like files.
 - **Move tabs and groups**: drag a tab sideways to reorder it (inside its group), or drag a group chip onto another group to reorder it (and its folder in the explorer).
+- **Dragging a tab or group shows where it lands**: a half visible copy follows the pointer, the original is dimmed in place, and a line in the strip marks the spot where it will be inserted. Dragging a tab to the left over other tabs no longer drops the drag halfway.
 - **Exit terminal** in the right-click menu of a terminal tab and of a `.tmux` file.
 - **Encrypt or decrypt a scratch from the explorer**: right-click a file in
   the scratch folder for **Encrypt** or **Remove encryption**, open or not.
@@ -21,6 +22,15 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   scratch can change at any time, whatever **Encrypt every new scratch** says.
   An encrypted scratch shows a padlock after its name, in its tab and in
   the explorer.
+- **Add remote folder shows what is there**: pick a computer and the dialog
+  lists the folders of your home there. Click one to look inside it, "up"
+  to go back, or type a path; the list follows what you type, Tab completes
+  the one name left, and the Add button says what it adds. A computer that
+  already has a folder in the explorer is picked and listed when the dialog
+  opens.
+- **Settings → Files checks the ssh program**: under the field, "Found:
+  /usr/bin/ssh", or why the setting cannot run (a command line such as
+  `ssh myhost` is not a program).
 
 ### Changed
 
@@ -35,6 +45,16 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 - **Group chips** in the tab strip have the same corners as the buttons
   around them instead of a pill, and start with the folder's color dot
   from the explorer.
+
+### Fixed
+
+- **"No folder ~ on host" when the ssh program setting was wrong**: an ssh
+  program that cannot start was reported as a missing folder (and could make
+  an open remote file look deleted). The dialog now says the program cannot
+  run, with a link to the setting, and checks the setting before connecting.
+- **Hosts with a `RemoteCommand`** in `~/.ssh/config` (one that opens tmux,
+  say) failed with "Cannot execute command-line and remote command". rubrique
+  turns the remote command and the terminal request off for its own calls.
 
 ## [0.7.1] - 2026-11-06
 

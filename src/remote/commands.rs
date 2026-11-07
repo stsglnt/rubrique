@@ -182,6 +182,47 @@ pub fn resolve_folder(host: &str, typed: &str) -> io::Result<PathBuf> {
     if path.is_absolute() { Ok(path) } else { Err(bad_answer(host)) }
 }
 
+/// Prints the folder's absolute path on one line, then `<name>/` for each
+/// subfolder that is not hidden (links to folders included), in name order.
+/// `~` and relative paths start in the home folder, as in [`RESOLVE_FOLDER`].
+const FOLDERS: &str = "p=$1; case $p in '~') p=$HOME;; '~/'*) p=\"$HOME/${p#'~/'}\";; esac; \
+    [ -d \"$p\" ] || exit 3; cd -- \"$p\" || exit 1; pwd -P; \
+    for f in */; do f=${f%/}; [ -d \"$f\" ] && printf '%s/' \"$f\"; done; exit 0";
+
+/// What is inside a folder on a host.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Folders {
+    /// The folder's absolute path.
+    pub path: PathBuf,
+    /// The names of its subfolders, in name order; hidden ones left out.
+    pub names: Vec<String>,
+}
+
+/// The subfolders of the folder `typed` on the host (`~`, `~/dev/`, `/srv`).
+///
+/// # Errors
+///
+/// `NotFound` when there is no such folder; connection errors.
+pub fn folders(host: &str, typed: &str) -> io::Result<Folders> {
+    let output = run(host, FOLDERS, &[OsStr::new(typed.trim())], None, COMMAND_TIMEOUT)?;
+    parse_folders(&output).ok_or_else(|| bad_answer(host))
+}
+
+fn parse_folders(output: &[u8]) -> Option<Folders> {
+    use std::os::unix::ffi::OsStrExt;
+    let newline = output.iter().position(|&byte| byte == b'\n')?;
+    let path = PathBuf::from(OsStr::from_bytes(&output[..newline]));
+    if !path.is_absolute() {
+        return None;
+    }
+    let names = String::from_utf8_lossy(&output[newline + 1..])
+        .split('/')
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect();
+    Some(Folders { path, names })
+}
+
 /// Prints `<size>/<bytes>` per file, or `x/` for one that cannot be read or
 /// is over `$1` bytes. Files are copied first so the size always fits.
 const READ_MANY: &str = "m=$1; shift; t=$(mktemp) || exit 1; trap 'rm -f \"$t\"' EXIT; \
@@ -282,7 +323,7 @@ mod tests {
 
     #[test]
     fn scripts_are_one_line() {
-        for script in [LIST, READ, STAMP, WRITE, RENAME, EXISTS, RESOLVE_FOLDER, READ_MANY, SEARCH] {
+        for script in [LIST, READ, STAMP, WRITE, RENAME, EXISTS, RESOLVE_FOLDER, FOLDERS, READ_MANY, SEARCH] {
             assert!(!script.contains('\n'), "{script}");
             // fish reads `\\` inside single quotes as one backslash.
             assert!(!script.contains("\\\\"), "{script}");
@@ -432,6 +473,26 @@ mod tests {
         let home = resolve_folder(HOST, "~").unwrap();
         assert!(home.is_absolute());
         assert_eq!(resolve_folder(HOST, "/no/such/folder").unwrap_err().kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn lists_the_folders_inside_a_folder() {
+        use_fake_ssh();
+        let temp = TempFolder::new();
+        temp.make_folder("b");
+        temp.make_folder("a");
+        temp.make_folder(".hidden");
+        temp.write("notes.md", "");
+        std::os::unix::fs::symlink(temp.path().join("a"), temp.path().join("link")).unwrap();
+        let found = folders(HOST, &temp.path().display().to_string()).unwrap();
+        assert_eq!(found.path, temp.path());
+        assert_eq!(found.names, ["a", "b", "link"]);
+
+        let empty = folders(HOST, &temp.path().join("a").display().to_string()).unwrap();
+        assert_eq!(empty.names, Vec::<String>::new());
+        assert!(folders(HOST, "~").unwrap().path.is_absolute());
+        assert_eq!(folders(HOST, "/no/such/folder").unwrap_err().kind(), io::ErrorKind::NotFound);
+        assert_eq!(parse_folders(b"relative\nx/"), None);
     }
 
     #[test]

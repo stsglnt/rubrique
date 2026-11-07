@@ -5,13 +5,15 @@
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
+use eframe::egui::text::{CCursor, CCursorRange};
 use eframe::egui::{self, Context, Key, RichText};
 
 use super::{OpenFile, RubriqueApp};
 use crate::document::text_file::DiskState;
 use crate::media::{MediaKind, image_uri, media_kind_of_url};
 use crate::remote::task::{Task, spawn_with_repaint};
-use crate::remote::{self, commands};
+use crate::remote::{self, ProgramCheck, commands};
+use crate::settings::view::SettingsGroup;
 use crate::vfs::{self, Stamp};
 
 /// Largest image downloaded for a remote note's preview.
@@ -22,6 +24,10 @@ const MAX_IMAGES: usize = 60;
 pub(super) const MAX_MEDIA_BYTES: u64 = 200 * 1024 * 1024;
 /// Width of the "Add remote folder" dialog.
 const DIALOG_WIDTH: f32 = 380.0;
+/// Most height the folder buttons take before they scroll.
+const FOLDER_LIST_HEIGHT: f32 = 120.0;
+/// Size of the dialog's spinners.
+const SPINNER_SIZE: f32 = 12.0;
 
 /// Background work for remote folders.
 #[derive(Debug, Default)]
@@ -43,8 +49,115 @@ struct AddRemote {
     known_hosts: Vec<String>,
     /// Why the last attempt failed.
     error: Option<String>,
+    /// The error is about the ssh program setting: offer to open Settings.
+    program_problem: bool,
     /// Connecting and finding the folder.
     connecting: Option<Task<io::Result<PathBuf>>>,
+    /// The host whose folders are listed as the user types. Set when a host
+    /// is picked with a button, confirmed with Enter or already in the
+    /// explorer, so typing half a host name connects nowhere.
+    active_host: Option<String>,
+    /// The listing under way, with the host and typed folder it is for.
+    listing: Option<(String, String, Task<io::Result<commands::Folders>>)>,
+    /// The last (host, typed folder) a listing was started for, so a folder
+    /// that does not exist is not asked for again every frame.
+    attempted: Option<(String, String)>,
+    /// The last listing that worked.
+    folders: Option<Listed>,
+}
+
+/// The subfolders of one folder on a host, shown under the Folder field.
+#[derive(Debug)]
+struct Listed {
+    host: String,
+    /// The folder as typed (`~/dev/`): the start of the Folder text.
+    parent: String,
+    /// The same folder's absolute path on the host.
+    path: PathBuf,
+    /// Its subfolders' names, in name order.
+    names: Vec<String>,
+}
+
+/// What the user asked for in the dialog this frame.
+#[derive(Debug, Default)]
+struct DialogEvents {
+    add: bool,
+    cancel: bool,
+    /// Open Settings on the ssh program field.
+    open_settings: bool,
+}
+
+impl AddRemote {
+    /// Start listing folders on the typed host, after checking that the
+    /// ssh program setting names a program at all (connecting would only
+    /// turn that into a vaguer error).
+    fn activate_host(&mut self, program: &str) {
+        let host = self.host.trim().to_string();
+        if !remote::mirror::is_valid_host(&host) {
+            return;
+        }
+        if let ProgramCheck::Problem(message) = remote::check_ssh_program(program) {
+            self.error = Some(message);
+            self.program_problem = true;
+            return;
+        }
+        self.error = None;
+        self.program_problem = false;
+        // The user asked to try now, even if the host failed a moment ago.
+        remote::connection::forget_failure(&host);
+        self.attempted = None;
+        self.active_host = Some(host);
+    }
+
+    /// The (host, typed folder) to list now, if any.
+    fn wanted_listing(&self) -> Option<(String, String)> {
+        let host = self.active_host.clone().filter(|active| active == self.host.trim())?;
+        if self.listing.is_some() {
+            return None;
+        }
+        let (parent, _) = split_typed(&self.folder);
+        let wanted = (host, parent);
+        (self.attempted.as_ref() != Some(&wanted)).then_some(wanted)
+    }
+
+    /// Pick up a finished listing.
+    fn poll_listing(&mut self) {
+        let Some((host, parent, task)) = &self.listing else {
+            return;
+        };
+        let Some(result) = task.take() else {
+            return;
+        };
+        let (host, parent) = (host.clone(), parent.clone());
+        self.listing = None;
+        match result {
+            Ok(found) => {
+                self.folders = Some(Listed { host, parent, path: found.path, names: found.names });
+                self.error = None;
+            }
+            // The folder being typed does not exist (yet): keep the last list.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                self.folders = None;
+                self.error = Some(error.to_string());
+            }
+        }
+    }
+
+    /// Pick up the finished connection: the mirror path to add, if it worked.
+    fn poll_connecting(&mut self) -> Option<PathBuf> {
+        let result = self.connecting.as_ref().and_then(Task::take)?;
+        self.connecting = None;
+        match result.map(|path| remote::to_mirror(self.host.trim(), &path)) {
+            Ok(Some(mirror)) => return Some(mirror),
+            Ok(None) => self.error = Some("That folder cannot be used".to_string()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                self.error = Some(format!("No folder \"{}\" on {}", self.folder.trim(), self.host.trim()));
+            }
+            Err(error) => self.error = Some(error.to_string()),
+        }
+        None
+    }
 }
 
 impl RubriqueApp {
@@ -118,11 +231,19 @@ impl RubriqueApp {
         is_remote
     }
 
-    /// Open the "Add remote folder" dialog.
+    /// Open the "Add remote folder" dialog. A host that already has a folder
+    /// in the explorer is picked first and its folders listed at once.
     pub(super) fn open_add_remote(&mut self) {
         let known_hosts = remote::ssh_config::user_host_names();
-        let host = known_hosts.first().cloned().unwrap_or_default();
-        self.remote.dialog = Some(AddRemote { host, folder: "~".to_string(), known_hosts, ..AddRemote::default() });
+        let in_use: Vec<String> =
+            self.roots.iter().filter_map(|root| remote::from_mirror(&root.path)).map(|found| found.host).collect();
+        let host = known_hosts.iter().find(|name| in_use.contains(name)).or(known_hosts.first()).cloned();
+        let host = host.unwrap_or_default();
+        let mut dialog = AddRemote { host, folder: "~".to_string(), known_hosts, ..AddRemote::default() };
+        if in_use.contains(&dialog.host) {
+            dialog.activate_host(&self.settings.remote.ssh_program);
+        }
+        self.remote.dialog = Some(dialog);
     }
 
     /// Draw the "Add remote folder" dialog while it is open.
@@ -130,84 +251,48 @@ impl RubriqueApp {
         let Some(dialog) = &mut self.remote.dialog else {
             return;
         };
-        let finished = dialog.connecting.as_ref().and_then(Task::take);
-        if let Some(result) = finished {
-            dialog.connecting = None;
-            match result.map(|path| remote::to_mirror(dialog.host.trim(), &path)) {
-                Ok(Some(mirror)) => {
-                    self.remote.dialog = None;
-                    self.add_folder(mirror.clone());
-                    self.show_status(format!("Added {}", remote::display(&mirror)));
-                    return;
-                }
-                Ok(None) => dialog.error = Some("That folder cannot be used".to_string()),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    dialog.error = Some(format!("No folder \"{}\" on {}", dialog.folder.trim(), dialog.host.trim()));
-                }
-                Err(error) => dialog.error = Some(error.to_string()),
-            }
+        if let Some(mirror) = dialog.poll_connecting() {
+            self.remote.dialog = None;
+            self.add_folder(mirror.clone());
+            self.show_status(format!("Added {}", remote::display(&mirror)));
+            return;
+        }
+        dialog.poll_listing();
+        if let Some((host, parent)) = dialog.wanted_listing() {
+            dialog.attempted = Some((host.clone(), parent.clone()));
+            let (task_host, task_parent) = (host.clone(), parent.clone());
+            let task = spawn_with_repaint(ctx, move || commands::folders(&task_host, &task_parent));
+            dialog.listing = Some((host, parent, task));
         }
 
+        let program = self.settings.remote.ssh_program.clone();
         let connecting = dialog.connecting.is_some();
-        let modal = egui::Modal::new(egui::Id::unique("add-remote-folder")).show(ctx, |ui| {
-            ui.set_width(DIALOG_WIDTH);
-            ui.heading("Add remote folder");
-            ui.label(RichText::new("A folder on another computer, opened over SSH.").weak());
-            ui.add_space(8.0);
-            ui.label("Computer");
-            let host_field = ui.add_enabled(
-                !connecting,
-                egui::TextEdit::singleline(&mut dialog.host)
-                    .hint_text("server or user@server")
-                    .desired_width(f32::INFINITY),
-            );
-            if !dialog.known_hosts.is_empty() {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("From ~/.ssh/config:").weak());
-                    for name in &dialog.known_hosts {
-                        if ui.add_enabled(!connecting, egui::Button::selectable(dialog.host == *name, name)).clicked() {
-                            dialog.host.clone_from(name);
-                        }
-                    }
-                });
+        let modal =
+            egui::Modal::new(egui::Id::unique("add-remote-folder")).show(ctx, |ui| draw_dialog(ui, dialog, &program));
+        let should_close = modal.should_close();
+        let events = modal.inner;
+        if events.open_settings {
+            self.remote.dialog = None;
+            self.settings_group = SettingsGroup::Files;
+            if !self.settings_open {
+                self.toggle_settings();
             }
-            ui.add_space(4.0);
-            ui.label("Folder");
-            let folder_field = ui.add_enabled(
-                !connecting,
-                egui::TextEdit::singleline(&mut dialog.folder).hint_text("~/notes").desired_width(f32::INFINITY),
-            );
-            if let Some(error) = &dialog.error {
-                ui.add_space(4.0);
-                ui.colored_label(ui.visuals().error_fg_color, error);
-            }
-            ui.add_space(8.0);
-            let entered = (host_field.lost_focus() || folder_field.lost_focus())
-                && ui.input(|input| input.key_pressed(Key::Enter));
-            let host_ok = remote::mirror::is_valid_host(dialog.host.trim());
-            let ready = host_ok && !dialog.folder.trim().is_empty() && !connecting;
-            ui.horizontal(|ui| {
-                let add = ui.add_enabled(ready, egui::Button::new("Add")).clicked() || (entered && ready);
-                let cancel = ui.button("Cancel").clicked();
-                if connecting {
-                    ui.add(egui::Spinner::new().size(12.0));
-                    ui.label(RichText::new(format!("Connecting to {}…", dialog.host.trim())).weak());
-                } else if !host_ok && !dialog.host.trim().is_empty() {
-                    ui.label(RichText::new("Use a host name, or user@host").weak());
-                }
-                (add, cancel)
-            })
-            .inner
-        });
-        let (add, cancel) = modal.inner;
-        if cancel || (modal.should_close() && !connecting) {
+            return;
+        }
+        if events.cancel || (should_close && !connecting) {
             self.remote.dialog = None;
             return;
         }
-        if add {
+        if events.add {
             let host = dialog.host.trim().to_string();
             let folder = dialog.folder.trim().to_string();
+            if let ProgramCheck::Problem(message) = remote::check_ssh_program(&program) {
+                dialog.error = Some(message);
+                dialog.program_problem = true;
+                return;
+            }
             dialog.error = None;
+            dialog.program_problem = false;
             // The user asked to try now, even if the host failed a moment ago.
             remote::connection::forget_failure(&host);
             dialog.connecting = Some(spawn_with_repaint(ctx, move || commands::resolve_folder(&host, &folder)));
@@ -246,6 +331,182 @@ impl RubriqueApp {
             self.show_status("Remote folders stay in the explorer until rubrique restarts".to_string());
         }
     }
+}
+
+/// The dialog's contents; returns what the user asked for.
+fn draw_dialog(ui: &mut egui::Ui, dialog: &mut AddRemote, program: &str) -> DialogEvents {
+    let connecting = dialog.connecting.is_some();
+    ui.set_width(DIALOG_WIDTH);
+    ui.heading("Add remote folder");
+    ui.label(RichText::new("A folder on another computer, opened over SSH.").weak());
+    ui.add_space(8.0);
+    draw_host_fields(ui, dialog, program);
+    ui.add_space(4.0);
+    let folder_field = draw_folder_fields(ui, dialog);
+    let mut events = DialogEvents::default();
+    if let Some(error) = &dialog.error {
+        ui.add_space(4.0);
+        ui.colored_label(ui.visuals().error_fg_color, error);
+        if dialog.program_problem && ui.link("Set the ssh program in Settings \u{2192} Files").clicked() {
+            events.open_settings = true;
+        }
+    }
+    ui.add_space(8.0);
+    let entered = folder_field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
+    let host = dialog.host.trim();
+    let host_ok = remote::mirror::is_valid_host(host);
+    let ready = host_ok && !dialog.folder.trim().is_empty() && !connecting;
+    ui.horizontal(|ui| {
+        let add = ui.add_enabled(ready, egui::Button::new(add_label(&dialog.folder))).clicked();
+        events.add = add || (entered && ready);
+        events.cancel = ui.button("Cancel").clicked();
+        if connecting {
+            ui.add(egui::Spinner::new().size(SPINNER_SIZE));
+            ui.label(RichText::new(format!("Connecting to {host}\u{2026}")).weak());
+        } else if !host_ok && !host.is_empty() {
+            ui.label(RichText::new("Use a host name, or user@host").weak());
+        }
+    });
+    events
+}
+
+/// The Computer field and the buttons for the hosts in `~/.ssh/config`.
+/// Picking a button, or Enter in the field, starts listing that host's folders.
+fn draw_host_fields(ui: &mut egui::Ui, dialog: &mut AddRemote, program: &str) {
+    let connecting = dialog.connecting.is_some();
+    ui.label("Computer");
+    let field = ui.add_enabled(
+        !connecting,
+        egui::TextEdit::singleline(&mut dialog.host).hint_text("server or user@server").desired_width(f32::INFINITY),
+    );
+    let mut picked = None;
+    if !dialog.known_hosts.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("From ~/.ssh/config:").weak());
+            for name in &dialog.known_hosts {
+                if ui.add_enabled(!connecting, egui::Button::selectable(dialog.host == *name, name)).clicked() {
+                    picked = Some(name.clone());
+                }
+            }
+        });
+    }
+    let typed_new_host = field.lost_focus() && dialog.active_host.as_deref() != Some(dialog.host.trim());
+    if let Some(name) = picked {
+        dialog.host = name;
+        dialog.activate_host(program);
+    } else if typed_new_host {
+        dialog.activate_host(program);
+    }
+}
+
+/// The Folder field and, under it, the folders inside the typed path on the
+/// host: a button per folder (click to look inside), "up", and a filter by
+/// the name being typed. Tab completes the one name left.
+fn draw_folder_fields(ui: &mut egui::Ui, dialog: &mut AddRemote) -> egui::Response {
+    let connecting = dialog.connecting.is_some();
+    ui.label("Folder");
+    // Focus stays locked so Tab completes a name instead of leaving the field.
+    let output = ui
+        .add_enabled_ui(!connecting, |ui| {
+            egui::TextEdit::singleline(&mut dialog.folder)
+                .hint_text("~/notes")
+                .desired_width(f32::INFINITY)
+                .lock_focus(true)
+                .show(ui)
+        })
+        .inner;
+    let (typed_parent, typed_name) = split_typed(&dialog.folder);
+    let tab = output.response.has_focus() && ui.input(|input| input.key_pressed(Key::Tab));
+    let mut go_to = None;
+    if let Some(listed) = &dialog.folders {
+        // The name filters only the folder it is typed in.
+        let filter = if listed.parent == typed_parent { typed_name } else { "" };
+        let names: Vec<&str> = listed
+            .names
+            .iter()
+            .filter(|name| name.to_lowercase().starts_with(&filter.to_lowercase()))
+            .map(String::as_str)
+            .collect();
+        ui.add_space(4.0);
+        egui::ScrollArea::vertical().max_height(FOLDER_LIST_HEIGHT).show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                let starting = if filter.is_empty() { String::new() } else { format!(", starting with \"{filter}\"") };
+                let heading = format!("In {} on {}{starting}:", shown_parent(&listed.parent), listed.host);
+                ui.label(RichText::new(heading).weak());
+                if listed.path.parent().is_some() && ui.add(egui::Button::selectable(false, "\u{2191} up")).clicked() {
+                    go_to = Some(up(&listed.parent, &listed.path));
+                }
+                for name in &names {
+                    if ui.button(*name).clicked() {
+                        go_to = Some(enter(&listed.parent, name));
+                    }
+                }
+            });
+        });
+        if tab && names.len() == 1 {
+            go_to = Some(enter(&listed.parent, names[0]));
+        }
+        ui.label(RichText::new("Click a folder to look inside it, or type a path.").weak().small());
+    } else if dialog.listing.is_some() {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.add(egui::Spinner::new().size(SPINNER_SIZE));
+            ui.label(RichText::new(format!("Looking at {}\u{2026}", dialog.host.trim())).weak());
+        });
+    }
+    if let Some(text) = go_to {
+        dialog.folder = text;
+        // Keep typing at the end of the new path.
+        let mut state = output.state;
+        let end = CCursor::new(dialog.folder.chars().count());
+        state.cursor.set_char_range(Some(CCursorRange::one(end)));
+        state.store(ui.ctx(), output.response.id);
+        output.response.request_focus();
+    }
+    output.response.response
+}
+
+/// The folder to list and the name being typed, from the Folder text:
+/// `~/dev/pe` lists `~/dev/` filtered by `pe`; `dev` lists `~` filtered by
+/// `dev`; `~`, `~/` and `/` list themselves.
+fn split_typed(typed: &str) -> (String, &str) {
+    let typed = typed.trim();
+    match typed.rfind('/') {
+        Some(at) => (typed[..=at].to_string(), &typed[at + 1..]),
+        None if typed == "~" => ("~".to_string(), ""),
+        None => ("~".to_string(), typed),
+    }
+}
+
+/// The Folder text for `name` inside the listed `parent`, ready to list it.
+fn enter(parent: &str, name: &str) -> String {
+    if parent.ends_with('/') { format!("{parent}{name}/") } else { format!("{parent}/{name}/") }
+}
+
+/// The Folder text one level up from the listed `parent`: `~/dev/` gives
+/// `~/`; `~`, a relative name and `/` need the host's real parent, from `path`.
+fn up(parent: &str, path: &Path) -> String {
+    let trimmed = parent.trim_end_matches('/');
+    if let Some(at) = trimmed.rfind('/') {
+        return trimmed[..=at].to_string();
+    }
+    let mut above = path.parent().unwrap_or(Path::new("/")).display().to_string();
+    if !above.ends_with('/') {
+        above.push('/');
+    }
+    above
+}
+
+/// A listed folder as the heading shows it: `~/dev/` as `~/dev`.
+fn shown_parent(parent: &str) -> &str {
+    if parent.len() > 1 { parent.trim_end_matches('/') } else { parent }
+}
+
+/// "Add ~/dev" for the Folder text `~/dev/`.
+fn add_label(folder: &str) -> String {
+    let folder = folder.trim();
+    let folder = if folder.len() > 1 { folder.trim_end_matches('/') } else { folder };
+    if folder.is_empty() { "Add".to_string() } else { format!("Add {folder}") }
 }
 
 /// Fetch images from their hosts into the mirror. Returns the mirror paths
@@ -358,6 +619,66 @@ mod tests {
     use crate::document::text_file::{Document, Opened};
     use crate::remote::testing::mirror_of;
     use crate::test_support::TempFolder;
+
+    #[test]
+    fn splits_the_typed_folder_into_parent_and_name() {
+        assert_eq!(split_typed("~/dev/pe"), ("~/dev/".to_string(), "pe"));
+        assert_eq!(split_typed("~/dev/"), ("~/dev/".to_string(), ""));
+        assert_eq!(split_typed("dev"), ("~".to_string(), "dev"));
+        assert_eq!(split_typed(" ~ "), ("~".to_string(), ""));
+        assert_eq!(split_typed(""), ("~".to_string(), ""));
+        assert_eq!(split_typed("/"), ("/".to_string(), ""));
+        assert_eq!(split_typed("/srv/no"), ("/srv/".to_string(), "no"));
+    }
+
+    #[test]
+    fn moves_into_and_out_of_folders() {
+        assert_eq!(enter("~/dev/", "personal"), "~/dev/personal/");
+        assert_eq!(enter("~", "dev"), "~/dev/");
+        assert_eq!(enter("/", "srv"), "/srv/");
+        let home = Path::new("/home/me");
+        assert_eq!(up("~/dev/", &home.join("dev")), "~/");
+        assert_eq!(up("~/", home), "/home/");
+        assert_eq!(up("~", home), "/home/");
+        assert_eq!(up("dev/", &home.join("dev")), "/home/me/");
+        assert_eq!(up("/srv/", Path::new("/srv")), "/");
+        assert_eq!(up("/", Path::new("/")), "/");
+    }
+
+    #[test]
+    fn labels_follow_the_typed_folder() {
+        assert_eq!(add_label("~/dev/"), "Add ~/dev");
+        assert_eq!(add_label("~"), "Add ~");
+        assert_eq!(add_label("/"), "Add /");
+        assert_eq!(add_label("  "), "Add");
+        assert_eq!(shown_parent("~/dev/"), "~/dev");
+        assert_eq!(shown_parent("~"), "~");
+        assert_eq!(shown_parent("/"), "/");
+    }
+
+    #[test]
+    fn lists_only_for_a_picked_host_and_each_folder_once() {
+        let mut dialog = AddRemote { host: "box".to_string(), folder: "~/dev/x".to_string(), ..AddRemote::default() };
+        assert_eq!(dialog.wanted_listing(), None);
+        dialog.activate_host("sh");
+        assert_eq!(dialog.wanted_listing(), Some(("box".to_string(), "~/dev/".to_string())));
+        dialog.attempted = dialog.wanted_listing();
+        assert_eq!(dialog.wanted_listing(), None);
+        dialog.folder = "~/dev/x/".to_string();
+        assert_eq!(dialog.wanted_listing(), Some(("box".to_string(), "~/dev/x/".to_string())));
+        // Typing another host lists nothing until it is picked.
+        dialog.host = "other".to_string();
+        assert_eq!(dialog.wanted_listing(), None);
+    }
+
+    #[test]
+    fn a_broken_ssh_program_setting_is_reported_before_connecting() {
+        let mut dialog = AddRemote { host: "box".to_string(), ..AddRemote::default() };
+        dialog.activate_host("ssh box");
+        assert!(dialog.program_problem);
+        assert!(dialog.error.as_deref().unwrap_or_default().starts_with("Not a program"));
+        assert_eq!(dialog.active_host, None);
+    }
 
     #[test]
     fn finds_image_links() {
