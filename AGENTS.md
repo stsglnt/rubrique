@@ -63,8 +63,21 @@ captures each window, and joins a vertical strip of each capture into one
 image with the theme name under it. Change the sample folder rather than
 the script when the picture should show something else.
 
-`docs/screenshots/ai.png` is a staged Compare run (Claude and Codex on the
-same sample file, the merge screen open, the Ask bar and a hover summary
-showing). It needs the agents, or stand-ins on the PATH that print a
-prepared answer, and someone at the keyboard; take it at 1100 x 700 points
-on the same sample folder.
+`docs/screenshots/ai.png` is a staged Compare run on the same sample
+folder, remade by another script (macOS only):
+
+```sh
+cargo build && docs/screenshots/tools/ai.sh target/debug/rubrique
+```
+
+Run it from a terminal with Accessibility and Screen Recording access, and
+leave the keyboard and mouse alone while it runs: it drives the window
+with synthetic clicks and keystrokes (`tools/drive.swift`). The app gets
+stand-in `claude`, `codex` and `ollama` programs that print the answers in
+`tools/ai`, so no agent runs. The script asks "make it shorter" with
+Compare set to Codex, captures the Ask bar with the hover summary of
+`ideas.md`, opens the merge screen, captures it, and pastes the bar and
+the card onto the merge screen with `tools/paste.swift` (the app does not
+open the Ask bar over the merge screen). Change the answers in `tools/ai`
+when the picture should show something else; keep them different from
+each other in two places so the merge screen has two changes to decide.
