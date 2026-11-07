@@ -40,8 +40,9 @@ Agents run only when you ask, read-only by default.
 - Side panel (the button at the right of the tabs): Structure, the file's headings (`Cmd+Shift+O`), or its Notes.
 - Voice memos (`Cmd+Shift+R`), transcribed locally with whisper.cpp.
 - Drop images and audio onto the page.
-- Scratch files (`Cmd+N`), each one encrypted or not: the lock button in the
-  status bar, or `Cmd+Shift+N` for a new encrypted one. Optional app PIN.
+- Scratch files (`Cmd+N`), each one encrypted or not, switched at any time:
+  the lock button in the status bar or right-click in the explorer, and
+  `Cmd+Shift+N` for a new encrypted one. Optional app PIN.
 - Format JSON, SQL, XML (`Cmd+Shift+F`). Render and lint Helm charts.
 
 **Files**

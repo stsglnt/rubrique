@@ -14,6 +14,13 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 - **Rename and delete folders**: right-click a folder in the explorer, or double-click it to rename in place, like files.
 - **Move tabs and groups**: drag a tab sideways to reorder it (inside its group), or drag a group chip onto another group to reorder it (and its folder in the explorer).
 - **Exit terminal** in the right-click menu of a terminal tab and of a `.tmux` file.
+- **Encrypt or decrypt a scratch from the explorer**: right-click a file in
+  the scratch folder for **Encrypt** or **Remove encryption**, open or not.
+  Both ask for the scratch password when it was not entered yet (before,
+  removing encryption only worked after unlocking in Settings), so a
+  scratch can change at any time, whatever **Encrypt every new scratch** says.
+  An encrypted scratch shows a padlock after its name, in its tab and in
+  the explorer.
 
 ### Changed
 

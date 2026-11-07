@@ -449,8 +449,8 @@ fn privacy_section(ui: &mut Ui, privacy: PrivacyInfo) -> Option<SettingsAction> 
     ui.label(
         RichText::new(
             "Encrypted scratches are saved with a password. They open only after you enter it, and AI \
-             tools never see them. Each scratch can be encrypted on its own: the lock button in the status \
-             bar, or Cmd+Shift+N for a new encrypted one.",
+             tools never see them. Each scratch can be encrypted on its own, at any time: the lock button \
+             in the status bar, right-click it in the explorer, or Cmd+Shift+N for a new encrypted one.",
         )
         .weak(),
     );
