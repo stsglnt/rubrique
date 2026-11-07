@@ -136,3 +136,7 @@ Releases: a `release X.Y.Z` commit on `main` (changelog section, version in
 `Cargo.toml` and `Cargo.lock`) pushed together with the `rubrique-vX.Y.Z`
 tag; the Release workflow builds the packages. Steps in
 [`AGENTS.md`](AGENTS.md), notes in [`CHANGELOG.md`](CHANGELOG.md).
+
+## License
+
+[MIT](LICENSE).
