@@ -8,6 +8,20 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Changed
+
+- **Status bar buttons are icons**: Record (a microphone), Add audio file
+  (a waveform with a plus), Open in browser (a window with an arrow) and
+  Format (text lines) are icon buttons, grouped by a thin line, with
+  **Ask** as the one labelled button in the corner. Rest the pointer on a
+  button for its name and shortcut. While recording, the microphone button
+  shows the elapsed time with a red dot.
+- **Preview | Source is two icons** (the eye and the code brackets), which
+  leaves about 110 px more for tabs.
+- **Group chips** in the tab strip have the same corners as the buttons
+  around them instead of a pill, and start with the folder's color dot
+  from the explorer.
+
 ## [0.7.1] - 2026-11-06
 
 ### Added

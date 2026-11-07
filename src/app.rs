@@ -100,6 +100,8 @@ const BAR_MARGIN: (i8, i8) = (10, 6);
 const NOTICE_TINT: f32 = 0.15;
 /// Shown before the file name while it has unsaved changes.
 const DIRTY_MARKER: &str = "• ";
+/// Height of the hairline between groups of status bar buttons.
+const STATUS_SEPARATOR_HEIGHT: f32 = 16.0;
 
 const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
 const TOGGLE_PREVIEW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::E);
@@ -2091,52 +2093,58 @@ impl RubriqueApp {
         // Right side first, so a long path is shortened instead of overlapping it.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             self.media_status(ui);
-            let formattable = self.open_file.path().and_then(Language::from_path);
-            if is_text
-                && let Some(language) = formattable
-                && ui
-                    .small_button("Format")
-                    .on_hover_text(format!("Pretty-print this {} (Cmd+Shift+F)", language.name()))
-                    .clicked()
-            {
-                self.format_text(ui.ctx());
-            }
             if is_text {
-                self.helm_button(ui);
-            }
-            if is_text && (is_markdown || is_html) {
-                let browser =
-                    ui.small_button("Open in browser").on_hover_text("Show it in your web browser (Cmd+Shift+B)");
-                if browser.clicked() {
-                    self.open_in_browser(ui.ctx());
-                }
-            }
-            if is_text {
-                let ask = icon_text_button(
-                    ui,
-                    Icon::Sparkle,
-                    "Ask",
-                    "Ask AI about the selection, or the whole file (Cmd+K)",
-                    self.ask.is_open(),
-                );
-                if ask.clicked() {
-                    self.check_ai_tools();
-                    self.load_skills_and_agents();
-                    self.open_ask(ui.ctx());
-                }
-                if is_markdown || is_html {
-                    self.voice_buttons(ui);
-                }
-                self.scratch_lock_button(ui);
-                if !showing_preview && let Some(stats) = &self.stats {
-                    ui.label(format!("{}   ", stats.summary()));
-                }
+                self.text_file_buttons(ui, is_markdown || is_html, showing_preview);
             }
             let left = egui::Layout::left_to_right(egui::Align::Center);
             ui.allocate_ui_with_layout(ui.available_size(), left, |ui| {
                 ui.add(egui::Label::new(path_text.as_str()).truncate()).on_hover_text(path_text.as_str());
             });
         });
+    }
+
+    /// The buttons of an open text file, laid out right to left: Ask in the
+    /// corner, then what works on this kind of file (browser, Format, Helm),
+    /// then the voice memo buttons of a page, each group behind a hairline.
+    /// Everything but Ask is an icon; the names and shortcuts are in the tips.
+    fn text_file_buttons(&mut self, ui: &mut Ui, is_page: bool, showing_preview: bool) {
+        let ask = icon_text_button(
+            ui,
+            Icon::Sparkle,
+            "Ask",
+            "Ask AI about the selection, or the whole file (Cmd+K)",
+            self.ask.is_open(),
+        );
+        if ask.clicked() {
+            self.check_ai_tools();
+            self.load_skills_and_agents();
+            self.open_ask(ui.ctx());
+        }
+        let formattable = self.open_file.path().and_then(Language::from_path);
+        if is_page || formattable.is_some() || self.open_chart().is_some() {
+            status_separator(ui);
+        }
+        if is_page {
+            let tip = "Open in your web browser (Cmd+Shift+B)";
+            if icon_button(ui, Icon::Browser, "Open in browser", tip, false).clicked() {
+                self.open_in_browser(ui.ctx());
+            }
+        }
+        if let Some(language) = formattable {
+            let tip = format!("Pretty-print this {} (Cmd+Shift+F)", language.name());
+            if icon_button(ui, Icon::Format, "Format", &tip, false).clicked() {
+                self.format_text(ui.ctx());
+            }
+        }
+        self.helm_button(ui);
+        if is_page {
+            status_separator(ui);
+            self.voice_buttons(ui);
+        }
+        self.scratch_lock_button(ui);
+        if !showing_preview && let Some(stats) = &self.stats {
+            ui.label(format!("{}   ", stats.summary()));
+        }
     }
 
     /// "Encrypt" on a plain scratch, "Encrypted" (with a menu to undo it)
@@ -2203,6 +2211,12 @@ impl RubriqueApp {
 /// file is empty or already ends with one, and a line break after it. Empty
 /// input gives an empty string, so nothing is added.
 /// The hint under the notes: how to add one and what Resolve does.
+/// A hairline between two groups of buttons in the status bar.
+fn status_separator(ui: &mut Ui) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(1.0, STATUS_SEPARATOR_HEIGHT), egui::Sense::hover());
+    ui.painter().vline(rect.center().x, rect.y_range(), ui.visuals().widgets.noninteractive.bg_stroke);
+}
+
 fn notes_help(ui: &mut Ui, tool: &str) {
     let text = format!(
         "Select text in the preview, then Add note (Cmd+Shift+M). \

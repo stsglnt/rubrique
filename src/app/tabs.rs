@@ -34,11 +34,15 @@ const ACTIVE_LINE: f32 = 2.0;
 const GROUP_LINE_TINT: f32 = 0.55;
 /// Radius of the unsaved-changes dot.
 const DIRTY_DOT: f32 = 3.5;
-/// Width of each half of the Preview | Source switch.
-const SWITCH_SEGMENT: f32 = 84.0;
+/// Width of each half of the Preview | Source switch: room for one icon.
+const SWITCH_SEGMENT: f32 = 28.0;
 const SWITCH_HEIGHT: f32 = 22.0;
 /// Space inside the switch around its two halves.
 const SWITCH_INSET: f32 = 2.0;
+/// Corner radius of the switch's frame; a half is rounded a little less,
+/// so the two curves stay parallel.
+const SWITCH_RADIUS: u8 = 6;
+const SWITCH_HALF_RADIUS: u8 = 4;
 /// Space between the switch and the right edge of the tab strip.
 const SWITCH_MARGIN: f32 = 10.0;
 
@@ -369,11 +373,13 @@ impl RubriqueApp {
     }
 }
 
-/// The Preview | Source switch: two halves, the current mode filled like the
-/// page. Returns the mode that was clicked.
+/// The Preview | Source switch: two icon halves (the eye, the code
+/// brackets), the current mode filled like the page. The names and the
+/// shortcut are in the hover tips. Returns the mode that was clicked.
 fn preview_switch(ui: &mut Ui, rect: egui::Rect, preview: bool) -> Option<bool> {
     let visuals = ui.visuals().clone();
-    ui.painter().rect_filled(rect, 7, visuals.widgets.inactive.weak_bg_fill);
+    let frame_fill = visuals.widgets.inactive.weak_bg_fill;
+    ui.painter().rect_filled(rect, SWITCH_RADIUS, frame_fill);
     let mut clicked = None;
     let halves = [(true, "Preview", Icon::Eye, 0.0), (false, "Source", Icon::Code, SWITCH_SEGMENT)];
     for (mode, label, icon, offset) in halves {
@@ -389,19 +395,12 @@ fn preview_switch(ui: &mut Ui, rect: egui::Rect, preview: bool) -> Option<bool> 
         } else if response.hovered() {
             visuals.widgets.hovered.weak_bg_fill
         } else {
-            Color32::TRANSPARENT
+            frame_fill
         };
-        ui.painter().rect_filled(half, 5, fill);
+        ui.painter().rect_filled(half, SWITCH_HALF_RADIUS, fill);
         let color = if selected { visuals.strong_text_color() } else { visuals.weak_text_color() };
-        let font = egui::TextStyle::Body.resolve(ui.style());
-        let galley = ui.painter().layout_no_wrap(label.to_string(), font, color);
-        let icon_size = 14.0;
-        let gap = 5.0;
-        let total = icon_size + gap + galley.size().x;
-        let start = half.center().x - total / 2.0;
         let accent = if selected { visuals.hyperlink_color } else { color };
-        paint_icon(ui.painter(), icon, pos2(start + icon_size / 2.0, half.center().y), color, accent, fill);
-        ui.painter().galley(pos2(start + icon_size + gap, half.center().y - galley.size().y / 2.0), galley, color);
+        paint_icon(ui.painter(), icon, half.center(), color, accent, fill);
         let tip = if mode { "Show the preview (Cmd+E)" } else { "Show the Markdown source (Cmd+E)" };
         let response = response.on_hover_text(tip);
         response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, selected, label));
