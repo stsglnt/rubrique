@@ -1,5 +1,6 @@
 //! `RubriqueApp`: top-level state, panel layout, global shortcuts and dialogs.
 
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -54,6 +55,7 @@ use crate::markdown::blocks::{SourceBlock, parse_blocks, parse_source_blocks};
 use crate::markdown::html::{file_url, html_page, is_html_path, with_base};
 use crate::markdown::notes::{self, Note, find_notes, insert_note, remove_note, rewrite_note};
 use crate::markdown::render::CodeAction;
+use crate::markdown::table_edit::{self, TableAction, TableCell};
 use crate::media::{MediaKind, format_name, image_uri, media_kind, open_with_system, size_text};
 use crate::scratch::{create_scratch, rename_target};
 use crate::settings::accessibility::TextSize;
@@ -1600,6 +1602,8 @@ impl RubriqueApp {
         }
         match preview_event {
             Some(PreviewEvent::StartEdit(index)) => self.start_block_edit(index),
+            Some(PreviewEvent::StartCellEdit { index, cell }) => self.start_cell_edit(index, cell),
+            Some(PreviewEvent::Table { index, action }) => self.table_action(index, action),
             Some(PreviewEvent::StartNewBlock) => self.start_new_block(),
             Some(PreviewEvent::FinishEdit) => self.finish_block_edit(),
             Some(PreviewEvent::Code { index, action }) => self.code_block_action(ui.ctx(), index, action),
@@ -1686,28 +1690,89 @@ impl RubriqueApp {
 
     // ---------- editing in the preview ----------
 
-    /// Edit top-level block `index` of the preview as Markdown, after
-    /// applying any block being edited (whose length change shifts the rest).
+    /// Edit the Markdown of top-level block `index` in place of its preview.
     fn start_block_edit(&mut self, index: usize) {
-        let target = match &self.open_file {
-            OpenFile::Text { preview: Some(blocks), .. } => blocks.get(index).map(|block| block.range.clone()),
-            _ => None,
-        };
-        let Some(mut range) = target else {
+        let Some(range) = self.block_edit_target(index) else {
             return;
         };
-        if let Some((edited_at, delta)) = self.finish_block_edit_with_shift()
-            && range.start > edited_at
-        {
-            range = shift(range.start, delta)..shift(range.end, delta);
-        }
         let OpenFile::Text { document, .. } = &self.open_file else {
             return;
         };
         let Some(text) = document.text.get(range.clone()) else {
             return;
         };
-        self.block_edit = Some(BlockEdit { index, range, text: text.to_string(), focused: false });
+        self.block_edit = Some(BlockEdit { index, range, text: text.to_string(), focused: false, cell: None });
+    }
+
+    /// Edit one cell of the table at block `index` in place. A cell the
+    /// source does not have (the parser pads short rows) edits the whole
+    /// table instead.
+    fn start_cell_edit(&mut self, index: usize, cell: TableCell) {
+        let Some(range) = self.block_edit_target(index) else {
+            return;
+        };
+        self.edit_cell_in(index, range, cell);
+    }
+
+    /// Start editing `cell` of the table whose source is at `block`.
+    fn edit_cell_in(&mut self, index: usize, block: Range<usize>, cell: TableCell) {
+        let OpenFile::Text { document, .. } = &self.open_file else {
+            return;
+        };
+        let Some(source) = document.text.get(block.clone()) else {
+            return;
+        };
+        let Some(within) = table_edit::cell_range(source, cell) else {
+            self.block_edit =
+                Some(BlockEdit { index, range: block, text: source.to_string(), focused: false, cell: None });
+            return;
+        };
+        let range = block.start + within.start..block.start + within.end;
+        let text = document.text.get(range.clone()).unwrap_or_default().to_string();
+        self.block_edit = Some(BlockEdit { index, range, text, focused: false, cell: Some(cell) });
+    }
+
+    /// Add or remove a row or column of the table at block `index`, next to
+    /// the cell being edited there. A new row or column is edited next.
+    fn table_action(&mut self, index: usize, action: TableAction) {
+        let Some(cell) = self.block_edit.as_ref().and_then(|edit| edit.cell) else {
+            return;
+        };
+        let Some(block) = self.block_edit_target(index) else {
+            return;
+        };
+        let OpenFile::Text { document, preview, .. } = &mut self.open_file else {
+            return;
+        };
+        let edited = document.text.get(block.clone()).and_then(|source| table_edit::apply(source, cell, action));
+        let Some(edited) = edited else {
+            return;
+        };
+        let new_block = block.start..block.start + edited.source.len();
+        document.text.replace_range(block, &edited.source);
+        document.on_text_changed();
+        *preview = None;
+        if let Some(next) = edited.next {
+            self.edit_cell_in(index, new_block, next);
+        }
+    }
+
+    /// The source range of top-level block `index`, after applying any edit
+    /// in progress: its length change moves the blocks after it, and grows
+    /// the block a cell edit was inside of.
+    fn block_edit_target(&mut self, index: usize) -> Option<Range<usize>> {
+        let OpenFile::Text { preview: Some(blocks), .. } = &self.open_file else {
+            return None;
+        };
+        let mut range = blocks.get(index)?.range.clone();
+        if let Some(applied) = self.finish_block_edit_with_shift() {
+            if range.start > applied.at {
+                range = shift(range.start, applied.delta)..shift(range.end, applied.delta);
+            } else if applied.cell_block == Some(index) {
+                range.end = shift(range.end, applied.delta);
+            }
+        }
+        Some(range)
     }
 
     /// Edit an empty new block at the end of the file. The blank line before
@@ -1718,35 +1783,40 @@ impl RubriqueApp {
             return;
         };
         let end = document.text.len();
-        self.block_edit = Some(BlockEdit { index: blocks.len(), range: end..end, text: String::new(), focused: false });
+        self.block_edit =
+            Some(BlockEdit { index: blocks.len(), range: end..end, text: String::new(), focused: false, cell: None });
     }
 
-    /// Put the edited block's Markdown into the document.
+    /// Put the edited block's Markdown (or cell's text) into the document.
     fn finish_block_edit(&mut self) {
         self.finish_block_edit_with_shift();
     }
 
     /// Like [`Self::finish_block_edit`]; returns where the text changed and
     /// by how many bytes, so ranges after it can be moved.
-    fn finish_block_edit_with_shift(&mut self) -> Option<(usize, isize)> {
-        let edit = self.block_edit.take()?;
+    fn finish_block_edit_with_shift(&mut self) -> Option<EditShift> {
+        let BlockEdit { index, range, text, cell, .. } = self.block_edit.take()?;
         let OpenFile::Text { document, preview, .. } = &mut self.open_file else {
             return None;
         };
-        if document.text.get(edit.range.clone()) == Some(edit.text.as_str()) {
+        let new_text = match cell {
+            Some(_) => table_edit::escape_cell(&text),
+            None if range.is_empty() && range.start == document.text.len() => appended_block(&document.text, &text),
+            None => text,
+        };
+        // A block emptied out stays as it was; a cell may be emptied.
+        if cell.is_none() && new_text.is_empty() {
             return None;
         }
-        let appended = edit.range.is_empty() && edit.range.start == document.text.len();
-        let new_text = if appended { appended_block(&document.text, &edit.text) } else { edit.text };
-        if new_text.is_empty() {
+        if document.text.get(range.clone()) == Some(new_text.as_str()) {
             return None;
         }
-        let old_length = isize::try_from(edit.range.len()).unwrap_or(0);
+        let old_length = isize::try_from(range.len()).unwrap_or(0);
         let new_length = isize::try_from(new_text.len()).unwrap_or(0);
-        document.text.replace_range(edit.range.clone(), &new_text);
+        document.text.replace_range(range.clone(), &new_text);
         document.on_text_changed();
         *preview = None;
-        Some((edit.range.start, new_length - old_length))
+        Some(EditShift { at: range.start, delta: new_length - old_length, cell_block: cell.map(|_| index) })
     }
 
     // ---------- notes ----------
@@ -2251,6 +2321,18 @@ fn appended_block(text: &str, block: &str) -> String {
 
 fn shift(value: usize, delta: isize) -> usize {
     value.saturating_add_signed(delta)
+}
+
+/// Where a finished block edit changed the text, for moving ranges after it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EditShift {
+    /// Byte offset of the change.
+    at: usize,
+    /// Bytes added (negative: removed).
+    delta: isize,
+    /// For a cell edit, the block the change was inside of; a block edit
+    /// replaces its block.
+    cell_block: Option<usize>,
 }
 
 /// Runs of whitespace as single spaces.

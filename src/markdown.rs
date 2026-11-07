@@ -1,5 +1,6 @@
 //! Our own small Markdown parser and the egui preview renderer.
-//! The parser only feeds the preview; it never writes to the file.
+//! The parser only feeds the preview and never writes to the file; the
+//! table editor rewrites a table's source text, which the app puts back.
 
 pub mod blocks;
 pub mod highlight;
@@ -8,3 +9,4 @@ pub mod inlines;
 pub mod notes;
 pub mod outline;
 pub mod render;
+pub mod table_edit;

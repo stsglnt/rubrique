@@ -1,11 +1,12 @@
 //! Draw parsed Markdown blocks with egui widgets (the read-only preview).
 
-use eframe::egui::{self, Align, Color32, Layout, Margin, RichText, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use eframe::egui::{self, Align, Color32, Layout, Margin, Rangef, RichText, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 
 use std::path::{Path, PathBuf};
 
 use super::blocks::{Block, ColumnAlign, List, Table, parse_blocks};
 use super::inlines::{Inline, is_openable_url, parse_inlines};
+use super::table_edit::TableCell;
 use crate::media::{MediaKind, image_uri, media_kind_of_url};
 
 /// Sizes and spacing for one place Markdown is drawn.
@@ -94,8 +95,14 @@ const RULE_SPACING: f32 = 20.0;
 /// Space between table columns, and between table rows.
 const TABLE_COLUMN_GAP: f32 = 18.0;
 const TABLE_ROW_GAP: f32 = 6.0;
-/// Wide table columns are not narrowed below this, so text never wraps one word at a time.
+/// Wide table columns are not narrowed below this, so text never wraps one
+/// word at a time. A column being edited gets at least this much room too.
 const TABLE_COLUMN_MIN_WIDTH: f32 = 120.0;
+/// No column is narrower than this: an empty one (a column just added)
+/// still shows and can be clicked.
+const TABLE_COLUMN_LEAST_WIDTH: f32 = 40.0;
+/// Opacity of the accent over the table cell under the mouse.
+const CELL_HOVER_TINT: f32 = 0.08;
 
 /// Render blocks inside `depth` lists (bullets change shape with depth),
 /// `gap` apart. List items use a smaller gap so nested lists stay tight.
@@ -162,7 +169,7 @@ fn render_block(ui: &mut Ui, look: &Look, block: &Block, depth: usize) {
         Block::Code { info, code } => render_code(ui, look, info, code),
         Block::Quote(blocks) => render_quote(ui, look, blocks, depth),
         Block::List(list) => render_list(ui, look, list, depth),
-        Block::Table(table) => render_table(ui, look, table),
+        Block::Table(table) => render_table(ui, look, table, None),
         Block::ThematicBreak => {
             ui.add(egui::Separator::default().spacing(RULE_SPACING));
         }
@@ -299,30 +306,158 @@ fn render_list(ui: &mut Ui, look: &Look, list: &List, depth: usize) {
     });
 }
 
+/// What the preview draws in place of a table cell being edited.
+pub type CellEditor<'a> = &'a mut dyn FnMut(&mut Ui);
+
+/// Draw a top-level table with `editing` replaced by what `editor` draws
+/// (the preview's text box for the cell's Markdown).
+pub fn render_top_table(ui: &mut Ui, table: &Table, editing: TableCell, editor: CellEditor<'_>) {
+    render_table(ui, &PAGE, table, Some((editing, editor)));
+}
+
+/// The table cell clicked this frame in the preview, if any (taken once).
+pub fn take_cell_click(ctx: &egui::Context) -> Option<TableCell> {
+    ctx.data_mut(|data| {
+        let cell = data.get_temp::<TableCell>(cell_click_id());
+        data.remove::<TableCell>(cell_click_id());
+        cell
+    })
+}
+
+fn cell_click_id() -> egui::Id {
+    egui::Id::unique("rubrique-table-cell-click")
+}
+
 /// A table: bold header cells over striped rows, a line under the header.
-fn render_table(ui: &mut Ui, look: &Look, table: &Table) {
+/// In the preview (`look.file_tools`) a click on a cell is reported through
+/// [`take_cell_click`], and the cell in `editor` shows the editor instead.
+fn render_table(ui: &mut Ui, look: &Look, table: &Table, editor: Option<(TableCell, CellEditor<'_>)>) {
     let body = TextStyle::body(look);
     let header = TextStyle { strong: true, ..body.clone() };
-    let widths = column_widths(ui, table, &header, &body);
-    let mut header_bottom = 0.0_f32;
-    let grid = egui::Grid::new(ui.next_auto_id()).striped(true).spacing(vec2(TABLE_COLUMN_GAP, TABLE_ROW_GAP));
+    let mut widths = column_widths(ui, table, &header, &body);
+    if let Some((editing, _)) = &editor
+        && let Some(width) = widths.get_mut(editing.column)
+    {
+        *width = width.max(TABLE_COLUMN_MIN_WIDTH);
+    }
+    let mut drawing = TableDrawing {
+        clickable: look.file_tools,
+        table,
+        widths,
+        header,
+        body,
+        editor,
+        rows: Vec::new(),
+        columns: Vec::new(),
+    };
+    // A table wider than the page scrolls sideways instead of being cut off.
+    let scroll = egui::ScrollArea::horizontal().id_salt(ui.next_auto_id());
     ui.skip_ahead_auto_ids(1);
-    let response = grid.show(ui, |ui| {
-        for (column, cell) in table.header.iter().enumerate() {
-            table_cell(ui, cell, &header, table.align[column], widths[column]);
-            header_bottom = header_bottom.max(ui.min_rect().bottom());
-        }
-        ui.end_row();
-        for row in &table.rows {
-            for (column, cell) in row.iter().enumerate() {
-                table_cell(ui, cell, &body, table.align[column], widths[column]);
+    scroll.show(ui, |ui| {
+        let mut header_bottom = 0.0_f32;
+        let grid = egui::Grid::new(ui.next_auto_id()).striped(true).spacing(vec2(TABLE_COLUMN_GAP, TABLE_ROW_GAP));
+        ui.skip_ahead_auto_ids(1);
+        let response = grid.show(ui, |ui| {
+            for (column, cell) in table.header.iter().enumerate() {
+                drawing.cell(ui, TableCell { row: 0, column }, cell);
+                header_bottom = header_bottom.max(ui.min_rect().bottom());
             }
             ui.end_row();
+            for (index, row) in table.rows.iter().enumerate() {
+                for (column, cell) in row.iter().enumerate() {
+                    drawing.cell(ui, TableCell { row: index + 1, column }, cell);
+                }
+                ui.end_row();
+            }
+        });
+        let rect = response.response.rect;
+        let y = header_bottom + TABLE_ROW_GAP / 2.0;
+        ui.painter().hline(rect.x_range(), y, ui.visuals().widgets.noninteractive.bg_stroke);
+        if drawing.clickable
+            && let Some((at, rect)) = drawing.cell_at_pointer(ui)
+        {
+            hover_cell(ui, at, rect);
         }
     });
-    let rect = response.response.rect;
-    let y = header_bottom + TABLE_ROW_GAP / 2.0;
-    ui.painter().hline(rect.x_range(), y, ui.visuals().widgets.noninteractive.bg_stroke);
+}
+
+/// Tint the cell under the mouse, show the text cursor over it (unless a
+/// link in it already asked for the hand), and report a click on it.
+fn hover_cell(ui: &Ui, at: TableCell, rect: egui::Rect) {
+    let fill = ui.visuals().hyperlink_color.gamma_multiply(CELL_HOVER_TINT);
+    ui.painter().rect_filled(rect, 4, fill);
+    if ui.ctx().output(|output| output.cursor_icon) == egui::CursorIcon::Default {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+    }
+    if ui.input(|input| input.pointer.any_click()) {
+        ui.ctx().data_mut(|data| data.insert_temp(cell_click_id(), at));
+    }
+}
+
+/// What every cell of one table shares while the table is drawn.
+struct TableDrawing<'table, 'editor> {
+    /// Report clicks on cells: the preview edits them, AI answers do not.
+    clickable: bool,
+    table: &'table Table,
+    /// One width per column.
+    widths: Vec<f32>,
+    header: TextStyle,
+    body: TextStyle,
+    /// The cell being edited and what to draw in its place.
+    editor: Option<(TableCell, CellEditor<'editor>)>,
+    /// Vertical extent of each row drawn so far, and horizontal extent of
+    /// each column: a click anywhere in a cell's row and column hits it,
+    /// not only its text.
+    rows: Vec<Rangef>,
+    columns: Vec<Rangef>,
+}
+
+impl TableDrawing<'_, '_> {
+    /// Draw the cell `at` holding `content`, or the editor when that is the
+    /// cell being edited.
+    fn cell(&mut self, ui: &mut Ui, at: TableCell, content: &[Inline]) {
+        let width = self.widths[at.column];
+        let rect = if let Some((editing, editor)) = self.editor.as_mut()
+            && *editing == at
+        {
+            ui.vertical(|ui| {
+                ui.set_width(width);
+                editor(ui);
+            })
+            .response
+            .rect
+        } else {
+            let style = if at.row == 0 { &self.header } else { &self.body };
+            table_cell(ui, content, style, self.table.align[at.column], width)
+        };
+        grow(&mut self.rows, at.row, rect.y_range());
+        grow(&mut self.columns, at.column, rect.x_range());
+    }
+
+    /// The cell under the mouse and its whole area (the full row height and
+    /// column width, half the gaps around it included), once the table is
+    /// drawn. The cell being edited is not one.
+    fn cell_at_pointer(&self, ui: &Ui) -> Option<(TableCell, egui::Rect)> {
+        let pointer = ui.input(|input| input.pointer.interact_pos())?;
+        let row_span = |span: &Rangef| span.expand(TABLE_ROW_GAP / 2.0);
+        let column_span = |span: &Rangef| span.expand(TABLE_COLUMN_GAP / 2.0);
+        let row = self.rows.iter().position(|span| row_span(span).contains(pointer.y))?;
+        let column = self.columns.iter().position(|span| column_span(span).contains(pointer.x))?;
+        let at = TableCell { row, column };
+        if self.editor.as_ref().is_some_and(|(editing, _)| *editing == at) {
+            return None;
+        }
+        let rect = egui::Rect::from_x_y_ranges(column_span(&self.columns[column]), row_span(&self.rows[row]));
+        ui.rect_contains_pointer(rect).then_some((at, rect))
+    }
+}
+
+/// Widen `spans[index]` to include `span`, adding entries as needed.
+fn grow(spans: &mut Vec<Rangef>, index: usize, span: Rangef) {
+    if spans.len() <= index {
+        spans.resize(index + 1, Rangef::NOTHING);
+    }
+    spans[index] = Rangef::new(spans[index].min.min(span.min), spans[index].max.max(span.max));
 }
 
 /// The width of each table column for the room the preview has.
@@ -331,7 +466,8 @@ fn render_table(ui: &mut Ui, look: &Look, table: &Table) {
 /// starts narrow. Wrapped text then fits the narrow column and the column
 /// never grows, so the widths are chosen here from the text instead.
 fn column_widths(ui: &Ui, table: &Table, header: &TextStyle, body: &TextStyle) -> Vec<f32> {
-    let mut natural: Vec<f32> = table.header.iter().map(|cell| cell_natural_width(ui, cell, header)).collect();
+    let mut natural: Vec<f32> =
+        table.header.iter().map(|cell| cell_natural_width(ui, cell, header).max(TABLE_COLUMN_LEAST_WIDTH)).collect();
     for row in &table.rows {
         for (column, cell) in row.iter().enumerate() {
             natural[column] = natural[column].max(cell_natural_width(ui, cell, body));
@@ -399,19 +535,23 @@ fn cell_natural_width(ui: &Ui, cell: &[Inline], style: &TextStyle) -> f32 {
     widest.max(line)
 }
 
-/// One cell, `width` wide, aligned as its column asks.
-fn table_cell(ui: &mut Ui, cell: &[Inline], style: &TextStyle, align: ColumnAlign, width: f32) {
+/// One cell, `width` wide, aligned as its column asks; returns where it was drawn.
+fn table_cell(ui: &mut Ui, cell: &[Inline], style: &TextStyle, align: ColumnAlign, width: f32) -> egui::Rect {
     let layout = match align {
         ColumnAlign::Left => Layout::left_to_right(Align::TOP),
         ColumnAlign::Center => Layout::top_down(Align::Center),
         ColumnAlign::Right => Layout::right_to_left(Align::TOP),
     };
     // Fix the width in a plain top-down scope first, so it grows to the
-    // right even for right-aligned cells; the grid then remembers it.
+    // right even for right-aligned cells; the grid then remembers it. An
+    // empty cell still takes one line, so it can be clicked to edit it.
     ui.vertical(|ui| {
         ui.set_width(width);
+        ui.set_min_height(style.line_height);
         ui.with_layout(layout, |ui| render_inlines(ui, cell, style));
-    });
+    })
+    .response
+    .rect
 }
 
 /// Room for a list marker, one text line tall.

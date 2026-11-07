@@ -291,7 +291,7 @@ fn parse_table(lines: &[&str], start: usize) -> Option<(Table, usize)> {
 
 /// The alignment a delimiter cell like `:---:` sets, or `None` when the cell
 /// is not one.
-fn delimiter_align(cell: &str) -> Option<ColumnAlign> {
+pub(super) fn delimiter_align(cell: &str) -> Option<ColumnAlign> {
     let left = cell.starts_with(':');
     let right = cell.ends_with(':') && cell.len() > 1;
     let dashes = cell.trim_start_matches(':').trim_end_matches(':');
@@ -308,28 +308,39 @@ fn delimiter_align(cell: &str) -> Option<ColumnAlign> {
 /// The cells of a table row: split at pipes that are not escaped, the
 /// optional pipes at both ends dropped, every cell trimmed. `\|` is a pipe.
 fn split_row(line: &str) -> Vec<String> {
-    let mut cells = Vec::new();
-    let mut cell = String::new();
-    let mut chars = line.trim().chars().peekable();
-    while let Some(character) = chars.next() {
-        match character {
-            '\\' if chars.peek() == Some(&'|') => {
-                cell.push('|');
-                chars.next();
+    cell_spans(line).into_iter().map(|span| line[span].replace("\\|", "|").trim().to_string()).collect()
+}
+
+/// Byte spans in `line` of a row's cells as written (spaces and `\|`
+/// escapes kept): between pipes that are not escaped, the optional pipes at
+/// both ends dropped. The table editor replaces one cell through these.
+pub(super) fn cell_spans(line: &str) -> Vec<std::ops::Range<usize>> {
+    let bytes = line.as_bytes();
+    let mut spans = Vec::new();
+    let mut start = 0;
+    let mut index = 0;
+    // Pipes and backslashes are ASCII, so byte positions are char boundaries.
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if bytes.get(index + 1) == Some(&b'|') => index += 2,
+            b'|' => {
+                spans.push(start..index);
+                start = index + 1;
+                index += 1;
             }
-            '|' => cells.push(std::mem::take(&mut cell)),
-            _ => cell.push(character),
+            _ => index += 1,
         }
     }
-    cells.push(cell);
+    spans.push(start..bytes.len());
+    let is_blank_span = |span: &std::ops::Range<usize>| line[span.clone()].trim().is_empty();
     // A leading pipe leaves an empty first cell; a trailing one an empty last cell.
-    if cells.first().is_some_and(|first| first.trim().is_empty()) && line.trim().starts_with('|') {
-        cells.remove(0);
+    if spans.first().is_some_and(is_blank_span) && line.trim().starts_with('|') {
+        spans.remove(0);
     }
-    if cells.len() > 1 && cells.last().is_some_and(|last| last.trim().is_empty()) && line.trim().ends_with('|') {
-        cells.pop();
+    if spans.len() > 1 && spans.last().is_some_and(is_blank_span) && line.trim().ends_with('|') {
+        spans.pop();
     }
-    cells.into_iter().map(|cell| cell.trim().to_string()).collect()
+    spans
 }
 
 // ---------- code ----------

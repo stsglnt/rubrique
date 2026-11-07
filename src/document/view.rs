@@ -12,10 +12,13 @@ use super::line_ops::{Direction, Selection, duplicate_lines, insert_text, move_l
 use super::text_file::Document;
 use super::text_stats::{TextStats, text_stats};
 use crate::ai::mention_list::{self, Suggestion};
-use crate::markdown::blocks::SourceBlock;
+use crate::icons::{Icon, icon_button};
+use crate::markdown::blocks::{Block, SourceBlock};
 use crate::markdown::render::{
-    CodeAction, render_top_block, set_image_folder, take_code_action, take_play_request, top_gap,
+    CodeAction, render_top_block, render_top_table, set_image_folder, take_cell_click, take_code_action,
+    take_play_request, top_gap,
 };
+use crate::markdown::table_edit::{TableAction, TableCell};
 use crate::voice::view::{MemoAction, take_memo_action};
 
 /// Widest the preview text gets, for comfortable reading.
@@ -265,17 +268,21 @@ fn gutter_width(digit_width: f32, lines: usize) -> f32 {
     (numbers + GUTTER_GAP).ceil()
 }
 
-/// A top-level block being edited as Markdown inside the preview.
+/// A top-level block, or one table cell of it, being edited as Markdown
+/// inside the preview.
 #[derive(Debug)]
 pub struct BlockEdit {
     /// Which top-level block.
     pub index: usize,
-    /// Its source range in the document when editing started.
+    /// The source range being replaced (the block, or the cell's text)
+    /// when editing started.
     pub range: std::ops::Range<usize>,
     /// The Markdown being typed.
     pub text: String,
     /// Focus is given to the box once, when editing starts.
     pub focused: bool,
+    /// `Some` when only this cell of a table is edited, not the whole block.
+    pub cell: Option<TableCell>,
 }
 
 /// What the user did in the preview.
@@ -283,6 +290,10 @@ pub struct BlockEdit {
 pub enum PreviewEvent {
     /// Clicked a block: edit it.
     StartEdit(usize),
+    /// Clicked a cell of a table: edit that cell alone.
+    StartCellEdit { index: usize, cell: TableCell },
+    /// A +/- button under the table whose cell is being edited.
+    Table { index: usize, action: TableAction },
     /// Clicked the empty space under the last block: type a new block there.
     StartNewBlock,
     /// Done with the block being edited (Esc, Cmd+Enter, Done, or a click elsewhere).
@@ -309,6 +320,8 @@ const HOVER_TINT: f32 = 0.06;
 const NEW_BLOCK_SPACE: f32 = 48.0;
 /// Width of the outline around the block being edited.
 const EDIT_OUTLINE: f32 = 1.5;
+/// Space between a table and the +/- buttons under it.
+const TABLE_BUTTONS_GAP: f32 = 4.0;
 /// Space between a block and its hover / edit background.
 const BLOCK_PAD: i8 = 6;
 
@@ -338,7 +351,10 @@ pub fn show_preview(
                 }
                 let top = ui.cursor().top();
                 let found = match editing.as_deref_mut() {
-                    Some(edit) if edit.index == index => edit_box(ui, edit, mentions),
+                    Some(edit) if edit.index == index => match edit.cell {
+                        Some(cell) => cell_edit_block(ui, index, source, edit, cell),
+                        None => edit_box(ui, edit, mentions),
+                    },
                     _ => clickable_block(ui, index, source),
                 };
                 let span = egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=ui.cursor().top());
@@ -440,16 +456,117 @@ fn clickable_block(ui: &mut Ui, index: usize, source: &SourceBlock) -> Option<Pr
         return Some(PreviewEvent::PlayVideo(path));
     }
     // A click (pointer released without dragging) that did not open a link;
-    // drags select text for notes instead.
-    let clicked = hovered && ui.input(|input| input.pointer.any_click());
-    let opened_link = ui
-        .ctx()
-        .output(|output| output.commands.iter().any(|command| matches!(command, egui::OutputCommand::OpenUrl(_))));
-    if clicked && !opened_link {
-        ui.ctx().plugin::<egui::text_selection::LabelSelectionState>().lock().clear_selection();
+    // drags select text for notes instead. On a table cell, that cell alone.
+    let opened_link = opened_link(ui.ctx());
+    let cell = take_cell_click(ui.ctx());
+    if opened_link {
+        return None;
+    }
+    if let Some(cell) = cell {
+        clear_text_selection(ui);
+        return Some(PreviewEvent::StartCellEdit { index, cell });
+    }
+    if hovered && ui.input(|input| input.pointer.any_click()) {
+        clear_text_selection(ui);
         return Some(PreviewEvent::StartEdit(index));
     }
     None
+}
+
+/// Whether a link was opened this frame (then its click edits nothing).
+fn opened_link(ctx: &Context) -> bool {
+    ctx.output(|output| output.commands.iter().any(|command| matches!(command, egui::OutputCommand::OpenUrl(_))))
+}
+
+/// Drop the preview's text selection, which a click leaves behind.
+fn clear_text_selection(ui: &Ui) {
+    ui.ctx().plugin::<egui::text_selection::LabelSelectionState>().lock().clear_selection();
+}
+
+/// A table with one cell being edited: a box with the cell's Markdown in
+/// that cell (wrapping like the cell), and +/- buttons for its row and
+/// column under the table. Enter, Esc or a click outside the box finishes;
+/// a click on another cell moves there.
+fn cell_edit_block(
+    ui: &mut Ui,
+    index: usize,
+    source: &SourceBlock,
+    edit: &mut BlockEdit,
+    cell: TableCell,
+) -> Option<PreviewEvent> {
+    let Block::Table(table) = &source.block else {
+        return Some(PreviewEvent::FinishEdit);
+    };
+    let mut finished = false;
+    let mut box_rect = egui::Rect::NOTHING;
+    let mut action = None;
+    egui::Frame::new().inner_margin(BLOCK_PAD).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        render_top_table(ui, table, cell, &mut |ui| {
+            // A cell is one line of Markdown, but a long one wraps like the
+            // rendered cell does, so the box is a growing multi-line one
+            // where Enter finishes instead of adding a line.
+            let entered = ui.memory(|memory| memory.has_focus(block_editor_id()))
+                && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
+            let output = egui::TextEdit::multiline(&mut edit.text)
+                .id(block_editor_id())
+                .desired_width(f32::INFINITY)
+                .desired_rows(1)
+                .show(ui);
+            if !edit.focused {
+                output.response.request_focus();
+                // A cell at the far right of a wide table may be scrolled away.
+                output.response.scroll_to_me(None);
+                edit.focused = true;
+            }
+            // Esc and Tab take the focus away.
+            finished = entered || output.response.lost_focus();
+            box_rect = output.response.rect;
+        });
+        ui.add_space(TABLE_BUTTONS_GAP);
+        action = table_buttons(ui, cell, table.align.len());
+    });
+    if let Some(action) = action {
+        return Some(PreviewEvent::Table { index, action });
+    }
+    let opened_link = opened_link(ui.ctx());
+    let next_cell = take_cell_click(ui.ctx());
+    if opened_link {
+        return None;
+    }
+    if let Some(cell) = next_cell {
+        clear_text_selection(ui);
+        return Some(PreviewEvent::StartCellEdit { index, cell });
+    }
+    let clicked_outside = ui.input(|input| input.pointer.any_click()) && !ui.rect_contains_pointer(box_rect);
+    (finished || clicked_outside).then_some(PreviewEvent::FinishEdit)
+}
+
+/// The +/- buttons for the row and column of `cell` in a table with
+/// `columns` columns: add a row under it, remove its row (not the header),
+/// add a column after it, remove its column (not the last one).
+fn table_buttons(ui: &mut Ui, cell: TableCell, columns: usize) -> Option<TableAction> {
+    let mut action = None;
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Enter, Esc or a click outside to finish").small().weak());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Right to left: the last button sits at the right edge.
+            if columns > 1 && icon_button(ui, Icon::ColumnMinus, "Remove column", "Remove this column", false).clicked()
+            {
+                action = Some(TableAction::RemoveColumn);
+            }
+            if icon_button(ui, Icon::ColumnPlus, "Add column", "Add a column after this one", false).clicked() {
+                action = Some(TableAction::AddColumn);
+            }
+            if cell.row > 0 && icon_button(ui, Icon::RowMinus, "Remove row", "Remove this row", false).clicked() {
+                action = Some(TableAction::RemoveRow);
+            }
+            if icon_button(ui, Icon::RowPlus, "Add row", "Add a row under this one", false).clicked() {
+                action = Some(TableAction::AddRow);
+            }
+        });
+    });
+    action
 }
 
 /// The block being edited: its Markdown in an outlined box.
@@ -633,4 +750,202 @@ pub fn handle_editor_shortcuts(ctx: &Context, document: &mut Document) -> bool {
     state.store(ctx, editor_id());
     document.on_text_changed();
     true
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use std::collections::BTreeSet;
+
+    use eframe::egui::{Event, PointerButton, Pos2, RawInput, Rect, Vec2};
+
+    use super::*;
+    use crate::markdown::blocks::parse_source_blocks;
+
+    /// Two body rows, then a row with an empty cell (as a new row has), and
+    /// an empty last column (as a column just added is).
+    const TABLE: &str = "| File | Size |  |\n| --- | --- | --- |\n| a.md | 1 |  |\n| b.md | 2 |  |\n|  | 3 |  |\n";
+
+    /// A headless preview of `TABLE`, drawn one frame at a time.
+    struct Preview {
+        ctx: Context,
+        blocks: Vec<SourceBlock>,
+        path: PathBuf,
+        time: f64,
+    }
+
+    impl Preview {
+        fn new() -> Self {
+            Preview {
+                ctx: Context::default(),
+                blocks: parse_source_blocks(TABLE),
+                path: PathBuf::from("t.md"),
+                time: 0.0,
+            }
+        }
+
+        /// One frame with `events`, editing `edit`; what the preview reported.
+        fn frame(&mut self, events: Vec<Event>, mut edit: Option<&mut BlockEdit>) -> PreviewOutput {
+            self.time += 0.05;
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                time: Some(self.time),
+                events,
+                ..Default::default()
+            };
+            let mut output = None;
+            let mut full = self.ctx.run_ui(input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    output = Some(show_preview(ui, &self.path, &self.blocks, edit.as_deref_mut(), &[]));
+                });
+            });
+            // No screen here: the font texture is never uploaded.
+            full.textures_delta.clear();
+            output.expect("the panel draws the preview")
+        }
+
+        /// Move to `at`, press and release; the event of the release frame.
+        fn click(&mut self, at: Pos2, mut edit: Option<&mut BlockEdit>) -> Option<PreviewEvent> {
+            self.frame(vec![Event::PointerMoved(at)], edit.as_deref_mut());
+            let press = |pressed| Event::PointerButton {
+                pos: at,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            };
+            self.frame(vec![press(true)], edit.as_deref_mut());
+            self.frame(vec![press(false)], edit).event
+        }
+
+        /// Every distinct event a click somewhere in the area gives.
+        fn scan(
+            &mut self,
+            xs: std::ops::Range<i32>,
+            ys: std::ops::Range<i32>,
+            mut edit: Option<&mut BlockEdit>,
+        ) -> Vec<PreviewEvent> {
+            let mut events = Vec::new();
+            for y in ys.step_by(6) {
+                for x in xs.clone().step_by(8) {
+                    #[expect(clippy::cast_precision_loss, reason = "screen positions")]
+                    let at = pos2(x as f32, y as f32);
+                    if let Some(event) = self.click(at, edit.as_deref_mut())
+                        && !events.contains(&event)
+                    {
+                        events.push(event);
+                    }
+                }
+            }
+            events
+        }
+    }
+
+    fn cell(row: usize, column: usize) -> TableCell {
+        TableCell { row, column }
+    }
+
+    fn cells_clicked(events: &[PreviewEvent]) -> BTreeSet<(usize, usize)> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                PreviewEvent::StartCellEdit { index: 0, cell } => Some((cell.row, cell.column)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_click_on_a_cell_asks_to_edit_that_cell() {
+        let mut preview = Preview::new();
+        let events = preview.scan(36..300, 26..140, None);
+        let cells = cells_clicked(&events);
+        let expected = BTreeSet::from([(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2), (2, 0), (3, 0), (3, 2)]);
+        assert!(cells.is_superset(&expected), "{events:?}");
+        // Next to the cells the table itself is still clickable.
+        assert!(events.contains(&PreviewEvent::StartEdit(0)), "{events:?}");
+    }
+
+    #[test]
+    fn a_short_cell_is_clickable_over_the_whole_height_of_its_row() {
+        let mut preview = Preview::new();
+        let long = "a long cell that wraps over several lines in its column ".repeat(6);
+        preview.blocks = parse_source_blocks(&format!("| A | B |\n| - | - |\n| x | {long} |\n"));
+        // Down the first column: the short cell `x` should answer along the
+        // whole height of the row its tall neighbour sets.
+        let mut hits = 0;
+        for y in (26..200).step_by(6) {
+            #[expect(clippy::cast_precision_loss, reason = "screen positions")]
+            let at = pos2(50.0, y as f32);
+            if preview.click(at, None) == Some(PreviewEvent::StartCellEdit { index: 0, cell: cell(1, 0) }) {
+                hits += 1;
+            }
+        }
+        assert!(hits >= 6, "{hits} rows of 6 px");
+    }
+
+    #[test]
+    fn the_cell_box_takes_focus_typing_and_enter() {
+        let mut preview = Preview::new();
+        let mut edit =
+            BlockEdit { index: 0, range: 2..6, text: "File".to_string(), focused: false, cell: Some(cell(0, 0)) };
+        preview.frame(Vec::new(), Some(&mut edit));
+        preview.frame(Vec::new(), Some(&mut edit));
+        assert!(edit.focused);
+        assert_eq!(preview.ctx.memory(egui::Memory::focused), Some(block_editor_id()));
+        let typed = preview.frame(vec![Event::Text("s".to_string())], Some(&mut edit));
+        assert_eq!(typed.event, None);
+        assert!(edit.text.contains('s') && edit.text != "File", "{}", edit.text);
+        let enter = Event::Key {
+            key: Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        let finished = preview.frame(vec![enter], Some(&mut edit));
+        assert_eq!(finished.event, Some(PreviewEvent::FinishEdit));
+        // Enter finished the edit instead of starting a new line.
+        assert!(!edit.text.contains('\n'), "{}", edit.text);
+    }
+
+    #[test]
+    fn while_editing_a_cell_other_cells_and_the_buttons_are_clickable() {
+        let mut preview = Preview::new();
+        let mut edit =
+            BlockEdit { index: 0, range: 42..46, text: "a.md".to_string(), focused: false, cell: Some(cell(1, 0)) };
+        preview.frame(Vec::new(), Some(&mut edit));
+        let events = preview.scan(36..780, 26..200, Some(&mut edit));
+        let cells = cells_clicked(&events);
+        assert!(cells.is_superset(&BTreeSet::from([(0, 0), (0, 1), (1, 1), (2, 0)])), "{events:?}");
+        // The box replaces the edited cell: no click on it is reported.
+        assert!(!cells.contains(&(1, 0)), "{events:?}");
+        let actions: BTreeSet<String> = events
+            .iter()
+            .filter_map(|event| match event {
+                PreviewEvent::Table { index: 0, action } => Some(format!("{action:?}")),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            actions,
+            BTreeSet::from_iter(["AddColumn", "AddRow", "RemoveColumn", "RemoveRow"].map(String::from))
+        );
+    }
+
+    #[test]
+    fn the_header_row_has_no_remove_row_button() {
+        let mut preview = Preview::new();
+        let mut edit =
+            BlockEdit { index: 0, range: 2..6, text: "File".to_string(), focused: false, cell: Some(cell(0, 0)) };
+        preview.frame(Vec::new(), Some(&mut edit));
+        let events = preview.scan(600..780, 50..200, Some(&mut edit));
+        let actions: Vec<TableAction> = events
+            .iter()
+            .filter_map(|event| match event {
+                PreviewEvent::Table { action, .. } => Some(*action),
+                _ => None,
+            })
+            .collect();
+        assert!(!actions.contains(&TableAction::RemoveRow), "{actions:?}");
+        assert!(actions.contains(&TableAction::AddRow), "{actions:?}");
+    }
 }
