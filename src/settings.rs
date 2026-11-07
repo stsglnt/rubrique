@@ -319,8 +319,9 @@ mod tests {
     }
 
     #[test]
-    fn theme_defaults_to_system() {
-        assert_eq!(Settings::parse("").theme, ThemeChoice::System);
+    fn theme_defaults_to_indigo() {
+        assert_eq!(Settings::parse("").theme, ThemeChoice::Named("dark".to_string()));
+        assert_eq!(Settings::parse("theme=system\n").theme, ThemeChoice::System);
         assert_eq!(Settings::parse("theme=light\n").theme, ThemeChoice::Named("light".to_string()));
     }
 }

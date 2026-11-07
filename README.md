@@ -60,7 +60,7 @@ Agents run only when you ask, read-only by default.
 
 <img src="docs/screenshots/themes.png" alt="One rubrique window shown in five themes: Light, Dark, Sepia, Midnight and High contrast" width="880">
 
-Five themes, or follow the system, or [add your own](themes/). Text size, line
+Five themes (Indigo is the default dark one), or follow the system, or [add your own](themes/). Text size, line
 numbers and other options are in Settings → Accessibility.
 
 ## Shortcuts
