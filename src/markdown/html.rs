@@ -355,7 +355,7 @@ mod tests {
         let page = html_page("a <b>", &parse_blocks("hi"), &palette, Some("file:///home/a/"));
         assert!(page.contains("<title>a &lt;b&gt;</title>"));
         assert!(page.contains("<base href=\"file:///home/a/\">"));
-        assert!(page.contains("--bg: #171436"));
+        assert!(page.contains("--bg: #1d1f23"));
         assert!(page.contains("<p>hi</p>"));
     }
 
