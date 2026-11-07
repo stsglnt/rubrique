@@ -50,6 +50,8 @@ const SWITCH_MARGIN: f32 = 10.0;
 /// Something the user did on the tab strip.
 #[derive(Clone, Copy, Debug)]
 enum TabAction {
+    /// The tab is being dragged (the strip shows where it would land).
+    Dragging(usize),
     Switch(usize),
     Close(usize),
     CloseOthers(usize),
@@ -388,8 +390,10 @@ impl RubriqueApp {
                     });
                 });
         });
+        self.paint_insertion_marker(ui, strip, &tab_spans, &group_spans, (&action, &chip_click));
         match chip_click {
             Some(ChipClick::Toggle(group)) => self.toggle_group(group),
+            Some(ChipClick::Dragging(_)) | None => {}
             Some(ChipClick::Drop { group, x }) => {
                 // Dropped on a folder's group: take its place.
                 if let Some((Some(to), ..)) = group_spans.iter().find(|(_, left, right)| (*left..=*right).contains(&x))
@@ -397,7 +401,6 @@ impl RubriqueApp {
                     self.move_group(group, *to);
                 }
             }
-            None => {}
         }
         if let Some(TabAction::Drop { index, x }) = action {
             if let Some(to) = drop_target(&tab_spans, x) {
@@ -405,6 +408,40 @@ impl RubriqueApp {
             }
         } else if let Some(action) = action {
             self.apply_tab_action(ui.ctx(), action);
+        }
+    }
+
+    /// While a tab or a chip is dragged: a line in the strip where it would land.
+    fn paint_insertion_marker(
+        &self,
+        ui: &Ui,
+        strip: egui::Rect,
+        tab_spans: &[(usize, f32, f32)],
+        group_spans: &[(Option<usize>, f32, f32)],
+        (action, chip_click): (&Option<TabAction>, &Option<ChipClick>),
+    ) {
+        let Some(x) = ui.input(|input| input.pointer.latest_pos()).map(|pos| pos.x) else { return };
+        // The edge of the span the item would be put next to: past it when
+        // it moves right, before it when it moves left.
+        let edge = |from: usize, to: usize, left: f32, right: f32| {
+            (from != to).then_some(if to > from { right } else { left })
+        };
+        let place = match (action, chip_click) {
+            (Some(TabAction::Dragging(from)), _) => drop_target(tab_spans, x)
+                .filter(|&to| !self.tabs_grouped() || self.group_of(self.tab(*from)) == self.group_of(self.tab(to)))
+                .and_then(|to| {
+                    let (_, left, right) = tab_spans.iter().find(|span| span.0 == to)?;
+                    edge(*from, to, *left, *right)
+                }),
+            (_, Some(ChipClick::Dragging(from))) => group_spans
+                .iter()
+                .find(|(_, left, right)| (*left..=*right).contains(&x))
+                .and_then(|(to, left, right)| edge(*from, (*to)?, *left, *right)),
+            _ => None,
+        };
+        if let Some(place) = place {
+            let stroke = egui::Stroke::new(2.0, ui.visuals().hyperlink_color);
+            ui.painter().vline(place, strip.y_range().shrink(5.0), stroke);
         }
     }
 
@@ -425,7 +462,7 @@ impl RubriqueApp {
                     self.tab_rename = Some(InlineRename::new(path.to_path_buf()));
                 }
             }
-            TabAction::Drop { .. } => {}
+            TabAction::Drop { .. } | TabAction::Dragging(_) => {}
             TabAction::ExitTerminal(index) => {
                 if let OpenFile::Terminal { terminal } = self.tab(index) {
                     let name = terminal.name.clone();
@@ -490,6 +527,68 @@ fn preview_switch(ui: &mut Ui, rect: egui::Rect, preview: bool) -> Option<bool> 
     clicked
 }
 
+/// How visible the copy that follows the pointer is, and how much of the
+/// dragged tab or chip is left in its place.
+pub(super) const GHOST_OPACITY: f32 = 0.5;
+
+/// While `response` is being dragged: a painter on top of everything and
+/// how far the pointer has moved sideways since the press. The caller draws
+/// a half visible copy of what is dragged with it, so the item seems to
+/// follow the pointer. The strip never moves up or down, and the real item
+/// stays in its place (dimmed, see `dim_dragged`) until the drop.
+pub(super) fn drag_ghost(ui: &Ui, response: &egui::Response) -> Option<(egui::Painter, egui::Vec2)> {
+    if !response.dragged() {
+        return None;
+    }
+    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    let (now, start) = ui.input(|input| (input.pointer.latest_pos(), input.pointer.press_origin()));
+    let offset = vec2(now?.x - start?.x, 0.0);
+    let layer = egui::LayerId::new(egui::Order::Tooltip, response.id.with("drag-ghost"));
+    Some((ui.ctx().layer_painter(layer), offset))
+}
+
+/// Fade the dragged item in its place, so the copy under the pointer is
+/// the one that reads as held.
+pub(super) fn dim_dragged(ui: &Ui, rect: egui::Rect) {
+    ui.painter().rect_filled(rect, 0, ui.visuals().panel_fill.gamma_multiply(1.0 - GHOST_OPACITY));
+}
+
+/// While the tab is dragged: dim it in place and draw its copy at the pointer.
+fn paint_dragged_tab(
+    ui: &Ui,
+    response: &egui::Response,
+    fill: Color32,
+    line: Option<Color32>,
+    name: (egui::Pos2, std::sync::Arc<egui::Galley>, Color32),
+) {
+    let Some((ghost, offset)) = drag_ghost(ui, response) else { return };
+    dim_dragged(ui, response.rect);
+    // A tab with no fill (not hovered, not active) still needs one to be seen.
+    let fill = if fill == Color32::TRANSPARENT { ui.visuals().widgets.hovered.weak_bg_fill } else { fill };
+    let (position, galley, color) = name;
+    paint_tab_ghost(&ghost, response.rect.translate(offset), fill, line, (position + offset, galley, color));
+}
+
+/// The half visible copy of a dragged tab at `rect`: its fill, the line on
+/// top, and its name (position, text, color).
+fn paint_tab_ghost(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    fill: Color32,
+    line: Option<Color32>,
+    name: (egui::Pos2, std::sync::Arc<egui::Galley>, Color32),
+) {
+    let corners = CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 };
+    let half = |color: Color32| color.gamma_multiply(GHOST_OPACITY);
+    painter.rect_filled(rect, corners, half(fill));
+    if let Some(color) = line {
+        let top = egui::Rect::from_min_size(rect.min, vec2(rect.width(), ACTIVE_LINE));
+        painter.rect_filled(top, corners, half(color));
+    }
+    let (position, galley, color) = name;
+    painter.galley(position, galley, half(color));
+}
+
 /// What one tab shows.
 struct TabView {
     /// The tab's file; `None` for a terminal opened from the Terminals list.
@@ -527,7 +626,9 @@ fn show_tab(
     job.wrap = egui::text::TextWrapping::truncate_at_width(max_text);
     let galley = ui.painter().layout_job(job);
     let width = TAB_PADDING * 2.0 + galley.size().x + CLOSE_SIZE;
-    let (rect, response) = ui.allocate_exact_size(vec2(width, TAB_HEIGHT), Sense::click_and_drag());
+    // Own id: a hovered tab's cross takes an automatic id, renumbering the rest.
+    let (rect, _) = ui.allocate_exact_size(vec2(width, TAB_HEIGHT), Sense::hover());
+    let response = ui.interact(rect, ui.scope_id().with(("tab", index)), Sense::click_and_drag());
     // Pointer anywhere on the tab, the close cross included. `hovered()` turns
     // false over the cross (a widget on top), which swapped the cross back to
     // the unsaved dot and lost the click.
@@ -560,8 +661,8 @@ fn show_tab(
         painter.vline(x, rect.y_range().shrink(8.0), visuals.widgets.noninteractive.bg_stroke);
     }
     let text_pos = pos2(rect.left() + TAB_PADDING, rect.center().y - galley.size().y / 2.0);
-    painter.galley(text_pos, galley, text_color);
-
+    painter.galley(text_pos, galley.clone(), text_color);
+    paint_dragged_tab(ui, &response, fill, line, (text_pos, galley, text_color));
     let close_rect = egui::Rect::from_center_size(
         pos2(rect.right() - TAB_PADDING / 2.0 - CLOSE_SIZE / 2.0, rect.center().y),
         vec2(CLOSE_SIZE, CLOSE_SIZE),
@@ -574,13 +675,13 @@ fn show_tab(
         // cursor back to the cross's right edge, which shifted the tabs after
         // this one 6 points left whenever the cross appeared.
         let layout = egui::Layout::centered_and_justified(egui::Direction::TopDown);
-        let mut cross = ui.new_child(egui::UiBuilder::new().max_rect(close_rect).layout(layout));
+        let mut cross =
+            ui.new_child(egui::UiBuilder::new().id_salt(("close", index)).max_rect(close_rect).layout(layout));
         let close = small_icon_button(&mut cross, Icon::Close, CLOSE_SIZE, "Close tab", "Close (Cmd+W)");
         if close.clicked() {
             action = Some(TabAction::Close(index));
         }
     }
-
     let tip = if tab.dirty { format!("{}\nUnsaved changes", tab.path) } else { tab.path.clone() };
     let response = response.on_hover_text(tip);
     if response.double_clicked() && tab.file.is_some() {
@@ -589,13 +690,12 @@ fn show_tab(
         action = Some(TabAction::Switch(index));
     }
     // Drag a tab sideways and drop it where it should go.
-    if response.dragged() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-    }
     if response.drag_stopped()
         && let Some(pos) = response.interact_pointer_pos()
     {
         action = Some(TabAction::Drop { index, x: pos.x });
+    } else if response.dragged() {
+        action = Some(TabAction::Dragging(index));
     }
     if response.middle_clicked() {
         action = Some(TabAction::Close(index));
@@ -695,5 +795,62 @@ mod layout_tests {
         let third = tab_positions(Some(pos2(still[2].0 + 20.0, 20.0)));
         assert_eq!(still, first);
         assert_eq!(still, third);
+    }
+
+    /// Open the startup tab plus `a.md`, `b.md`, `c.md` in a temp folder and
+    /// drag from screen `from` to `to` over many small steps, like a hand.
+    /// Returns the tab names before and after.
+    fn drag_in_the_tab_bar(from: f32, to: f32) -> (Vec<String>, Vec<String>) {
+        use eframe::egui::PointerButton;
+        let dir = std::env::temp_dir().join(format!("rubrique-drag-{}-{from}-{to}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ctx = Context::default();
+        let mut app = RubriqueApp::new(&ctx, crate::settings::Settings::default(), vec![dir.clone()], None);
+        for name in ["a.md", "b.md", "c.md"] {
+            let path = dir.join(name);
+            std::fs::write(&path, "x").unwrap();
+            app.open_in_tab(path);
+        }
+        let names = |app: &RubriqueApp| (0..app.tabs.len()).map(|i| app.tab(i).title()).collect::<Vec<_>>();
+        let before = names(&app);
+        // Settle on the first tab, press, move in 40 steps, release.
+        let mut steps: Vec<(f32, Option<bool>)> = vec![(from, None), (from, None), (from, Some(true))];
+        steps.extend((1..=40_u8).map(|n| (from + (to - from) * f32::from(n) / 40.0, None)));
+        steps.push((to, Some(false)));
+        for (n, (x, button)) in steps.into_iter().enumerate() {
+            let mut input = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                time: Some(f64::from(u16::try_from(n).unwrap_or(0)) * 0.016),
+                ..Default::default()
+            };
+            input.events.push(Event::PointerMoved(pos2(x, 20.0)));
+            if let Some(pressed) = button {
+                input.events.push(Event::PointerButton {
+                    pos: pos2(x, 20.0),
+                    button: PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                });
+            }
+            let mut output = ctx.run_ui(input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| app.tab_bar(ui));
+            });
+            output.textures_delta.clear();
+        }
+        std::fs::remove_dir_all(&dir).ok();
+        (before, names(&app))
+    }
+
+    #[test]
+    fn dragging_a_tab_right_moves_it() {
+        let (before, after) = drag_in_the_tab_bar(100.0, 300.0);
+        assert_eq!(after, [before[1].clone(), before[2].clone(), before[0].clone(), before[3].clone()]);
+    }
+
+    #[test]
+    fn dragging_a_tab_left_moves_it() {
+        // From the last tab (the active one) to the first.
+        let (before, after) = drag_in_the_tab_bar(360.0, 100.0);
+        assert_eq!(after, [before[3].clone(), before[0].clone(), before[1].clone(), before[2].clone()]);
     }
 }

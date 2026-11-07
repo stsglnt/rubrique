@@ -39,6 +39,8 @@ const HOVER_TINT: f32 = 1.6;
 pub(super) enum ChipClick {
     /// Fold or unfold the group.
     Toggle(Option<usize>),
+    /// The chip of group `group` is being dragged.
+    Dragging(usize),
     /// The chip was dragged and dropped with the pointer at screen `x`.
     Drop { group: usize, x: f32 },
 }
@@ -113,7 +115,9 @@ impl RubriqueApp {
         let chip_width = CHIP_PADDING * 2.0 + dot_width + galley.size().x;
         let size = vec2(chip_width + CHIP_MARGIN * 2.0, super::tabs::TAB_HEIGHT);
         // Click to fold, drag to move the group.
-        let (slot, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
+        // Own id, like a tab (see `show_tab`).
+        let (slot, _) = ui.allocate_exact_size(size, Sense::hover());
+        let response = ui.interact(slot, ui.scope_id().with(("chip", group)), Sense::click_and_drag());
         response.widget_info(|| WidgetInfo::labeled(egui::Role::Button, true, &text));
         let chip = egui::Rect::from_center_size(slot.center(), vec2(chip_width, CHIP_HEIGHT));
         let tint = if folded { FOLDED_CHIP_TINT } else { CHIP_TINT };
@@ -122,21 +126,31 @@ impl RubriqueApp {
         let dot = pos2(chip.left() + CHIP_PADDING + CHIP_DOT, chip.center().y);
         ui.painter().circle_filled(dot, CHIP_DOT, color);
         let text_pos = pos2(chip.left() + CHIP_PADDING + dot_width, chip.center().y - galley.size().y / 2.0);
-        ui.painter().galley(text_pos, galley, color);
+        ui.painter().galley(text_pos, galley.clone(), color);
+        // A half visible copy follows the pointer while the chip is dragged.
+        // ("Other" stays last, so its chip does not move.)
+        if let Some((ghost, offset)) = group.and_then(|_| super::tabs::drag_ghost(ui, &response)) {
+            super::tabs::dim_dragged(ui, slot);
+            let half = |color: Color32| color.gamma_multiply(super::tabs::GHOST_OPACITY);
+            ghost.rect_filled(chip.translate(offset), CHIP_RADIUS, half(fill));
+            ghost.circle_filled(dot + offset, CHIP_DOT, half(color));
+            ghost.galley(text_pos + offset, galley, half(color));
+        }
         let tip = if folded { "Show this group's tabs" } else { "Fold this group's tabs" };
         let tip = if group.is_some() { format!("{tip}. Drag to move the group") } else { tip.to_string() };
         let response = response.on_hover_text(tip);
         let mut click = response.clicked().then_some(ChipClick::Toggle(group));
         // Drag a chip to put its group elsewhere; "Other" always stays last.
-        if let Some(group) = group {
-            if response.dragged() {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-            }
-            if response.drag_stopped()
-                && let Some(pos) = response.interact_pointer_pos()
-            {
-                click = Some(ChipClick::Drop { group, x: pos.x });
-            }
+        if let Some(group) = group
+            && response.dragged()
+        {
+            click = Some(ChipClick::Dragging(group));
+        }
+        if let Some(group) = group
+            && response.drag_stopped()
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            click = Some(ChipClick::Drop { group, x: pos.x });
         }
         click
     }
