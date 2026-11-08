@@ -4,6 +4,7 @@ version = "0.8.4"
 edition = "2024"
 description = "A fast editor, agentic on demand."
 license = "MIT"
+homepage = "https://rubrique.dev"
 repository = "https://github.com/witseko/rubrique"
 publish = false
 # Minimum supported Rust (MSRV), matching the README.
