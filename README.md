@@ -19,8 +19,7 @@ Download from [Releases](https://github.com/witseko/rubrique/releases).
 | Debian, Ubuntu | `sudo apt install ./rubrique_X.Y.Z-1_amd64.deb` |
 | Other Linux | Unpack the `.tar.gz`, run `./install.sh` |
 
-macOS blocks the first open (the app is not notarized yet). Fix:
-`xattr -dr com.apple.quarantine /Applications/rubrique.app`
+The macOS app is signed and notarized by Apple, so it opens without a warning.
 
 ## Features
 

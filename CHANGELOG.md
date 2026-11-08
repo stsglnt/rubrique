@@ -44,6 +44,7 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Changed
 
+- **Signed macOS app**: the app is signed with a Developer ID and notarized by Apple, so it opens without the Gatekeeper warning and the `xattr` step is no longer needed.
 - **Status bar buttons are icons**: Record (a microphone), Add audio file
   (a waveform with a plus), Open in browser (a window with an arrow) and
   Format (text lines) are icon buttons, grouped by a thin line, with
