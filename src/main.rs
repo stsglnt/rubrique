@@ -41,7 +41,7 @@ const WINDOW_ICON_PNG: &[u8] = include_bytes!("../assets/icon/rubrique-256.png")
 const USAGE: &str = "Usage: rubrique [FOLDER | FILE]...
 
 Opens each FOLDER in the explorer, and each FILE's folder; the first FILE opens.
-Without arguments, reopens the last folders (or the current one).";
+Without arguments, reopens the last folders (none on the first run).";
 
 /// Handle `--help` / `--version`, pick the starting folder, run the window.
 fn main() -> ExitCode {
@@ -96,8 +96,10 @@ fn main() -> ExitCode {
 
 /// Pick the explorer root folders and an optional file to open (spec 01, "Root folders").
 ///
-/// Errors are messages for the terminal: a missing path, or no readable
-/// current folder.
+/// Without arguments and no saved folder (the first run), the explorer
+/// starts empty and the user adds folders from there.
+///
+/// Errors are messages for the terminal: a missing path.
 fn starting_location(arguments: &[PathBuf], settings: &Settings) -> Result<(Vec<PathBuf>, Option<PathBuf>), String> {
     if !arguments.is_empty() {
         let mut roots = Vec::new();
@@ -133,8 +135,7 @@ fn starting_location(arguments: &[PathBuf], settings: &Settings) -> Result<(Vec<
             .filter(|file| usable(file, Path::is_file) && saved.iter().any(|folder| file.starts_with(folder)));
         return Ok((saved, file));
     }
-    let current = std::env::current_dir().map_err(|error| format!("current folder: {error}"))?;
-    Ok((vec![current], None))
+    Ok((Vec::new(), None))
 }
 
 #[cfg(test)]
@@ -184,10 +185,14 @@ mod tests {
     }
 
     #[test]
-    fn no_argument_and_no_saved_folder_uses_the_current_folder() {
+    fn first_run_opens_no_folder() {
+        assert_eq!(starting_location(&[], &Settings::default()).unwrap(), (Vec::new(), None));
+    }
+
+    #[test]
+    fn no_argument_and_no_usable_saved_folder_opens_no_folder() {
         let settings = Settings { folders: vec![PathBuf::from("/definitely/not/here")], ..Settings::default() };
-        let current = std::env::current_dir().unwrap();
-        assert_eq!(starting_location(&[], &settings).unwrap(), (vec![current], None));
+        assert_eq!(starting_location(&[], &settings).unwrap(), (Vec::new(), None));
     }
 
     #[test]

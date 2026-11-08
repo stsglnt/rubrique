@@ -14,6 +14,10 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   to Refresh turns "Markdown only" on and off and stays highlighted while
   it is on, instead of a checkbox above the tree, so the tree starts right
   under the header.
+- **The first run opens no folder.** Rubrique used to show the folder it
+  was started from (often your home folder, or `/` from the Finder); now
+  the explorer starts empty with an "Add folder..." button. Folders you
+  add are reopened next time as before.
 
 ## [0.8.5] - 2026-11-08
 

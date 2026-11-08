@@ -248,6 +248,9 @@ pub fn show_explorer(
     // text); long names scroll sideways instead.
     egui::ScrollArea::both().id_salt("file-tree").auto_shrink([false, false]).show(ui, |ui| {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+        if roots.is_empty() {
+            show_no_folders(ui, &mut action);
+        }
         for (index, root) in roots.iter_mut().enumerate() {
             let root_path = root.path.clone();
             let root_color = context.can_remove_roots.then(|| group_color(index));
@@ -311,6 +314,16 @@ fn files_header(
             }
         },
     )
+}
+
+/// What the tree shows before any folder is added (the first run): a
+/// hint and a button for the same folder picker as the header button.
+fn show_no_folders(ui: &mut Ui, action: &mut Option<ExplorerAction>) {
+    ui.add_space(8.0);
+    ui.weak("No folder open yet.");
+    if ui.button("Add folder...").clicked() {
+        *action = Some(ExplorerAction::AddFolder);
+    }
 }
 
 /// A root folder: a bold row that folds its tree open and closed.
