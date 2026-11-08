@@ -8,6 +8,8 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-11-08
+
 ### Added
 
 - **Version in Settings**: the version of rubrique you are running is shown
