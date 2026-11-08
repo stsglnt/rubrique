@@ -19,6 +19,17 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   and Touch ID turns itself off until you set it up again. Works in the
   Rubrique app from a release, which carries the signature macOS asks for.
 
+## [0.8.4] - 2026-11-08
+
+### Changed
+
+- **Folder colors and unsaved files no longer look alike in the explorer.**
+  A folder's color is a bar on the left edge of its row (the counterpart of
+  the colored line on its tabs) instead of a dot after its name, and an
+  unsaved file keeps its bullet after the name but in the text color, like
+  the dot on its tab, instead of turning green (the same green as the
+  second folder's color).
+
 ## [0.8.3] - 2026-11-08
 
 ### Changed
