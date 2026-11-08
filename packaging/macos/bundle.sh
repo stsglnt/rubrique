@@ -54,6 +54,23 @@ ln -s /Applications "$dmg_root/Applications"
 hdiutil create -volname "rubrique $version" -srcfolder "$dmg_root" -ov -format UDZO "$dmg"
 rm -rf "$dmg_root"
 
+# stapler fetches the ticket from Apple's CloudKit, and that connection drops
+# now and then ("The network connection was lost", exit code 68): it failed
+# two release runs in a row on GitHub's runners. Apple's advice is to retry,
+# at once and then after a pause, so each stapler call gets a few attempts.
+retry_stapler() {
+    attempt=1
+    while ! xcrun stapler "$@"; do
+        if [ "$attempt" -ge 8 ]; then
+            echo "stapler $1 failed $attempt times, giving up" >&2
+            return 1
+        fi
+        echo "stapler $1 failed, retrying in 15s (attempt $attempt of 8)" >&2
+        sleep 15
+        attempt=$((attempt + 1))
+    done
+}
+
 if [ -n "$identity" ]; then
     codesign --force --timestamp --sign "$identity" "$dmg"
     if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ] && [ -n "${APPLE_APP_PASSWORD:-}" ]; then
@@ -61,9 +78,9 @@ if [ -n "$identity" ]; then
         xcrun notarytool submit "$dmg" \
             --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" \
             --wait --timeout 30m
-        xcrun stapler staple "$dmg"
-        xcrun stapler staple "$app"
-        xcrun stapler validate "$dmg"
+        retry_stapler staple "$dmg"
+        retry_stapler staple "$app"
+        retry_stapler validate "$dmg"
         # The same checks Gatekeeper runs on a downloaded app.
         spctl --assess --type execute --verbose=2 "$app"
         spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
