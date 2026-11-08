@@ -8,6 +8,13 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Changed
+
+- **The Markdown filter is a button in the Files header.** A funnel next
+  to Refresh turns "Markdown only" on and off and stays highlighted while
+  it is on, instead of a checkbox above the tree, so the tree starts right
+  under the header.
+
 ## [0.8.5] - 2026-11-08
 
 ### Changed

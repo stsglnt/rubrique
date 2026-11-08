@@ -68,6 +68,9 @@ pub enum Icon {
     ColumnPlus,
     /// Remove a table column: the same table with the minus badge.
     ColumnMinus,
+    /// Show only some files (the explorer's Markdown filter): a funnel
+    /// whose spout is the accent.
+    Filter,
 }
 
 /// A flat button with `icon` and a hover tip. `active` keeps it highlighted
@@ -183,6 +186,7 @@ fn paint(painter: &Painter, icon: Icon, center: Pos2, colors: Colors) {
             paint_table_icon(painter, icon, center, colors);
         }
         Icon::Format => paint_format(painter, center, line, detail),
+        Icon::Filter => paint_filter(painter, center, line, detail),
         Icon::Refresh => {
             // Most of a circle; the arrowhead at its end is the accent.
             let radius = 5.6;
@@ -273,14 +277,47 @@ pub fn paint_icon(painter: &Painter, icon: Icon, center: Pos2, line: Color32, ac
 pub fn small_icon_button(ui: &mut Ui, icon: Icon, size: f32, label: &str, tip: &str) -> Response {
     let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(egui::Role::Button, true, label));
+    paint_small_button(ui, icon, rect, &response, false);
+    response.on_hover_text(tip)
+}
+
+/// A small flat button like [`small_icon_button`] that turns `on` and off
+/// when clicked, and keeps the selection fill while it is on.
+pub fn small_toggle_button(ui: &mut Ui, icon: Icon, size: f32, label: &str, tip: &str, on: &mut bool) -> Response {
+    let (rect, mut response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    let selected = *on;
+    response.widget_info(|| WidgetInfo::selected(egui::Role::Button, true, selected, label));
+    paint_small_button(ui, icon, rect, &response, selected);
+    response.on_hover_text(tip)
+}
+
+/// The fill and icon of a small button; `active` gives it the selection fill.
+fn paint_small_button(ui: &Ui, icon: Icon, rect: egui::Rect, response: &Response, active: bool) {
     let visuals = ui.visuals();
-    let fill = if response.hovered() { visuals.widgets.hovered.weak_bg_fill } else { Color32::TRANSPARENT };
-    let color = if response.hovered() { visuals.strong_text_color() } else { visuals.weak_text_color() };
+    let fill = if active {
+        visuals.selection.bg_fill
+    } else if response.hovered() {
+        visuals.widgets.hovered.weak_bg_fill
+    } else {
+        Color32::TRANSPARENT
+    };
+    let color = if active || response.hovered() { visuals.strong_text_color() } else { visuals.weak_text_color() };
     let painter = ui.painter();
     painter.rect_filled(rect, visuals.widgets.inactive.corner_radius, fill);
     let behind = if fill == Color32::TRANSPARENT { visuals.panel_fill } else { fill };
     paint(painter, icon, rect.center(), Colors { line: color, accent: visuals.hyperlink_color, behind });
-    response.on_hover_text(tip)
+}
+
+/// A funnel: the cone narrows to a neck; the spout under it is the accent.
+fn paint_filter(painter: &Painter, center: Pos2, line: Stroke, detail: Stroke) {
+    let at = |x: f32, y: f32| center + vec2(x, y);
+    let cone = [at(-6.5, -5.5), at(6.5, -5.5), at(1.6, 0.5), at(-1.6, 0.5)];
+    stroke_path(painter, &round_corners(&cone, CORNER, true), true, line);
+    stroke_path(painter, &[at(-1.6, 0.5), at(-1.6, 6.5), at(1.6, 4.5), at(1.6, 0.5)], false, detail);
 }
 
 /// A square open at the top right with a pencil writing into it; the

@@ -8,7 +8,7 @@ use egui::text::{CCursor, CCursorRange};
 use super::note_marks::NoteMarks;
 use super::section::{paint_fold_arrow, section_header};
 use super::terminals::{show_docked_terminals, show_terminal_file, show_terminals_section};
-use crate::icons::{Icon, LOCK_MARK_SIZE, paint_icon, paint_lock_mark, small_icon_button};
+use crate::icons::{Icon, LOCK_MARK_SIZE, paint_icon, paint_lock_mark, small_icon_button, small_toggle_button};
 use crate::scratch::is_scratch;
 use crate::settings::layout::LayoutSettings;
 use crate::terminal::agent_sessions::SessionHistory;
@@ -215,8 +215,8 @@ pub struct Revealed<'a> {
 }
 
 /// Draw the explorer panel: the Files section (its header with "Add
-/// folder", "New scratch" and refresh, the Markdown filter and one tree per
-/// root folder) and the Terminals section docked under it. `layout` holds
+/// folder", "New scratch", the Markdown filter and refresh, and one tree
+/// per root folder) and the Terminals section docked under it. `layout` holds
 /// which sections are folded; the headers change it. `edits` holds the name
 /// fields shown in place of rows; Esc in a field clears it.
 pub fn show_explorer(
@@ -235,17 +235,14 @@ pub fn show_explorer(
     if files_open {
         show_docked_terminals(ui, context, &mut layout.terminals_collapsed, edits.session, &mut action);
     }
-    if files_header(ui, context, files_open, &mut action) {
+    if files_header(ui, context, files_open, markdown_only, &mut action) {
         layout.files_collapsed = files_open;
     }
     if !files_open {
         show_terminals_section(ui, context, &mut layout.terminals_collapsed, edits.session, &mut action);
         return action;
     }
-    ui.checkbox(markdown_only, "Markdown only").on_hover_text("Hide files that are not Markdown");
-    ui.add_space(2.0);
-
-    // The checkbox above may have just changed the filter.
+    // The filter button in the header may have just changed the filter.
     let context = TreeContext { markdown_only: *markdown_only, ..*context };
     // Rows never wrap (a wrapped name would put the folder arrow over its
     // text); long names scroll sideways instead.
@@ -261,9 +258,15 @@ pub fn show_explorer(
     action
 }
 
-/// The "FILES" header with the folder buttons. Returns true when the title
-/// was clicked.
-fn files_header(ui: &mut Ui, context: &TreeContext, expanded: bool, action: &mut Option<ExplorerAction>) -> bool {
+/// The "FILES" header with the folder buttons and the Markdown filter.
+/// Returns true when the title was clicked.
+fn files_header(
+    ui: &mut Ui,
+    context: &TreeContext,
+    expanded: bool,
+    markdown_only: &mut bool,
+    action: &mut Option<ExplorerAction>,
+) -> bool {
     section_header(
         ui,
         "FILES",
@@ -276,6 +279,12 @@ fn files_header(ui: &mut Ui, context: &TreeContext, expanded: bool, action: &mut
             {
                 *action = Some(ExplorerAction::Refresh);
             }
+            let filter_tip = if *markdown_only {
+                "Showing Markdown files only. Click to show all files"
+            } else {
+                "Showing all files. Click to hide files that are not Markdown"
+            };
+            small_toggle_button(ui, Icon::Filter, HEADER_BUTTON_SIZE, "Markdown only", filter_tip, markdown_only);
             let scratch_tip = "New scratch file for quick notes (Cmd+N). Right-click for an encrypted one";
             let scratch = small_icon_button(ui, Icon::NewScratch, HEADER_BUTTON_SIZE, "New scratch", scratch_tip);
             if scratch.clicked() {
