@@ -49,6 +49,19 @@ to `main` whose `Cargo.toml` version has no tag yet. If Actions did not
 run (for example the account's spending limit was reached), start it by
 hand from the Actions tab (`workflow_dispatch`) once that is fixed.
 
+## macOS disk image
+
+`packaging/macos/bundle.sh` lays the `.dmg` out through Finder: window
+size, icon size and the two icon positions, over
+`packaging/macos/background.png`. That picture is drawn by a script:
+
+```sh
+swift packaging/macos/background.swift packaging/macos/background.png
+```
+
+The icon positions live in both `bundle.sh` and `background.swift`;
+change them together and remake the picture.
+
 ## Screenshots
 
 `docs/screenshots/themes.png` is remade by a script (macOS only):
