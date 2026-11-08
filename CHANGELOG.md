@@ -8,6 +8,8 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-11-08
+
 ### Changed
 
 - **App icon and name**: the capital "R" icon with the marker tip is back,
