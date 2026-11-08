@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build rubrique.app from the two release binaries (Apple Silicon and Intel)
+# Build Rubrique.app from the two release binaries (Apple Silicon and Intel)
 # and pack it as dist/rubrique-VERSION-macos-universal.dmg and .zip.
 # Usage: packaging/macos/bundle.sh VERSION
 #
@@ -13,7 +13,7 @@
 set -eu
 version="$1"
 name="rubrique-$version-macos-universal"
-app="dist/rubrique.app"
+app="dist/Rubrique.app"
 dmg="dist/$name.dmg"
 identity="${MACOS_SIGN_IDENTITY:-}"
 
@@ -53,7 +53,7 @@ codesign --verify --strict --verbose=2 "$app"
 # Finder through AppleScript, and then converted to the compressed
 # read-only image that ships. Without this, Finder opens the image like
 # any folder: in the last window size it had, icons in the top left corner.
-volume="rubrique $version"
+volume="Rubrique $version"
 dmg_root="dist/dmg"
 rm -rf "$dmg_root"
 mkdir -p "$dmg_root/.background"
@@ -93,7 +93,7 @@ tell application "Finder"
         set icon size of view_options to 128
         set text size of view_options to 13
         set background picture of view_options to file ".background:background.png"
-        set position of item "rubrique.app" of container window to {150, 185}
+        set position of item "Rubrique.app" of container window to {150, 185}
         set position of item "Applications" of container window to {450, 185}
         close
         open

@@ -1,4 +1,4 @@
-# rubrique built-in theme: Midnight (deep blue for night work).
+# Rubrique built-in theme: Midnight (deep blue for night work).
 # Colors are #rrggbb. Keys left out come from the `base` theme.
 name=Midnight
 base=dark

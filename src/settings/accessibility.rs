@@ -63,7 +63,7 @@ pub const DEFAULT_EDITOR_FONT_SIZE: u8 = 13;
 /// Smallest and largest editor font size.
 pub const EDITOR_FONT_SIZES: RangeInclusive<u8> = 9..=28;
 
-/// Settings that make rubrique easier to read and use.
+/// Settings that make Rubrique easier to read and use.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AccessibilitySettings {
     /// Zoom of the whole window.

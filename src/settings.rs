@@ -18,7 +18,7 @@ pub mod layout;
 pub mod privacy;
 pub mod view;
 
-/// Everything rubrique remembers between runs.
+/// Everything Rubrique remembers between runs.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Settings {
     /// Explorer root folders of the last session, in order.

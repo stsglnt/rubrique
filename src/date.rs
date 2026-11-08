@@ -1,7 +1,7 @@
 //! Today's local date as `YYYY-MM-DD` and the time of day, using the C
 //! library (no date crate).
 //!
-//! The only `unsafe` code in rubrique lives here: one call to `localtime_r`,
+//! The only `unsafe` code in Rubrique lives here: one call to `localtime_r`,
 //! wrapped in the safe function [`local_time`].
 
 use std::ffi::{c_char, c_int, c_long};
@@ -48,7 +48,7 @@ impl Tm {
 unsafe extern "C" {
     /// Thread-safe conversion of a Unix timestamp to local time.
     /// `time_t` is a 64-bit signed integer on the 64-bit macOS and Linux
-    /// targets rubrique supports, hence `i64`.
+    /// targets Rubrique supports, hence `i64`.
     fn localtime_r(time: *const i64, result: *mut Tm) -> *mut Tm;
 }
 

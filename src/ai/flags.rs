@@ -1,7 +1,7 @@
-//! The flags rubrique knows in a tool's command template, behind the chips
+//! The flags Rubrique knows in a tool's command template, behind the chips
 //! above the command field in Settings: read a flag's value, set it or take
 //! it out, and leave every other word of the template as it is. The text
-//! stays the source of truth; a flag rubrique does not know is simply not a
+//! stays the source of truth; a flag Rubrique does not know is simply not a
 //! chip.
 
 use std::path::Path;
@@ -50,7 +50,7 @@ const CODEX_FLAGS: [Flag; 2] = [
 
 const LOCAL_FLAGS: [Flag; 1] = [MODEL];
 
-/// The flags rubrique knows for `tool`, in chip order. Grok has none yet.
+/// The flags Rubrique knows for `tool`, in chip order. Grok has none yet.
 pub fn known_flags(tool: AiTool) -> &'static [Flag] {
     match tool {
         AiTool::Claude => &CLAUDE_FLAGS,

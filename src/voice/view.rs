@@ -22,7 +22,7 @@ pub struct MemoStates {
 pub struct MemoState {
     /// The file is not there.
     pub missing: bool,
-    /// rubrique can play it (WAV); other files open in the system player.
+    /// Rubrique can play it (WAV); other files open in the system player.
     pub playable: bool,
     /// Length in seconds, when known.
     pub duration: Option<f64>,
@@ -121,14 +121,14 @@ pub fn memo_row(ui: &mut Ui, link: &MemoLink) {
     }
 }
 
-/// Play / Pause, or Open for files rubrique cannot play.
+/// Play / Pause, or Open for files Rubrique cannot play.
 fn play_button(ui: &mut Ui, link: &MemoLink, state: &MemoState) -> Option<MemoAction> {
     if state.missing {
         ui.add_enabled_ui(false, |ui| icon_button(ui, Icon::Play, "Play", "The file is missing", false));
         return None;
     }
     if !state.playable {
-        let open = icon_button(ui, Icon::Play, "Open", "Open in your audio player (rubrique plays WAV files)", false);
+        let open = icon_button(ui, Icon::Play, "Open", "Open in your audio player (Rubrique plays WAV files)", false);
         return open.clicked().then(|| MemoAction::Open(link.url.clone()));
     }
     if state.playing {

@@ -7,7 +7,7 @@ use super::palette::{Base, Theme};
 
 /// File extension of theme files in the themes folder.
 const THEME_EXTENSION: &str = "theme";
-/// Themes shipped with rubrique after Light and Dark: id and file text.
+/// Themes shipped with Rubrique after Light and Dark: id and file text.
 const EXTRA_BUILTINS: [(&str, &str); 3] = [
     ("sepia", include_str!("../../themes/sepia.theme")),
     ("midnight", include_str!("../../themes/midnight.theme")),
@@ -84,7 +84,7 @@ impl Themes {
         themes
     }
 
-    /// Only the themes shipped with rubrique.
+    /// Only the themes shipped with Rubrique.
     pub fn builtin() -> Self {
         let mut list = vec![Theme::builtin(Base::Light), Theme::builtin(Base::Dark)];
         list.extend(EXTRA_BUILTINS.iter().map(|(id, text)| Theme::parse(id, text)));

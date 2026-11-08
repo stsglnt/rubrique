@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install rubrique from this folder. Default: for the current user, in ~/.local.
+# Install Rubrique from this folder. Default: for the current user, in ~/.local.
 # For everyone: sudo ./install.sh /usr/local
 set -eu
 prefix="${1:-$HOME/.local}"
@@ -13,7 +13,7 @@ for icon in "$here"/share/icons/hicolor/*/apps/rubrique.png; do
     install -Dm644 "$icon" "$prefix/share/icons/hicolor/$size_dir/apps/rubrique.png"
 done
 
-echo "Installed rubrique to $prefix/bin/rubrique"
+echo "Installed Rubrique to $prefix/bin/rubrique"
 case ":$PATH:" in
     *":$prefix/bin:"*) ;;
     *) echo "Note: $prefix/bin is not on your PATH." ;;

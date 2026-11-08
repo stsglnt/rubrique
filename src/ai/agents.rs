@@ -15,7 +15,7 @@
 //! You are John, a careful fact checker ...
 //! ```
 //!
-//! The body is the agent's personality and rules. rubrique adds it to what it
+//! The body is the agent's personality and rules. Rubrique adds it to what it
 //! sends to the tool, after its own rules about how to answer.
 
 use std::fs;

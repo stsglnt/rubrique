@@ -1,4 +1,4 @@
-# What rubrique is
+# What Rubrique is
 
 The words for the README, `Cargo.toml`, `packaging/linux/rubrique.desktop`
 and the GitHub description. Change this page first, then the others.
@@ -10,7 +10,7 @@ A fast editor, agentic on demand.
 Editor first. Agents second, and only on demand. Nothing else is identity.
 Which agents, which systems, how they connect, whether a key is needed: all
 details of the current version. Keep them out of the headline and the first
-paragraph. "Markdown" is a detail too: it is what rubrique does best, not
+paragraph. "Markdown" is a detail too: it is what Rubrique does best, not
 what it is.
 
 ## One line
@@ -63,8 +63,8 @@ Avoid: AI-assisted, assistant, copilot, chat, autopilot.
 
 ## Do not claim yet
 
-- Agents that write files or run commands from rubrique. Built-in commands
-  are read-only, and rubrique asks the agent not to use tools.
+- Agents that write files or run commands from Rubrique. Built-in commands
+  are read-only, and Rubrique asks the agent not to use tools.
 - Tasks across many files, or an agent that keeps its session.
 - API access, or providers beyond the four above.
 - Windows.

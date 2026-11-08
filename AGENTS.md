@@ -1,6 +1,6 @@
 # Instructions for agents
 
-Read this before changing rubrique. The code is Rust (edition 2024) with
+Read this before changing Rubrique. The code is Rust (edition 2024) with
 egui; `README.md` says what the app does and `CHANGELOG.md` what changed.
 
 ## Before a pull request
@@ -38,7 +38,7 @@ fixes only.
    workflows see the tag:
 
    ```sh
-   git tag -a rubrique-vX.Y.Z -m "rubrique X.Y.Z"
+   git tag -a rubrique-vX.Y.Z -m "Rubrique X.Y.Z"
    git push origin main refs/tags/rubrique-vX.Y.Z
    ```
 

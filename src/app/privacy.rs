@@ -345,7 +345,7 @@ impl RubriqueApp {
         egui::CentralPanel::default().show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space((ui.available_height() / 3.0).max(20.0));
-                ui.heading("rubrique is locked");
+                ui.heading("Rubrique is locked");
                 ui.add_space(8.0);
                 ui.label("Enter your PIN");
                 let field = ui.add_enabled(

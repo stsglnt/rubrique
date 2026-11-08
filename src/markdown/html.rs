@@ -19,7 +19,7 @@ pub fn html_page(title: &str, blocks: &[Block], palette: &Palette, base: Option<
     format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <meta name=\"generator\" content=\"rubrique\">\n{base_tag}<title>{}</title>\n<style>\n{}</style>\n\
+         <meta name=\"generator\" content=\"Rubrique\">\n{base_tag}<title>{}</title>\n<style>\n{}</style>\n\
          </head>\n<body>\n<main>\n{body}</main>\n</body>\n</html>\n",
         escape(title),
         style(palette),
@@ -219,7 +219,7 @@ fn write_inlines(out: &mut String, inlines: &[Inline]) {
             }
             Inline::Image { alt, .. } => out.push_str(&escape(alt)),
             Inline::LineBreak => out.push_str("<br>\n"),
-            // Notes stay private to rubrique, like the comments they come from.
+            // Notes stay private to Rubrique, like the comments they come from.
             Inline::Note { .. } => {}
         }
     }

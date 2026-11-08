@@ -35,7 +35,7 @@ pub struct PromptParts {
     /// The request as sent.
     pub request: String,
     pub text: TextSummary,
-    /// rubrique's instructions, with the agent's and any skill's.
+    /// Rubrique's instructions, with the agent's and any skill's.
     pub system: String,
     /// The agent, as "@ai-editor (Editor)".
     pub agent: Option<String>,

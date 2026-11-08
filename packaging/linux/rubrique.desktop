@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=rubrique
+Name=Rubrique
 GenericName=Text Editor
 Comment=A fast editor, agentic on demand.
 Exec=rubrique %F

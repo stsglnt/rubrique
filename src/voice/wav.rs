@@ -46,7 +46,7 @@ pub fn to_i16(sample: f32) -> i16 {
 pub enum WavError {
     /// Not a RIFF/WAVE file.
     NotWav,
-    /// A WAV encoding rubrique does not read (compressed, or odd sample sizes).
+    /// A WAV encoding Rubrique does not read (compressed, or odd sample sizes).
     Unsupported,
 }
 
@@ -143,7 +143,7 @@ pub struct Audio {
 ///
 /// # Errors
 ///
-/// Fails for files that are not WAV, or use an encoding rubrique cannot read.
+/// Fails for files that are not WAV, or use an encoding Rubrique cannot read.
 pub fn decode(bytes: &[u8]) -> Result<Audio, WavError> {
     let Layout { format, data_start, data_bytes } = layout(bytes, bytes.len())?;
     let data = &bytes[data_start..data_start + data_bytes];

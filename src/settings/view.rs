@@ -111,7 +111,7 @@ pub struct AiInfo<'a> {
     pub skill_folders: &'a [SourceFolder],
     /// Agents found in the agents folders.
     pub agents: &'a [Agent],
-    /// rubrique's agents folder (the chosen one or the default).
+    /// Rubrique's agents folder (the chosen one or the default).
     pub agents_folder: Option<&'a Path>,
     /// How to install each missing tool, in [`AiTool::ALL`] order.
     pub recipes: &'a [Option<Recipe>; 4],
@@ -327,8 +327,8 @@ fn version_label(ui: &mut Ui) {
         ui.horizontal(|ui| {
             // Lined up with the group names, which start 10 points in (see `nav_item`).
             ui.add_space(10.0);
-            ui.label(RichText::new(concat!("rubrique ", env!("CARGO_PKG_VERSION"))).weak().small())
-                .on_hover_text("The version of rubrique you are running");
+            ui.label(RichText::new(concat!("Rubrique ", env!("CARGO_PKG_VERSION"))).weak().small())
+                .on_hover_text("The version of Rubrique you are running");
         });
     });
 }
@@ -515,7 +515,7 @@ fn privacy_section(ui: &mut Ui, privacy: PrivacyInfo) -> Option<SettingsAction> 
     ui.label(RichText::new("App PIN").strong());
     ui.label(
         RichText::new(
-            "Ask for a PIN when rubrique opens and after it sits idle. The PIN locks the window only: \
+            "Ask for a PIN when Rubrique opens and after it sits idle. The PIN locks the window only: \
              it does not encrypt your files.",
         )
         .weak(),
@@ -579,7 +579,7 @@ fn ai_section(ui: &mut Ui, ai: AiInfo) -> Option<SettingsAction> {
     role_pickers(ui, settings, found);
 
     ui.add_space(6.0);
-    section_title(ui, "Tools", "Programs already on this computer. rubrique starts them for you, no API keys.");
+    section_title(ui, "Tools", "Programs already on this computer. Rubrique starts them for you, no API keys.");
     list_frame(ui, |ui| {
         for (index, tool) in AiTool::ALL.into_iter().enumerate() {
             if index > 0 {
@@ -841,7 +841,7 @@ const CHOICE_CHIP_WIDTH: f32 = 150.0;
 /// What a choice chip says when the option is not in the command.
 const TOOL_DEFAULT: &str = "tool default";
 
-/// The flags rubrique knows for `tool`, as chips above the command field:
+/// The flags Rubrique knows for `tool`, as chips above the command field:
 /// a model field and the tool's choice options. A chip rewrites its flag in
 /// the command; the rest of the command stays as typed. Returns whether the
 /// command changed.
@@ -925,7 +925,7 @@ fn choice_chip(ui: &mut Ui, tool: AiTool, label: &str, values: &[&str], current:
 fn command_hint(tool: AiTool, command: &str) -> String {
     let mut hint = format!("{PROMPT} becomes your request");
     if command.contains(SYSTEM) {
-        let _ = write!(hint, ", {SYSTEM} rubrique's instructions");
+        let _ = write!(hint, ", {SYSTEM} Rubrique's instructions");
     }
     hint.push('.');
     if tool == AiTool::Local {
