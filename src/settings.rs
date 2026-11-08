@@ -49,6 +49,9 @@ pub struct Settings {
     pub remote: crate::remote::RemoteSettings,
     /// Which panels and explorer sections are open.
     pub layout: LayoutSettings,
+    /// The order the user dragged the Terminals list into, by session name.
+    /// Sessions not in it (new ones) show above, newest first.
+    pub terminal_order: Vec<String>,
 }
 
 impl Settings {
@@ -102,6 +105,7 @@ impl Settings {
                 "last_folder" => legacy_folder = non_empty_path(value),
                 "last_file" => settings.last_file = from_settings_text(value),
                 "tab" => settings.open_tabs.extend(from_settings_text(value)),
+                "terminal_order" if !value.is_empty() => settings.terminal_order.push(value.to_string()),
                 "markdown_only" => settings.markdown_only = value == "true",
                 "note_marks" => settings.note_marks = value == "true",
                 "window_width" => width = value.parse::<f32>().ok(),
@@ -137,8 +141,12 @@ impl Settings {
         };
         let folder_lines = path_lines("folder", &self.folders);
         let tab_lines = path_lines("tab", &self.open_tabs);
+        let terminal_lines = self.terminal_order.iter().fold(String::new(), |mut lines, name| {
+            let _ = writeln!(lines, "terminal_order={name}");
+            lines
+        });
         format!(
-            "{folder_lines}{tab_lines}last_file={}\nmarkdown_only={}\nnote_marks={}\ntheme={}\nscratch_folder={}\n{window_lines}{}{}{}{}{}{}",
+            "{folder_lines}{tab_lines}{terminal_lines}last_file={}\nmarkdown_only={}\nnote_marks={}\ntheme={}\nscratch_folder={}\n{window_lines}{}{}{}{}{}{}",
             last_file,
             self.markdown_only,
             self.note_marks,
@@ -275,6 +283,7 @@ mod tests {
                 files_collapsed: false,
                 terminals_collapsed: true,
             },
+            terminal_order: vec!["build".to_string(), "notes agent".to_string()],
         };
         let text = settings.to_text();
         assert!(text.contains("folder=ssh://server/srv/notes\n"), "{text}");

@@ -96,6 +96,8 @@ impl RubriqueApp {
             return;
         }
         monitor.refresh();
+        // A later session with the same name starts on top, like any new one.
+        self.settings.terminal_order.retain(|ordered| ordered != name);
         let shows_session = |file: &OpenFile| matches!(file, OpenFile::Terminal { terminal } if terminal.name == name);
         for index in (0..self.tabs.len()).rev() {
             if index != self.active_tab && shows_session(&self.tabs[index]) {
@@ -202,6 +204,10 @@ impl RubriqueApp {
         self.save_agent_history();
         if let Some(expanded) = self.expanded_terminals.iter_mut().find(|name| *name == from) {
             expanded.clone_from(&to);
+        }
+        // Keep its place in the list the user dragged into order.
+        if let Some(ordered) = self.settings.terminal_order.iter_mut().find(|name| *name == from) {
+            ordered.clone_from(&to);
         }
         for file in std::iter::once(&mut self.open_file).chain(&mut self.tabs) {
             if let OpenFile::Terminal { terminal } = file

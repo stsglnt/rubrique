@@ -44,6 +44,7 @@ use crate::document::view::{
 };
 use crate::explorer::note_marks::NoteMarks;
 use crate::explorer::paths::{absolute_path_text, name_text};
+use crate::explorer::reorder::move_item;
 use crate::explorer::tree::{FsNode, is_markdown_path};
 use crate::explorer::view::{
     ExplorerAction, ExplorerEdits, InlineRename, NewEntry, Revealed, SessionEdit, TreeContext, show_explorer,
@@ -65,7 +66,7 @@ use crate::settings::view::{
 use crate::settings::{Settings, default_agents_folder, default_scratch_folder, default_skills_folder, themes_folder};
 use crate::terminal::agent_sessions::SessionHistory;
 use crate::terminal::is_terminal_path;
-use crate::terminal::monitor::TerminalMonitor;
+use crate::terminal::monitor::{TerminalMonitor, in_saved_order};
 use crate::terminal::session::LiveTerminal;
 use crate::terminal::tmux::Tmux;
 use crate::terminal::view::show_terminal;
@@ -569,6 +570,14 @@ impl RubriqueApp {
         if self.roots.len() > 1 {
             self.request(GuardedAction::RemoveRoot(path));
         }
+    }
+
+    /// Move root `from` to go before root `to` (dragged in the explorer),
+    /// and its tab group with it.
+    fn move_root(&mut self, from: usize, to: usize) {
+        move_item(&mut self.roots, from, to);
+        self.remember_roots();
+        self.sort_tabs_into_groups();
     }
 
     /// Take a root out of the explorer, keeping at least one, and close the
@@ -1446,7 +1455,8 @@ impl RubriqueApp {
             .filter(|file| file.is_dirty())
             .filter_map(|file| file.path().map(Path::to_path_buf))
             .collect();
-        let terminal_rows = self.terminals.as_ref().map(TerminalMonitor::rows);
+        let terminal_rows =
+            self.terminals.as_ref().map(|monitor| in_saved_order(monitor.rows(), &self.settings.terminal_order));
         let scratch_folder = self.settings.scratch_folder_or_default();
         let context = TreeContext {
             root: Path::new(""),
@@ -1509,6 +1519,13 @@ impl RubriqueApp {
                 self.resume_agent_session(&terminal, &id, new_terminal);
             }
             Some(ExplorerAction::RemoveRoot(path)) => self.request_remove_root(path),
+            Some(ExplorerAction::MoveRoot { from, to }) => self.move_root(from, to),
+            Some(ExplorerAction::MoveTerminal { from, to }) => {
+                // The new order is the list as it was drawn, with the move.
+                let mut names: Vec<String> = terminal_rows.iter().flatten().map(|row| row.info.name.clone()).collect();
+                move_item(&mut names, from, to);
+                self.settings.terminal_order = names;
+            }
             Some(ExplorerAction::AddFolder) => self.choose_folder_to_add(),
             Some(ExplorerAction::AddRemoteFolder) => self.open_add_remote(),
             Some(ExplorerAction::NewScratch { encrypted }) => {

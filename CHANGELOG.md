@@ -8,6 +8,13 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Added
+
+- **Drag folders and terminals into your own order.** Drag a root folder
+  in Files, or a session in Terminals, up or down; a line shows where it
+  will land. Tab groups follow the new folder order, and the terminal
+  order is remembered between runs (new terminals still show on top).
+
 ## [0.8.6] - 2026-11-08
 
 ### Changed
