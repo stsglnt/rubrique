@@ -1015,7 +1015,8 @@ impl RubriqueApp {
             local_model: self.install.local_model.as_ref(),
             install: &install,
         };
-        let privacy = PrivacyInfo { settings: &mut self.settings.privacy, unlocked: self.privacy.vault.is_some() };
+        let (unlocked, touch_id_available) = (self.privacy.vault.is_some(), self.privacy.touch_id_available);
+        let privacy = PrivacyInfo { settings: &mut self.settings.privacy, unlocked, touch_id_available };
         let voice = VoiceInfo {
             settings: &mut self.settings.voice,
             found: self.voice.program_found.as_deref(),
@@ -2472,6 +2473,7 @@ impl eframe::App for RubriqueApp {
         let ctx = ui.ctx().clone();
         self.handle_window_events(&ctx);
         self.track_activity(&ctx);
+        self.poll_touch_id(&ctx);
         if self.app_locked() {
             // Only the PIN screen; drafts and background work go on.
             self.poll_drafts(&ctx);
