@@ -268,6 +268,7 @@ pub fn show_settings(
                 *group = each;
             }
         }
+        version_label(ui);
     });
     ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
         egui::ScrollArea::vertical().id_salt(("settings-group", *group)).auto_shrink([false, false]).show(ui, |ui| {
@@ -315,6 +316,21 @@ fn nav_item(ui: &mut Ui, name: &str, selected: bool) -> Response {
     ui.painter().text(pos2(rect.left() + 10.0, rect.center().y), Align2::LEFT_CENTER, name, font, color);
     response.widget_info(|| WidgetInfo::selected(egui::Role::Tab, true, selected, name));
     response
+}
+
+/// The app's version, small and dim at the bottom of the group list, so a
+/// user can read it off before reporting a problem or checking for a
+/// newer release.
+fn version_label(ui: &mut Ui) {
+    ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            // Lined up with the group names, which start 10 points in (see `nav_item`).
+            ui.add_space(10.0);
+            ui.label(RichText::new(concat!("rubrique ", env!("CARGO_PKG_VERSION"))).weak().small())
+                .on_hover_text("The version of rubrique you are running");
+        });
+    });
 }
 
 /// Appearance: the theme cards and the user's own themes.
