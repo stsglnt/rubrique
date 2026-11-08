@@ -1,6 +1,6 @@
 # <img src="assets/icon/rubrique-128.png" alt="" width="40" align="top"> Rubrique
 
-A fast editor, agentic on demand.
+A fast editor, agentic on demand. [rubrique.dev](https://rubrique.dev)
 
 Write Markdown (or plain text, JSON, SQL, XML) in a small native editor.
 Press `Cmd/Ctrl+K` to hand the text to an agent, then accept or reject the

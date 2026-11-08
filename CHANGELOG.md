@@ -10,6 +10,13 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ### Changed
 
+- **App icon**: the capital "R" with the marker tip now sits on the Indigo
+  theme's colors, a deep indigo tile with a lavender letter and a yellow
+  tip, like the earlier lowercase icon, instead of the paper and brown of
+  the Light theme.
+- **Conflicts on the merge screen are tinted a pale accent** (a light
+  indigo in the Indigo theme) instead of the warning amber, which turned
+  olive on dark themes. Plain changes keep the accent tint.
 - **Larger, roomier text.** Labels, buttons and the explorer are a point
   bigger (14 instead of 13), hints are 11 instead of 9, the explorer's
   section titles 12 instead of 11, and the editor font
