@@ -178,8 +178,8 @@ pub struct TreeContext<'a> {
     pub markdown_only: bool,
     /// File shown in the editor, highlighted in the tree.
     pub open_file: Option<&'a Path>,
-    /// Files with unsaved changes, in any tab: shown in green with a dot
-    /// after the name.
+    /// Files with unsaved changes, in any tab: shown in the strong text
+    /// color with a bullet after the name.
     pub dirty_files: &'a [PathBuf],
     /// Which files have notes, when the marker is turned on.
     pub note_marks: Option<&'a NoteMarks>,
@@ -317,7 +317,7 @@ fn show_root(
     scroll_if_revealed(ui, context, &root.path, &response);
     paint_arrow(ui, &response, root.expanded);
     if let Some(color) = context.root_color {
-        paint_root_dot(ui, &response, &root.name, color);
+        paint_root_bar(ui, &response, color);
     }
     if toggles_fold(&response) {
         root.toggle_expanded();
@@ -414,7 +414,14 @@ fn show_file(
     let dirty_marker = if dirty { " •" } else { "" };
     let lock_gap = if file.encrypted { LOCK_GAP } else { "" };
     let label = format!("{ICON_GAP}{}{}{dirty_marker}{lock_gap}", file.name, link_marker(file));
-    let label = if dirty { egui::RichText::new(label).color(UNSAVED_COLOR) } else { egui::RichText::new(label) };
+    // Unsaved is a state, so it gets a neutral mark (the bullet, in the strong
+    // text color), like the dot on an unsaved tab. Hue is kept for telling
+    // folders apart; see `paint_root_bar`.
+    let label = if dirty {
+        egui::RichText::new(label).color(ui.visuals().strong_text_color())
+    } else {
+        egui::RichText::new(label)
+    };
     let response = tree_row(ui, is_open, label);
     scroll_if_revealed(ui, context, &file.path, &response);
     if file.encrypted {
@@ -514,18 +521,15 @@ pub(super) fn tree_row(ui: &mut Ui, selected: bool, label: impl Into<egui::Widge
     ui.add(egui::Button::selectable(selected, label.into()))
 }
 
-/// Name color of a file with unsaved changes: a green that reads on every
-/// built-in theme.
-const UNSAVED_COLOR: egui::Color32 = egui::Color32::from_rgb(0x34, 0xa8, 0x53);
 /// Room at the start of each row for the folder arrow, so file names line
 /// up with folder names.
 pub(super) const ICON_GAP: &str = "     ";
 /// Width of the folder arrow, in points (for placing it).
 const ARROW_SIZE: f32 = 7.0;
-/// Radius of the color dot after a root's name.
-const ROOT_DOT_RADIUS: f32 = 3.5;
-/// Space between a root's name and its color dot.
-const ROOT_DOT_GAP: f32 = 9.0;
+/// Width of the color bar on the left edge of a root's row.
+const ROOT_BAR_WIDTH: f32 = 3.0;
+/// How far the bar stops short of the row's top and bottom.
+const ROOT_BAR_INSET: f32 = 4.0;
 /// Size of the buttons in a section header.
 pub(super) const HEADER_BUTTON_SIZE: f32 = 22.0;
 /// Width of the note marker's icon box, in points.
@@ -559,13 +563,16 @@ fn paint_file_lock(ui: &Ui, response: &egui::Response) {
     paint_lock_mark(ui.painter(), center, visuals.weak_text_color(), visuals.hyperlink_color);
 }
 
-/// Paint the dot of a root's color after its name: its tabs carry the same color.
-fn paint_root_dot(ui: &Ui, response: &egui::Response, name: &str, color: egui::Color32) {
-    let font = egui::TextStyle::Body.resolve(ui.style());
-    let name_width =
-        ui.fonts_mut(|fonts| fonts.layout_no_wrap(format!("{ICON_GAP}{name}"), font, egui::Color32::WHITE).size().x);
-    let x = response.rect.left() + ui.spacing().button_padding.x + name_width + ROOT_DOT_GAP;
-    ui.painter().circle_filled(egui::pos2(x, response.rect.center().y), ROOT_DOT_RADIUS, color);
+/// Paint a bar of a root's color on the left edge of its row: the counterpart
+/// of the colored line on top of its tabs. A bar rather than a dot after the
+/// name, so the folder color is never mistaken for the unsaved bullet.
+fn paint_root_bar(ui: &Ui, response: &egui::Response, color: egui::Color32) {
+    let row = response.rect;
+    let bar = egui::Rect::from_min_max(
+        egui::pos2(row.left(), row.top() + ROOT_BAR_INSET),
+        egui::pos2(row.left() + ROOT_BAR_WIDTH, row.bottom() - ROOT_BAR_INSET),
+    );
+    ui.painter().rect_filled(bar, ROOT_BAR_WIDTH / 2.0, color);
 }
 
 /// Paint the fold arrow in the gap before a folder name.
