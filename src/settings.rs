@@ -27,7 +27,7 @@ pub struct Settings {
     pub last_file: Option<PathBuf>,
     /// Every tab open at the end of the last session, left to right.
     pub open_tabs: Vec<PathBuf>,
-    /// "Markdown only" checkbox in the explorer.
+    /// The explorer's "Markdown only" filter (the funnel in the Files header).
     pub markdown_only: bool,
     /// Mark files that have notes in the explorer.
     pub note_marks: bool,
