@@ -8,6 +8,15 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Agents found when started from Finder or a launcher**: rubrique now
+  asks your login shell for its `PATH` at startup, so `claude`, `codex`,
+  `ollama` and the others installed in `~/.local/bin`, Homebrew or npm's
+  folder are found when the app is opened from Finder, the Dock or a
+  desktop menu, not only from a terminal. Folders set in `.zprofile`,
+  `.profile` or `.bash_profile` count; `.zshrc` and `.bashrc` do not.
+
 ## [0.8.0] - 2026-11-07
 
 ### Added
