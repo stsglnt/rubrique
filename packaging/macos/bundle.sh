@@ -73,7 +73,13 @@ if [ -d "$mount_point" ]; then
     # Left over from an earlier run: Finder would otherwise mount at "name 1".
     hdiutil detach "$mount_point" -force
 fi
-hdiutil attach -readwrite -noverify -noautoopen "$rw_dmg"
+# The whole-disk device (/dev/diskN, first line of the attach output) is
+# what gets detached later: detaching by mount point breaks when the first
+# attempt unmounts the volume but cannot eject the disk, because the mount
+# point is gone by then and a retry by path has nothing to find.
+attached=$(hdiutil attach -readwrite -noverify -noautoopen "$rw_dmg")
+echo "$attached"
+device=$(echo "$attached" | awk 'NR == 1 { print $1 }')
 
 # The window is 600 x 400 points with 128 point icons; the icon centers
 # match the arrow drawn in background.swift. Finder sometimes answers an
@@ -108,7 +114,7 @@ attempt=1
 while ! lay_out_dmg; do
     if [ "$attempt" -ge 5 ]; then
         echo "Finder could not lay out the disk image after $attempt attempts" >&2
-        hdiutil detach "$mount_point" -force || true
+        hdiutil detach "$device" -force || true
         exit 1
     fi
     echo "Finder layout failed, retrying in 3s (attempt $attempt of 5)" >&2
@@ -116,13 +122,16 @@ while ! lay_out_dmg; do
     attempt=$((attempt + 1))
 done
 sync
-# Finder may still hold the volume for a moment after the window closes.
+# Finder may still hold the disk for a moment after the window closes
+# ("Resource busy"), so the detach gets a few attempts before it is forced.
 attempt=1
-while ! hdiutil detach "$mount_point"; do
+while ! hdiutil detach "$device"; do
     if [ "$attempt" -ge 5 ]; then
-        hdiutil detach "$mount_point" -force
+        echo "the disk image is still busy after $attempt attempts, forcing the eject" >&2
+        hdiutil detach "$device" -force
         break
     fi
+    echo "detach failed, retrying in 2s (attempt $attempt of 5)" >&2
     sleep 2
     attempt=$((attempt + 1))
 done
