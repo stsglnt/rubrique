@@ -8,6 +8,8 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-08
+
 ### Fixed
 
 - **Agents found when started from Finder or a launcher**: rubrique now
