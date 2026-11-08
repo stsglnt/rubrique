@@ -20,7 +20,7 @@ const BREW_FOLDERS: [&str; 3] = ["/opt/homebrew/bin", "/usr/local/bin", "/home/l
 /// and whether it is the pane you see in that session.
 const LIST_FORMAT: &str = "#{session_name}:#{session_created}:#{window_activity}:#{window_active}#{pane_active}:#{pane_current_command}:#{pane_current_path}";
 
-/// The tmux paste buffer rubrique fills for [`Tmux::paste`] (deleted right
+/// The tmux paste buffer Rubrique fills for [`Tmux::paste`] (deleted right
 /// after pasting).
 const PASTE_BUFFER: &str = "rubrique-send";
 
@@ -29,7 +29,7 @@ const PASTE_BUFFER: &str = "rubrique-send";
 pub struct Tmux {
     program: PathBuf,
     /// `-L <socket>`: a separate tmux server. `None` is the user's normal
-    /// server, so rubrique's sessions also show in `tmux ls`.
+    /// server, so Rubrique's sessions also show in `tmux ls`.
     socket: Option<String>,
 }
 

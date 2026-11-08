@@ -1,5 +1,5 @@
 //! Names for scratch files from their content: the AI suggests a few words
-//! and rubrique turns them into `DATE-a-few-words.md`.
+//! and Rubrique turns them into `DATE-a-few-words.md`.
 
 use super::Prompt;
 

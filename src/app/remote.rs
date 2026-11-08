@@ -328,7 +328,7 @@ impl RubriqueApp {
             }
         } else {
             self.remember_roots();
-            self.show_status("Remote folders stay in the explorer until rubrique restarts".to_string());
+            self.show_status("Remote folders stay in the explorer until Rubrique restarts".to_string());
         }
     }
 }

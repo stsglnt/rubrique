@@ -71,7 +71,7 @@ pub struct FsNode {
     pub expanded: bool,
     /// Entries of a folder, loaded on first expand.
     pub children: Children,
-    /// The file starts with rubrique's encryption header (an encrypted
+    /// The file starts with Rubrique's encryption header (an encrypted
     /// scratch), read when the folder is listed. Never set for folders, nor
     /// for files on other computers (their bytes are not here).
     pub encrypted: bool,

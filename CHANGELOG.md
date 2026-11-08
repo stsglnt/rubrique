@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to rubrique are listed here, newest first.
+All notable changes to Rubrique are listed here, newest first.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -16,6 +16,41 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   unsaved file keeps its bullet after the name but in the text color, like
   the dot on its tab, instead of turning green (the same green as the
   second folder's color).
+
+## [0.8.3] - 2026-11-08
+
+### Changed
+
+- **App icon and name**: the capital "R" icon with the marker tip is back,
+  and the app calls itself Rubrique everywhere you see its name: the window
+  title, Settings, the macOS app (now `Rubrique.app`) and disk image, the
+  Linux launcher and the release notes. The `rubrique` command, settings
+  folder and file formats are unchanged.
+
+## [0.8.2] - 2026-11-08
+
+### Added
+
+- **Version in Settings**: the version of rubrique you are running is shown
+  at the bottom of the group list in Settings.
+
+### Changed
+
+- **macOS disk image**: the `.dmg` opens as a 600 x 400 window with the
+  app and the Applications folder as large icons and an arrow between
+  them, instead of a Finder window of whatever size was last used with
+  the two icons in a corner.
+
+## [0.8.1] - 2026-11-08
+
+### Fixed
+
+- **Agents found when started from Finder or a launcher**: rubrique now
+  asks your login shell for its `PATH` at startup, so `claude`, `codex`,
+  `ollama` and the others installed in `~/.local/bin`, Homebrew or npm's
+  folder are found when the app is opened from Finder, the Dock or a
+  desktop menu, not only from a terminal. Folders set in `.zprofile`,
+  `.profile` or `.bash_profile` count; `.zshrc` and `.bashrc` do not.
 
 ## [0.8.0] - 2026-11-07
 

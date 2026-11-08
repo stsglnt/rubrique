@@ -87,7 +87,7 @@ fn add_image(ui: &mut Ui, image: egui::Image<'_>) -> egui::Response {
     response
 }
 
-/// A card for the video at `path` (`bytes` long): rubrique cannot decode
+/// A card for the video at `path` (`bytes` long): Rubrique cannot decode
 /// video, so it offers the system player and the browser.
 pub fn show_video(ui: &mut Ui, path: &Path, bytes: u64) -> Option<MediaEvent> {
     let mut event = None;
@@ -114,7 +114,7 @@ pub fn show_video(ui: &mut Ui, path: &Path, bytes: u64) -> Option<MediaEvent> {
             }
         });
         ui.add_space(10.0);
-        ui.label(RichText::new("rubrique shows videos but does not play them inside the window.").weak().small());
+        ui.label(RichText::new("Rubrique shows videos but does not play them inside the window.").weak().small());
     });
     event
 }

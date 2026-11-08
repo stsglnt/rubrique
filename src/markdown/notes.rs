@@ -3,7 +3,7 @@
 //!
 //! `the first Monday<!-- note on "the first Monday": check with legal -->`
 //!
-//! GitHub and other viewers hide the comment; rubrique highlights the quoted text.
+//! GitHub and other viewers hide the comment; Rubrique highlights the quoted text.
 
 use std::ops::Range;
 

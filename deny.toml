@@ -3,7 +3,7 @@
 # crates come from. Docs: https://embarkstudios.github.io/cargo-deny/
 
 [graph]
-# Only check the platforms rubrique ships for.
+# Only check the platforms Rubrique ships for.
 targets = [
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
@@ -38,7 +38,7 @@ allow = [
 confidence-threshold = 0.9
 
 [licenses.private]
-# rubrique itself is not published, so it needs no license field.
+# Rubrique itself is not published, so it needs no license field.
 ignore = true
 
 [bans]

@@ -1,5 +1,5 @@
-//! AI tools rubrique can run: command-line programs such as `claude` or
-//! `codex`, started with a command template from Settings. rubrique embeds no
+//! AI tools Rubrique can run: command-line programs such as `claude` or
+//! `codex`, started with a command template from Settings. Rubrique embeds no
 //! AI and holds no API keys; each tool handles its own login.
 //!
 //! This module is pure apart from [`find_program`], which looks at `PATH`.
@@ -21,13 +21,13 @@ use skills::SkillSource;
 
 /// Placeholder in a command template for the request text.
 pub const PROMPT: &str = "{prompt}";
-/// Placeholder for rubrique's instructions (how to answer). Tools without a
+/// Placeholder for Rubrique's instructions (how to answer). Tools without a
 /// system prompt option get them at the start of `{prompt}` instead.
 pub const SYSTEM: &str = "{system}";
-/// Largest prompt rubrique passes as one argument (Linux allows 128 KiB).
+/// Largest prompt Rubrique passes as one argument (Linux allows 128 KiB).
 pub const MAX_PROMPT_BYTES: usize = 120_000;
 
-/// The tools rubrique knows about, in the order Settings lists them.
+/// The tools Rubrique knows about, in the order Settings lists them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum AiTool {
     #[default]
@@ -101,11 +101,11 @@ pub struct AiSettings {
     commands: [String; 4],
     /// Folders where the user allowed AI runs ("Don't ask again").
     pub allowed_folders: Vec<PathBuf>,
-    /// Folder with rubrique's skills; `None` means the default one.
+    /// Folder with Rubrique's skills; `None` means the default one.
     pub skills_folder: Option<PathBuf>,
     /// Skill sources the user switched off (all others are read).
     pub skill_sources_off: Vec<SkillSource>,
-    /// Folder with rubrique's agents; `None` means the default one.
+    /// Folder with Rubrique's agents; `None` means the default one.
     pub agents_folder: Option<PathBuf>,
     /// Also offer Claude Code's agents from `~/.claude/agents`.
     pub use_claude_agents: bool,
@@ -243,12 +243,12 @@ impl AiSettings {
         folders
     }
 
-    /// The source is switched on. rubrique's own folder always is.
+    /// The source is switched on. Rubrique's own folder always is.
     pub fn uses_skill_source(&self, source: SkillSource) -> bool {
         source == SkillSource::Rubrique || !self.skill_sources_off.contains(&source)
     }
 
-    /// Switch a source on or off. rubrique's own folder stays on.
+    /// Switch a source on or off. Rubrique's own folder stays on.
     pub fn set_skill_source(&mut self, source: SkillSource, on: bool) {
         self.skill_sources_off.retain(|each| *each != source);
         if !on && source != SkillSource::Rubrique {
@@ -256,7 +256,7 @@ impl AiSettings {
         }
     }
 
-    /// Folders to read agents from, rubrique's own first, each with the tool
+    /// Folders to read agents from, Rubrique's own first, each with the tool
     /// its agents use when they name none (Claude Code's agents run on Claude).
     pub fn agent_folders(&self, default_folder: Option<PathBuf>) -> Vec<(PathBuf, Option<AiTool>)> {
         let mut folders: Vec<_> =
@@ -329,7 +329,7 @@ impl QuickAction {
     }
 }
 
-/// What is sent to a tool: rubrique's instructions and the request with its text.
+/// What is sent to a tool: Rubrique's instructions and the request with its text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Prompt {
     /// How to answer; goes to `{system}` when the command has it.
@@ -339,13 +339,13 @@ pub struct Prompt {
 }
 
 impl Prompt {
-    /// Add a skill's instructions to rubrique's own.
+    /// Add a skill's instructions to Rubrique's own.
     pub fn with_skill(mut self, skill: &skills::Skill) -> Prompt {
         let _ = write!(self.system, "\n\nFollow the \"{}\" skill:\n{}", skill.name, skill.instructions);
         self
     }
 
-    /// Add an agent's personality and rules to rubrique's own. rubrique's
+    /// Add an agent's personality and rules to Rubrique's own. Rubrique's
     /// rules about the answer format still come first and win.
     pub fn with_agent(mut self, agent: &agents::Agent) -> Prompt {
         let _ = write!(
@@ -378,7 +378,7 @@ pub fn build_prompt(request: &str, text: &str, kind: AskKind, whole_file: bool) 
         }
     };
     Prompt {
-        system: format!("You are helping inside rubrique, a Markdown editor. {how}"),
+        system: format!("You are helping inside Rubrique, a Markdown editor. {how}"),
         user: format!("Request: {}\n\nThe text is {what}:\n<text>\n{text}\n</text>\n", request.trim()),
     }
 }
@@ -435,7 +435,7 @@ pub fn display_command(command: &str, request: &str) -> String {
     let quoted = if request.chars().count() > SHOWN { format!("\"{short}…\"") } else { format!("\"{short}\"") };
     split_command(command)
         .iter()
-        .map(|word| word.replace(SYSTEM, "\"(rubrique's instructions)\"").replace(PROMPT, &quoted))
+        .map(|word| word.replace(SYSTEM, "\"(Rubrique's instructions)\"").replace(PROMPT, &quoted))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -636,7 +636,7 @@ mod tests {
             agents::parse_agent("---\nname: John\ndescription: Editor\n---\nBe brief.", "j", PathBuf::new(), None);
         let with =
             build_prompt("x", "y", AskKind::Rewrite, false).with_agent(&agent.unwrap_or_else(|| panic!("agent")));
-        assert!(with.system.starts_with("You are helping inside rubrique"));
+        assert!(with.system.starts_with("You are helping inside Rubrique"));
         assert!(
             with.system
                 .ends_with("agent \"John\" (Editor). Work in its way, but keep the answer format above:\nBe brief.")
@@ -677,7 +677,7 @@ mod tests {
         assert_eq!(display_command("claude -p {prompt}", "shorter"), "claude -p \"shorter\"");
         assert_eq!(
             display_command("claude --append-system-prompt {system} {prompt}", "x"),
-            "claude --append-system-prompt \"(rubrique's instructions)\" \"x\""
+            "claude --append-system-prompt \"(Rubrique's instructions)\" \"x\""
         );
         let long = "a".repeat(60);
         assert_eq!(display_command("codex exec {prompt}", &long), format!("codex exec \"{}…\"", "a".repeat(48)));

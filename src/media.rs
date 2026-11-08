@@ -5,11 +5,11 @@
 
 use std::path::Path;
 
-/// Image formats rubrique decodes and shows (the `image` crate features in
+/// Image formats Rubrique decodes and shows (the `image` crate features in
 /// `Cargo.toml`). SVG is left out: it opens as XML text.
 const IMAGE_EXTENSIONS: [&str; 10] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tif", "tiff", "jfif"];
 
-/// Video formats. rubrique cannot play them in the window; it shows a card
+/// Video formats. Rubrique cannot play them in the window; it shows a card
 /// that opens them in the system player or the browser.
 const VIDEO_EXTENSIONS: [&str; 12] =
     ["mp4", "m4v", "mov", "webm", "mkv", "avi", "ogv", "mpg", "mpeg", "wmv", "flv", "3gp"];
@@ -33,7 +33,7 @@ pub fn media_kind(path: &Path) -> Option<MediaKind> {
     }
 }
 
-/// Has an image extension rubrique shows.
+/// Has an image extension Rubrique shows.
 pub fn is_image_path(path: &Path) -> bool {
     media_kind(path) == Some(MediaKind::Image)
 }

@@ -50,7 +50,7 @@ pub fn is_audio_url(url: &str) -> bool {
     is_audio_path(Path::new(path))
 }
 
-/// A WAV file, which rubrique can play itself.
+/// A WAV file, which Rubrique can play itself.
 pub fn is_wav(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())

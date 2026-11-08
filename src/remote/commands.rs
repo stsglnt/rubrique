@@ -1,4 +1,4 @@
-//! The file operations rubrique runs on a host. Each one is a short POSIX
+//! The file operations Rubrique runs on a host. Each one is a short POSIX
 //! `sh` script that works with GNU (Linux) and BSD (macOS) tools. Paths are
 //! passed as arguments, never pasted into the script.
 //!

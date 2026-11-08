@@ -10,11 +10,11 @@
 //! Make a Markdown task list ...
 //! ```
 //!
-//! rubrique adds the instructions to what it sends to any tool. An optional
+//! Rubrique adds the instructions to what it sends to any tool. An optional
 //! `output: answer` line makes the result an answer to read instead of new
 //! text for the selection.
 //!
-//! Skills come from several [`SkillSource`]s: rubrique's own folder and the
+//! Skills come from several [`SkillSource`]s: Rubrique's own folder and the
 //! folders other agents read (`~/.agents/skills`, Claude Code, Grok).
 
 use std::fs;
@@ -25,11 +25,11 @@ use super::AskKind;
 /// The file that makes a folder a skill.
 pub const SKILL_FILE: &str = "SKILL.md";
 
-/// A folder of skills rubrique reads, in the order they are read: when two
+/// A folder of skills Rubrique reads, in the order they are read: when two
 /// sources have a skill with the same name, the earlier source wins.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SkillSource {
-    /// rubrique's own folder (the chosen one or the default). Always read.
+    /// Rubrique's own folder (the chosen one or the default). Always read.
     Rubrique,
     /// `~/.agents/skills`, the shared folder Codex and other agents read.
     Agents,
@@ -55,14 +55,14 @@ impl SkillSource {
     /// Name shown in Settings.
     pub fn name(self) -> &'static str {
         match self {
-            Self::Rubrique => "rubrique",
+            Self::Rubrique => "Rubrique",
             Self::Agents => "Agents",
             Self::Claude => "Claude Code",
             Self::Grok => "Grok",
         }
     }
 
-    /// The folder in the home folder, for every source but rubrique's own
+    /// The folder in the home folder, for every source but Rubrique's own
     /// (which lives in the config folder or wherever the user put it).
     pub fn home_folder(self) -> Option<PathBuf> {
         let relative = match self {
@@ -123,7 +123,7 @@ pub fn source_folders(folders: Vec<(SkillSource, PathBuf)>) -> Vec<SourceFolder>
 }
 
 /// Read a SKILL.md. The name falls back to the folder name. The source is
-/// rubrique's own; [`load_skills`] sets the real one.
+/// Rubrique's own; [`load_skills`] sets the real one.
 pub fn parse_skill(text: &str, folder_name: &str, path: PathBuf) -> Option<Skill> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let (front, body) = split_front_matter(text);

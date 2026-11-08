@@ -1,4 +1,4 @@
-# rubrique built-in theme: Sepia (warm paper for long reading).
+# Rubrique built-in theme: Sepia (warm paper for long reading).
 # Colors are #rrggbb. Keys left out come from the `base` theme.
 name=Sepia
 base=light

@@ -1,6 +1,6 @@
 # Instructions for agents
 
-Read this before changing rubrique. The code is Rust (edition 2024) with
+Read this before changing Rubrique. The code is Rust (edition 2024) with
 egui; `README.md` says what the app does and `CHANGELOG.md` what changed.
 
 ## Before a pull request
@@ -38,7 +38,7 @@ fixes only.
    workflows see the tag:
 
    ```sh
-   git tag -a rubrique-vX.Y.Z -m "rubrique X.Y.Z"
+   git tag -a rubrique-vX.Y.Z -m "Rubrique X.Y.Z"
    git push origin main refs/tags/rubrique-vX.Y.Z
    ```
 
@@ -48,6 +48,19 @@ section for that version. It runs on the tag push, and also on any push
 to `main` whose `Cargo.toml` version has no tag yet. If Actions did not
 run (for example the account's spending limit was reached), start it by
 hand from the Actions tab (`workflow_dispatch`) once that is fixed.
+
+## macOS disk image
+
+`packaging/macos/bundle.sh` lays the `.dmg` out through Finder: window
+size, icon size and the two icon positions, over
+`packaging/macos/background.png`. That picture is drawn by a script:
+
+```sh
+swift packaging/macos/background.swift packaging/macos/background.png
+```
+
+The icon positions live in both `bundle.sh` and `background.swift`;
+change them together and remake the picture.
 
 ## Screenshots
 

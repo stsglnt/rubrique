@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build rubrique.app from the two release binaries (Apple Silicon and Intel)
+# Build Rubrique.app from the two release binaries (Apple Silicon and Intel)
 # and pack it as dist/rubrique-VERSION-macos-universal.dmg and .zip.
 # Usage: packaging/macos/bundle.sh VERSION
 #
@@ -13,7 +13,7 @@
 set -eu
 version="$1"
 name="rubrique-$version-macos-universal"
-app="dist/rubrique.app"
+app="dist/Rubrique.app"
 dmg="dist/$name.dmg"
 identity="${MACOS_SIGN_IDENTITY:-}"
 
@@ -46,13 +46,88 @@ else
 fi
 codesign --verify --strict --verbose=2 "$app"
 
+# The disk image: the app, a link to /Applications and a background with
+# an arrow between them. Finder keeps the window size, the icon size and
+# where each icon sits in the image's .DS_Store, and it is the only thing
+# that writes that file, so the image is first made writable, laid out by
+# Finder through AppleScript, and then converted to the compressed
+# read-only image that ships. Without this, Finder opens the image like
+# any folder: in the last window size it had, icons in the top left corner.
+volume="Rubrique $version"
 dmg_root="dist/dmg"
 rm -rf "$dmg_root"
-mkdir -p "$dmg_root"
+mkdir -p "$dmg_root/.background"
 cp -R "$app" "$dmg_root/"
 ln -s /Applications "$dmg_root/Applications"
-hdiutil create -volname "rubrique $version" -srcfolder "$dmg_root" -ov -format UDZO "$dmg"
+cp packaging/macos/background.png "$dmg_root/.background/background.png"
+# Room for the .DS_Store and the catalog on top of the files.
+size_mb=$(( $(du -sm "$dmg_root" | cut -f1) + 16 ))
+rw_dmg="dist/$name-rw.dmg"
+rm -f "$rw_dmg"
+hdiutil create -volname "$volume" -srcfolder "$dmg_root" -ov -format UDRW -fs HFS+ \
+    -size "${size_mb}m" "$rw_dmg"
 rm -rf "$dmg_root"
+
+mount_point="/Volumes/$volume"
+if [ -d "$mount_point" ]; then
+    # Left over from an earlier run: Finder would otherwise mount at "name 1".
+    hdiutil detach "$mount_point" -force
+fi
+hdiutil attach -readwrite -noverify -noautoopen "$rw_dmg"
+
+# The window is 600 x 400 points with 128 point icons; the icon centers
+# match the arrow drawn in background.swift. Finder sometimes answers an
+# AppleScript with an error right after a mount, so the layout gets a few
+# attempts. The close and open at the end make Finder write .DS_Store.
+lay_out_dmg() {
+    osascript <<EOF
+tell application "Finder"
+    tell disk "$volume"
+        open
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set the bounds of container window to {400, 200, 1000, 600}
+        set view_options to the icon view options of container window
+        set arrangement of view_options to not arranged
+        set icon size of view_options to 128
+        set text size of view_options to 13
+        set background picture of view_options to file ".background:background.png"
+        set position of item "Rubrique.app" of container window to {150, 185}
+        set position of item "Applications" of container window to {450, 185}
+        close
+        open
+        update without registering applications
+        delay 1
+        close
+    end tell
+end tell
+EOF
+}
+attempt=1
+while ! lay_out_dmg; do
+    if [ "$attempt" -ge 5 ]; then
+        echo "Finder could not lay out the disk image after $attempt attempts" >&2
+        hdiutil detach "$mount_point" -force || true
+        exit 1
+    fi
+    echo "Finder layout failed, retrying in 3s (attempt $attempt of 5)" >&2
+    sleep 3
+    attempt=$((attempt + 1))
+done
+sync
+# Finder may still hold the volume for a moment after the window closes.
+attempt=1
+while ! hdiutil detach "$mount_point"; do
+    if [ "$attempt" -ge 5 ]; then
+        hdiutil detach "$mount_point" -force
+        break
+    fi
+    sleep 2
+    attempt=$((attempt + 1))
+done
+hdiutil convert "$rw_dmg" -format UDZO -imagekey zlib-level=9 -ov -o "$dmg"
+rm -f "$rw_dmg"
 
 # stapler fetches the ticket from Apple's CloudKit, and that connection drops
 # now and then ("The network connection was lost", exit code 68): it failed

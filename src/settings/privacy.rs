@@ -5,7 +5,7 @@ use crate::crypto::VaultInfo;
 /// Choices for "Lock after", in minutes; 0 means never.
 pub const LOCK_AFTER_CHOICES: [u32; 5] = [0, 1, 5, 15, 30];
 
-/// What rubrique keeps about scratch encryption and the PIN. No password,
+/// What Rubrique keeps about scratch encryption and the PIN. No password,
 /// PIN or key is stored: only a salt, a sealed check text and a PIN hash.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PrivacySettings {

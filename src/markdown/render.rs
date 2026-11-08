@@ -813,7 +813,7 @@ fn image_fallback(ui: &mut Ui, alt: &str, why: &str) {
 }
 
 /// A video in the preview: its name and a Play button that opens it in the
-/// system's video player (rubrique cannot play video itself).
+/// system's video player (Rubrique cannot play video itself).
 fn video_card(ui: &mut Ui, alt: &str, path: &Path) {
     let visuals = ui.visuals();
     let frame = egui::Frame::new()
