@@ -1,7 +1,10 @@
 //! Turn a theme into egui styles and install it.
 
 use eframe::egui::style::ScrollAnimation;
-use eframe::egui::{self, Color32, Context, CornerRadius, FontId, Stroke, Style, TextStyle, ThemePreference, Visuals};
+use eframe::egui::{
+    self, Color32, Context, CornerRadius, FontDefinitions, FontFamily, FontId, Stroke, Style, TextStyle,
+    ThemePreference, Visuals,
+};
 
 use super::catalog::{ThemeChoice, Themes};
 use super::palette::{Base, Palette, Rgb, Theme};
@@ -45,6 +48,26 @@ pub fn apply_theme(ctx: &Context, themes: &Themes, choice: &ThemeChoice) {
         }
         None => ctx.set_theme(ThemePreference::System),
     }
+}
+
+/// Install the built-in fonts with Hack as a fallback for the interface
+/// font. Ubuntu-Light, egui's interface font, has no arrows (the symlink
+/// marker `↗`, the `↑ up` button) and egui 0.37 no longer falls back to an
+/// emoji font, so those drew as empty boxes. Hack is already bundled for the
+/// editor and covers them.
+pub fn install_fonts(ctx: &Context) {
+    ctx.set_fonts(font_definitions());
+}
+
+/// egui's default fonts with Hack added right after the interface font.
+fn font_definitions() -> FontDefinitions {
+    let mut fonts = FontDefinitions::default();
+    let proportional = fonts.families.entry(FontFamily::Proportional).or_default();
+    // Right after the main font, so it wins over the icon fallbacks but never
+    // replaces a letter Ubuntu-Light has.
+    let position = proportional.iter().position(|name| name == "Ubuntu-Light").map_or(0, |index| index + 1);
+    proportional.insert(position, "Hack".to_owned());
+    fonts
 }
 
 /// Install the text size and adjust the light and dark styles. Call after
@@ -187,6 +210,21 @@ fn visuals(base: Base, palette: &Palette) -> Visuals {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interface_font_draws_the_arrows_the_ui_uses() {
+        let ctx = Context::default();
+        install_fonts(&ctx);
+        // Fonts are built on the first frame.
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        let font = FontId::proportional(14.0);
+        ctx.fonts_mut(|fonts| {
+            assert!(fonts.has_glyphs(&font, "↗↑"));
+            // Letters still come from the interface font, not the fallback.
+            assert_eq!(fonts.characters(&FontFamily::Proportional)[&'a'][0], "Ubuntu-Light");
+        });
+    }
 
     #[test]
     fn light_and_dark_keep_their_egui_mode() {

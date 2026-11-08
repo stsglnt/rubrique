@@ -19,6 +19,12 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
   the explorer starts empty with an "Add folder..." button. Folders you
   add are reopened next time as before.
 
+### Fixed
+
+- **Arrows no longer show as empty boxes.** The link marker after symlinked
+  files and folders in the explorer (`↗`, for example on `/var` on macOS)
+  and the `↑ up` button when browsing a remote host now draw properly.
+
 ## [0.8.5] - 2026-11-08
 
 ### Changed
