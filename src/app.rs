@@ -377,7 +377,7 @@ struct Renaming {
 }
 
 impl RubriqueApp {
-    /// Start with `roots` in the explorer (at least one) and, optionally,
+    /// Start with `roots` in the explorer (none on the first run) and, optionally,
     /// `file` open, and install the saved theme.
     pub fn new(ctx: &Context, settings: Settings, roots: Vec<PathBuf>, file: Option<PathBuf>) -> Self {
         let themes = Themes::load(themes_folder().as_deref());
