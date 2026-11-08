@@ -14,8 +14,14 @@ pub enum MergeAction {
     Cancel,
 }
 
-/// Opacity of the tint behind changed and conflicting chunks.
+/// Opacity of the tint behind changed chunks.
 const TINT: f32 = 0.14;
+/// Opacity of the tint behind conflicting chunks: a little stronger, so a
+/// conflict stands out from a plain change next to it.
+const CONFLICT_TINT: f32 = 0.2;
+/// How far the conflict tint moves from the accent toward white: a pale
+/// version of the accent instead of a second hue, so it fits every theme.
+const CONFLICT_PALENESS: f32 = 0.5;
 /// Unchanged stretches longer than this are folded in the middle.
 const FOLD_OVER_LINES: usize = 8;
 /// Lines kept at each end of a folded stretch.
@@ -132,8 +138,9 @@ pub fn show_merge(ui: &mut Ui, session: &mut MergeSession, file_name: &str) -> O
 fn show_chunk(ui: &mut Ui, session: &mut MergeSession, index: usize, left: Version, right: Version) {
     let chunk = session.chunks[index].clone();
     let visuals = ui.visuals().clone();
-    let change_tint = visuals.hyperlink_color.gamma_multiply(TINT);
-    let conflict_tint = visuals.warn_fg_color.gamma_multiply(TINT);
+    let accent = visuals.hyperlink_color;
+    let change_tint = accent.gamma_multiply(TINT);
+    let conflict_tint = accent.lerp_to_gamma(Color32::WHITE, CONFLICT_PALENESS).gamma_multiply(CONFLICT_TINT);
     let side_tint = |version: Version| match chunk.kind {
         ChunkKind::Conflict => conflict_tint,
         kind if kind == version.own_kind() || kind == ChunkKind::Both => change_tint,
