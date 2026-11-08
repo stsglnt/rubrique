@@ -5,7 +5,18 @@ use eframe::egui::{self, Color32, Context, CornerRadius, FontId, Stroke, Style, 
 
 use super::catalog::{ThemeChoice, Themes};
 use super::palette::{Base, Palette, Rgb, Theme};
-use crate::settings::accessibility::AccessibilitySettings;
+use crate::settings::accessibility::{AccessibilitySettings, DEFAULT_EDITOR_FONT_SIZE};
+
+/// Font size of labels, buttons and fields. egui's 13 points read small
+/// next to macOS text; one point more fills the same rows comfortably.
+const BODY_SIZE: f32 = 14.0;
+/// Font size of hints and secondary details (egui's 9 points are hard to read).
+const SMALL_SIZE: f32 = 11.0;
+/// Font size of dialog titles.
+const HEADING_SIZE: f32 = 20.0;
+/// Height of a line in the source editor as a multiple of the editor font
+/// size: the breathing room of a writing app rather than a terminal.
+pub const EDITOR_LINE_HEIGHT: f32 = 1.5;
 
 /// Corner rounding of buttons, fields and rows.
 const WIDGET_RADIUS: u8 = 5;
@@ -96,6 +107,14 @@ fn color(Rgb(red, green, blue): Rgb) -> Color32 {
 /// egui's style with the theme's colors and Rubrique's spacing and rounding.
 fn style(theme: &Theme) -> Style {
     let mut style = Style { visuals: visuals(theme.base, &theme.palette), ..Style::default() };
+    style.text_styles = [
+        (TextStyle::Small, FontId::proportional(SMALL_SIZE)),
+        (TextStyle::Body, FontId::proportional(BODY_SIZE)),
+        (TextStyle::Button, FontId::proportional(BODY_SIZE)),
+        (TextStyle::Heading, FontId::proportional(HEADING_SIZE)),
+        (TextStyle::Monospace, FontId::monospace(f32::from(DEFAULT_EDITOR_FONT_SIZE))),
+    ]
+    .into();
     style.spacing.item_spacing = egui::vec2(8.0, 4.0);
     style.spacing.button_padding = egui::vec2(8.0, 3.0);
     style.spacing.menu_margin = egui::Margin::same(6);
@@ -198,10 +217,18 @@ mod tests {
         let focus = Stroke::new(STRONG_FOCUS_WIDTH, unchanged.selection.stroke.color);
         assert_eq!(adjusted.visuals.selection.stroke, focus);
 
-        // The defaults change nothing (egui's monospace font is already 13 points).
+        // The defaults change nothing (the style already has the default editor font size).
         let mut plain = style(&Theme::builtin(Base::Light));
         adjust_style(&mut plain, &AccessibilitySettings::default());
         assert_eq!(format!("{plain:?}"), format!("{:?}", style(&Theme::builtin(Base::Light))));
+    }
+
+    #[test]
+    fn text_is_larger_than_egui_default() {
+        let text_styles = style(&Theme::builtin(Base::Light)).text_styles;
+        assert_eq!(text_styles[&TextStyle::Body], FontId::proportional(14.0));
+        assert_eq!(text_styles[&TextStyle::Small], FontId::proportional(11.0));
+        assert_eq!(text_styles[&TextStyle::Monospace], FontId::monospace(14.0));
     }
 
     #[test]

@@ -2145,7 +2145,11 @@ impl RubriqueApp {
     /// Bottom bar: a recent status message, or the open file's path, mode and stats.
     fn status_bar(&mut self, ui: &mut Ui) {
         let now = ui.input(|input| input.time);
-        ui.horizontal(|ui| {
+        // Always the height of a row of buttons, also with none (a terminal
+        // tab, a status message): the bar sets the bottom of the explorer,
+        // whose Terminals block is docked there and would jump with it.
+        let size = egui::vec2(ui.available_width(), crate::icons::BUTTON_HEIGHT);
+        ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
             if let Some((message, remaining_seconds)) = self.visible_status_message(now) {
                 ui.label(message);
                 ui.ctx().request_repaint_after(Duration::from_secs_f64(remaining_seconds));

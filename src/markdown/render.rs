@@ -29,12 +29,12 @@ struct Look {
 
 /// The preview of the open file.
 const PAGE: Look = Look {
-    heading_sizes: [30.0, 24.0, 19.0, 16.0, 15.0, 14.0],
+    heading_sizes: [32.0, 26.0, 21.0, 18.0, 16.0, 16.0],
     heading_gaps: [28.0, 24.0, 18.0, 14.0, 14.0, 14.0],
     ruled_level: 2,
     rule_gap: 8.0,
-    body_size: 15.0,
-    body_line_height: 24.0,
+    body_size: 16.0,
+    body_line_height: 26.0,
     block_gap: 12.0,
     file_tools: true,
 };
@@ -50,6 +50,26 @@ const COMPACT: Look = Look {
     block_gap: 8.0,
     file_tools: false,
 };
+
+/// Sizes of the page's text, for the boxes that edit a block of it in place.
+pub struct PageText {
+    /// Font size of body text.
+    pub body_size: f32,
+    /// Height of a line of body text.
+    pub line_height: f32,
+    /// Font size of code within the text.
+    pub code_size: f32,
+}
+
+/// The page's text sizes, so a block edited in place keeps the look and
+/// about the height it had rendered.
+pub fn page_text() -> PageText {
+    PageText {
+        body_size: PAGE.body_size,
+        line_height: PAGE.body_line_height,
+        code_size: PAGE.body_size * INLINE_CODE_SCALE,
+    }
+}
 
 /// Line height as a multiple of the font size, for headings.
 const HEADING_LINE_FACTOR: f32 = 1.3;
@@ -71,10 +91,10 @@ const QUOTE_BAR_WIDTH: f32 = 3.0;
 const QUOTE_PADDING: i8 = 16;
 /// Opacity of the accent color used for the quote bar.
 const QUOTE_BAR_TINT: f32 = 0.5;
-const CODE_SIZE: f32 = 13.5;
+const CODE_SIZE: f32 = 14.0;
 /// Inline code size relative to the text around it (monospace looks larger).
 const INLINE_CODE_SCALE: f32 = 0.9;
-const CODE_LINE_HEIGHT: f32 = 20.0;
+const CODE_LINE_HEIGHT: f32 = 22.0;
 const CODE_RADIUS: u8 = 6;
 /// Inner margin (x, y) of a code block.
 const CODE_MARGIN: (i8, i8) = (14, 12);

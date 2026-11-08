@@ -14,6 +14,7 @@ use super::text_stats::{TextStats, text_stats};
 use crate::ai::mention_list::{self, Suggestion};
 use crate::icons::{Icon, icon_button};
 use crate::markdown::blocks::{Block, SourceBlock};
+use crate::markdown::render::page_text;
 use crate::markdown::render::{
     CodeAction, render_top_block, render_top_table, set_image_folder, take_cell_click, take_code_action,
     take_play_request, top_gap,
@@ -113,17 +114,13 @@ pub fn show_editor(
                 .lock_focus(true)
                 .desired_width(f32::INFINITY)
                 .min_size(available);
-            let output = match syntax {
-                Some(syntax) => {
-                    let mut layouter = |ui: &Ui, buffer: &dyn TextBuffer, wrap_width: f32| {
-                        let mut job = highlighted(ui.ctx(), buffer.as_str(), &style, syntax);
-                        job.wrap.max_width = wrap_width;
-                        ui.ctx().fonts_mut(|fonts| fonts.layout_job(job))
-                    };
-                    editor.layouter(&mut layouter).show(ui)
-                }
-                None => editor.show(ui),
+            // Plain text goes through the layouter too, for the editor's line height.
+            let mut layouter = |ui: &Ui, buffer: &dyn TextBuffer, wrap_width: f32| {
+                let mut job = highlighted(ui.ctx(), buffer.as_str(), &style, syntax);
+                job.wrap.max_width = wrap_width;
+                ui.ctx().fonts_mut(|fonts| fonts.layout_job(job))
             };
+            let output = editor.layouter(&mut layouter).show(ui);
             if let Some(gutter) = &gutter {
                 gutter.paint(ui, &output);
             }
@@ -244,8 +241,12 @@ impl Gutter {
         let mut starts_line = true;
         for row in &output.galley.rows {
             let top = output.galley_pos.y + row.pos.y;
-            if starts_line && top <= clip.bottom() && top + row.row.size.y >= clip.top() {
-                painter.text(pos2(right, top), Align2::RIGHT_TOP, number, self.font.clone(), self.color);
+            let height = row.row.size.y;
+            if starts_line && top <= clip.bottom() && top + height >= clip.top() {
+                // Rows are taller than the font, with the text in the middle:
+                // center the number on the row so it lines up with the text.
+                let middle = pos2(right, top + height / 2.0);
+                painter.text(middle, Align2::RIGHT_CENTER, number, self.font.clone(), self.color);
             }
             starts_line = row.ends_with_newline;
             if row.ends_with_newline {
@@ -468,9 +469,49 @@ fn clickable_block(ui: &mut Ui, index: usize, source: &SourceBlock) -> Option<Pr
     }
     if hovered && ui.input(|input| input.pointer.any_click()) {
         clear_text_selection(ui);
+        if let Some(pointer) = ui.input(|input| input.pointer.interact_pos()) {
+            let at = ((pointer.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
+            ui.ctx().data_mut(|data| data.insert_temp(block_click_id(), at));
+        }
         return Some(PreviewEvent::StartEdit(index));
     }
     None
+}
+
+/// Where the click that opened a block for editing leaves how far down the
+/// block it was (0 at the top, 1 at the bottom), for the box's first frame.
+fn block_click_id() -> Id {
+    Id::unique("rubrique-block-click-at")
+}
+
+/// How far down the block the opening click was, taken once.
+fn take_block_click(ctx: &Context) -> Option<f32> {
+    ctx.data_mut(|data| {
+        let at = data.get_temp::<f32>(block_click_id());
+        data.remove::<f32>(block_click_id());
+        at
+    })
+}
+
+/// Character index of the start of the line `at` of the way down `text`
+/// (0 the first line, 1 the last).
+fn line_start_at(text: &str, at: f32) -> usize {
+    let lines: Vec<&str> = text.split('\n').collect();
+    #[expect(clippy::cast_precision_loss, reason = "a line count")]
+    let count = lines.len() as f32;
+    // `at` is within 0..=1, so the product is within 0..=count.
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "floored and within the line count")]
+    let line = ((at.clamp(0.0, 1.0) * count).floor() as usize).min(lines.len() - 1);
+    lines[..line].iter().map(|line| line.chars().count() + 1).sum()
+}
+
+/// Put the block box's cursor at the start of the line the opening click
+/// was on, so the box opens where the user looked (egui would put the
+/// cursor at the end of the text and scroll there, far down a long list).
+fn place_block_cursor(ctx: &Context, text: &str, at: f32) {
+    let mut state = TextEditState::load(ctx, block_editor_id()).unwrap_or_default();
+    state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(line_start_at(text, at)))));
+    state.store(ctx, block_editor_id());
 }
 
 /// Whether a link was opened this frame (then its click edits nothing).
@@ -510,6 +551,7 @@ fn cell_edit_block(
                 && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
             let output = egui::TextEdit::multiline(&mut edit.text)
                 .id(block_editor_id())
+                .font(FontId::proportional(page_text().body_size))
                 .desired_width(f32::INFINITY)
                 .desired_rows(1)
                 .show(ui);
@@ -580,13 +622,28 @@ fn edit_box(ui: &mut Ui, edit: &mut BlockEdit, mentions: &[Suggestion]) -> Optio
         .inner_margin(BLOCK_PAD + 2);
     let response = frame.show(ui, |ui| {
         ui.set_width(ui.available_width());
-        let title = if edit.range.is_empty() { "New block (Markdown)" } else { "Editing this block (Markdown)" };
-        ui.label(egui::RichText::new(title).small().weak());
+        // An existing block is outlined where it was; only a new one needs a name.
+        if edit.range.is_empty() {
+            ui.label(egui::RichText::new("New block (Markdown)").small().weak());
+        }
         let rows = edit.text.lines().count().max(1);
         let list_key = mention_list::take_key(ui.ctx(), block_editor_id());
+        // The page's code size on the page's lines, so the text keeps its size
+        // and the block about its height when it opens; egui adds the extra
+        // line spacing to the font's own rows.
+        let page = page_text();
+        let font = FontId::monospace(page.code_size);
+        let row_height = ui.fonts_mut(|fonts| fonts.row_height(&font));
+        ui.spacing_mut().extra_text_line_spacing = page.line_height - row_height;
+        if !edit.focused
+            && let Some(at) = take_block_click(ui.ctx())
+        {
+            place_block_cursor(ui.ctx(), &edit.text, at);
+        }
         let output = egui::TextEdit::multiline(&mut edit.text)
             .id(block_editor_id())
             .code_editor()
+            .font(font)
             .frame(egui::Frame::NONE)
             .desired_width(f32::INFINITY)
             .desired_rows(rows)
@@ -851,6 +908,50 @@ mod preview_tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn the_opening_click_picks_the_line_under_it() {
+        let text = "- one\n- two\n- three";
+        assert_eq!(line_start_at(text, 0.0), 0);
+        assert_eq!(line_start_at(text, 0.5), 6);
+        assert_eq!(line_start_at(text, 0.99), 12);
+        // The bottom edge still lands on the last line, not past it.
+        assert_eq!(line_start_at(text, 1.0), 12);
+        assert_eq!(line_start_at("", 0.7), 0);
+        // Characters, not bytes: egui cursors count characters.
+        assert_eq!(line_start_at("éé\nx", 0.6), 3);
+    }
+
+    #[test]
+    fn the_box_opens_with_the_cursor_on_the_clicked_line() {
+        let text = "- one\n- two\n- three\n- four";
+        let mut preview = Preview::new();
+        preview.blocks = parse_source_blocks(text);
+        // The rows of the page that open the list (the only block).
+        let opens: Vec<i32> = (0..300)
+            .step_by(4)
+            .filter(|y| {
+                #[expect(clippy::cast_precision_loss, reason = "screen positions")]
+                let at = pos2(60.0, *y as f32);
+                preview.click(at, None) == Some(PreviewEvent::StartEdit(0))
+            })
+            .collect();
+        let (top, bottom) = (*opens.first().unwrap(), *opens.last().unwrap());
+        assert!(bottom - top > 60, "the list spans more than one line: {top}..{bottom}");
+        let cursor_after_click = |preview: &mut Preview, y: i32| {
+            #[expect(clippy::cast_precision_loss, reason = "screen positions")]
+            let at = pos2(60.0, y as f32);
+            assert_eq!(preview.click(at, None), Some(PreviewEvent::StartEdit(0)));
+            let mut edit =
+                BlockEdit { index: 0, range: 0..text.len(), text: text.to_string(), focused: false, cell: None };
+            preview.frame(vec![], Some(&mut edit));
+            let state = TextEditState::load(&preview.ctx, block_editor_id()).expect("the box stored its state");
+            state.cursor.char_range().expect("the cursor was placed").primary.index.0
+        };
+        // Near the top: the first line. Near the bottom: the last one.
+        assert_eq!(cursor_after_click(&mut preview, top + 4), 0);
+        assert_eq!(cursor_after_click(&mut preview, bottom - 4), 20);
     }
 
     #[test]

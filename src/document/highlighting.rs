@@ -1,5 +1,5 @@
 //! Color Markdown, YAML and Helm template syntax in the editor with the
-//! current theme.
+//! current theme, and lay plain text out with the same line height.
 
 use eframe::egui::cache::{ComputerMut, FrameCache};
 use eframe::egui::text::LayoutJob;
@@ -8,6 +8,7 @@ use eframe::egui::{Color32, Context, FontId, Stroke, TextFormat, TextStyle, Ui};
 use std::path::Path;
 
 use crate::markdown::highlight::{Kind, Span};
+use crate::theme::style::EDITOR_LINE_HEIGHT;
 
 /// Which syntax the editor colors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -63,9 +64,14 @@ impl HighlightStyle {
     }
 
     /// How to draw one kind of text. Every kind keeps the monospace font, so
-    /// columns stay lined up.
+    /// columns stay lined up, and the editor's line height.
     fn format(&self, kind: Kind) -> TextFormat {
-        let plain = TextFormat { font_id: self.font.clone(), color: self.text, ..TextFormat::default() };
+        let plain = TextFormat {
+            font_id: self.font.clone(),
+            color: self.text,
+            line_height: Some(editor_line_height(&self.font)),
+            ..TextFormat::default()
+        };
         match kind {
             Kind::Plain => plain,
             Kind::Marker | Kind::Url => TextFormat { color: self.weak, ..plain },
@@ -80,8 +86,15 @@ impl HighlightStyle {
     }
 }
 
-/// The colored layout of `text`, reused while the text and theme stay the same.
-pub fn highlighted(ctx: &Context, text: &str, style: &HighlightStyle, syntax: Syntax) -> LayoutJob {
+/// The height of one line of `font` in the source editor and the block
+/// editor: taller than the font's own rows, so lines of text breathe.
+pub fn editor_line_height(font: &FontId) -> f32 {
+    (font.size * EDITOR_LINE_HEIGHT).round()
+}
+
+/// The layout of `text`, colored for `syntax` (plain when `None`), reused
+/// while the text and theme stay the same.
+pub fn highlighted(ctx: &Context, text: &str, style: &HighlightStyle, syntax: Option<Syntax>) -> LayoutJob {
     ctx.memory_mut(|memory| memory.caches.cache::<HighlightCache>().get((text, style, syntax)).clone())
 }
 
@@ -91,17 +104,22 @@ type HighlightCache = FrameCache<LayoutJob, Highlighter>;
 #[derive(Default)]
 struct Highlighter;
 
-impl ComputerMut<(&str, &HighlightStyle, Syntax), LayoutJob> for Highlighter {
-    fn compute(&mut self, (text, style, syntax): (&str, &HighlightStyle, Syntax)) -> LayoutJob {
+impl ComputerMut<(&str, &HighlightStyle, Option<Syntax>), LayoutJob> for Highlighter {
+    fn compute(&mut self, (text, style, syntax): (&str, &HighlightStyle, Option<Syntax>)) -> LayoutJob {
         layout_job(text, style, syntax)
     }
 }
 
-/// One text section per highlighted span.
-fn layout_job(text: &str, style: &HighlightStyle, syntax: Syntax) -> LayoutJob {
+/// One text section per highlighted span; plain text is one section.
+fn layout_job(text: &str, style: &HighlightStyle, syntax: Option<Syntax>) -> LayoutJob {
     let mut job = LayoutJob::default();
-    for span in syntax.spans(text) {
-        job.append(&text[span.range], 0.0, style.format(span.kind));
+    match syntax {
+        Some(syntax) => {
+            for span in syntax.spans(text) {
+                job.append(&text[span.range], 0.0, style.format(span.kind));
+            }
+        }
+        None => job.append(text, 0.0, style.format(Kind::Plain)),
     }
     job
 }

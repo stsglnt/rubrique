@@ -6,8 +6,9 @@ use eframe::egui::{self, Color32, Painter, Pos2, Sense, Ui, vec2};
 
 /// Height of a section header row.
 pub const SECTION_HEADER_HEIGHT: f32 = 28.0;
-/// Size of the title text: smaller than the file names, like a label.
-const TITLE_SIZE: f32 = 11.0;
+/// Size of the title text: smaller than the file names, like a label, but
+/// not so small next to 14 point names that it drops out.
+const TITLE_SIZE: f32 = 12.0;
 /// Room before the title for the fold arrow.
 const ARROW_ROOM: f32 = 18.0;
 /// Width and height of a fold arrow, in points.

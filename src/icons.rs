@@ -7,6 +7,8 @@ use eframe::egui::{self, Color32, Painter, Pos2, Response, Sense, Stroke, Ui, Ve
 
 /// Size of an icon button.
 const BUTTON_SIZE: Vec2 = vec2(28.0, 24.0);
+/// Height of an icon button: the height of a row of them.
+pub const BUTTON_HEIGHT: f32 = BUTTON_SIZE.y;
 /// Line width of every icon: bold like the app icon's "R", but thin
 /// enough to stay sharp at 14 px.
 const LINE: f32 = 1.5;
