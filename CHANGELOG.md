@@ -8,6 +8,13 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Changed
+
+- **macOS disk image**: the `.dmg` opens as a 600 x 400 window with the
+  app and the Applications folder as large icons and an arrow between
+  them, instead of a Finder window of whatever size was last used with
+  the two icons in a corner.
+
 ## [0.8.1] - 2026-11-08
 
 ### Fixed
