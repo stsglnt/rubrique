@@ -91,6 +91,15 @@ fn check(tmux: &Tmux) -> Vec<TerminalRow> {
     rows
 }
 
+/// `rows` (newest first) in the order the user dragged the list into:
+/// sessions missing from `order` (started since) stay on top, newest first,
+/// then the others as `order` lists them.
+pub fn in_saved_order(mut rows: Vec<TerminalRow>, order: &[String]) -> Vec<TerminalRow> {
+    // A stable sort keeps the newest-first order among the new sessions.
+    rows.sort_by_key(|row| order.iter().position(|name| *name == row.info.name).map_or(0, |index| index + 1));
+    rows
+}
+
 /// Seconds since 1970, as tmux counts.
 /// Now, in Unix seconds.
 pub fn unix_now() -> i64 {
@@ -124,6 +133,34 @@ pub fn ago_label(time: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row(name: &str) -> TerminalRow {
+        let info = SessionInfo {
+            name: name.to_string(),
+            created: 0,
+            last_output: 0,
+            command: "zsh".to_string(),
+            folder: std::path::PathBuf::new(),
+        };
+        TerminalRow { info, status: TerminalStatus::Shell }
+    }
+
+    fn names(rows: &[TerminalRow]) -> Vec<&str> {
+        rows.iter().map(|row| row.info.name.as_str()).collect()
+    }
+
+    #[test]
+    fn saved_order_puts_new_sessions_first() {
+        let rows = vec![row("new"), row("newer-old"), row("a"), row("b")];
+        let order = ["b".to_string(), "gone".to_string(), "a".to_string(), "newer-old".to_string()];
+        assert_eq!(names(&in_saved_order(rows, &order)), ["new", "b", "a", "newer-old"]);
+    }
+
+    #[test]
+    fn no_saved_order_keeps_newest_first() {
+        let rows = vec![row("c"), row("b"), row("a")];
+        assert_eq!(names(&in_saved_order(rows, &[])), ["c", "b", "a"]);
+    }
 
     #[test]
     fn opened_today_shows_only_the_time() {

@@ -6,6 +6,7 @@
 use eframe::egui::text::LayoutJob;
 use eframe::egui::{self, Align, Color32, FontSelection, RichText, Ui, Visuals};
 
+use super::reorder::{ListDrag, draggable};
 use super::section::{SECTION_HEADER_HEIGHT, paint_fold_arrow, section_header};
 use super::view::{
     ExplorerAction, HEADER_BUTTON_SIZE, ICON_GAP, InlineRename, NOTE_MARK_SIZE, SessionEdit, TreeContext,
@@ -61,8 +62,8 @@ pub(super) fn show_docked_terminals(
 }
 
 /// The "TERMINALS" header (with a count, status dots while folded, and
-/// "New terminal"), then one row per tmux session, newest first, in its own
-/// scroll area. `rename` is the name field for a new session (shown at the
+/// "New terminal"), then one row per tmux session in its own scroll area:
+/// in the order the user dragged them into, new ones on top. `rename` is the name field for a new session (shown at the
 /// top) or for a session being renamed in its row, if any.
 /// Nothing when tmux is not installed.
 pub(super) fn show_terminals_section(
@@ -105,32 +106,40 @@ pub(super) fn show_terminals_section(
         if naming_new {
             rename_row(ui, rename);
         }
+        let mut drag = ListDrag::default();
         for row in rows {
-            terminal_row(ui, row, context, rename, action);
+            let top = ui.cursor().top();
+            let response = terminal_row(ui, row, context, rename, action);
+            drag.add(ui, top, response.as_ref());
+        }
+        if let Some((from, to)) = drag.finish(ui) {
+            *action = Some(ExplorerAction::MoveTerminal { from, to });
         }
     });
 }
 
 /// One session in the list: a click shows it in a tab, a double click
-/// renames it in place, a right click offers "Show in files", "Rename" and "Exit terminal".
+/// renames it in place, a right click offers "Show in files", "Rename" and
+/// "Exit terminal", and a drag moves it up or down the list. Returns its
+/// row, or `None` while it shows a name field instead.
 fn terminal_row(
     ui: &mut Ui,
     row: &TerminalRow,
     context: &TreeContext,
     rename: &mut Option<InlineRename<SessionEdit>>,
     action: &mut Option<ExplorerAction>,
-) {
+) -> Option<egui::Response> {
     let renaming = |rename: &InlineRename<SessionEdit>| rename.target == SessionEdit::Rename(row.info.name.clone());
     if rename.as_ref().is_some_and(renaming) {
         rename_row(ui, rename);
-        return;
+        return None;
     }
     let name = &row.info.name;
     let sessions = context.agent_history.map(|history| history.of(name)).unwrap_or_default();
     let expanded = context.expanded_terminals.contains(name);
     let selected = context.open_terminal == Some(name.as_str());
     let label = terminal_label(ui, name, Some(row));
-    let response = tree_row(ui, selected, label).on_hover_text(terminal_tip(Some(row)));
+    let response = draggable(&tree_row(ui, selected, label)).on_hover_text(terminal_tip(Some(row)));
     paint_status_dot(ui, &response, name, Some(&row.status));
     // A terminal that ran agent sessions folds them open and closed with an
     // arrow in place of its icon, like a folder.
@@ -138,7 +147,7 @@ fn terminal_row(
         paint_terminal_icon(ui, &response);
     } else if fold_arrow(ui, &response, expanded) {
         *action = Some(ExplorerAction::ToggleAgentSessions(name.clone()));
-        return;
+        return Some(response);
     }
     if response.double_clicked() {
         *action = Some(ExplorerAction::RenameTerminal(row.info.name.clone()));
@@ -167,6 +176,7 @@ fn terminal_row(
             }
         });
     }
+    Some(response)
 }
 
 /// The fold arrow in the icon's place; returns true when it was clicked.

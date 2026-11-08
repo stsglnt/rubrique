@@ -6,6 +6,7 @@ use eframe::egui::{self, Key, RichText, Ui};
 use egui::text::{CCursor, CCursorRange};
 
 use super::note_marks::NoteMarks;
+use super::reorder::{ListDrag, draggable};
 use super::section::{paint_fold_arrow, section_header};
 use super::terminals::{show_docked_terminals, show_terminal_file, show_terminals_section};
 use crate::icons::{Icon, LOCK_MARK_SIZE, paint_icon, paint_lock_mark, small_icon_button, small_toggle_button};
@@ -62,6 +63,12 @@ pub enum ExplorerAction {
     ToggleAgentSessions(String),
     /// Resume an agent session: in its terminal, or in a new one.
     ResumeAgentSession { terminal: String, id: String, new_terminal: bool },
+    /// A root folder was dragged: move root `from` to go before root `to`
+    /// (the root count for the end).
+    MoveRoot { from: usize, to: usize },
+    /// A terminal was dragged: move row `from` of the Terminals list to go
+    /// before row `to` (the row count for the end).
+    MoveTerminal { from: usize, to: usize },
 }
 
 /// What "New" in a folder's menu creates.
@@ -251,11 +258,18 @@ pub fn show_explorer(
         if roots.is_empty() {
             show_no_folders(ui, &mut action);
         }
+        // Several roots can be dragged up and down to reorder them.
+        let mut drag = ListDrag::default();
         for (index, root) in roots.iter_mut().enumerate() {
             let root_path = root.path.clone();
             let root_color = context.can_remove_roots.then(|| group_color(index));
             let context = TreeContext { root: &root_path, root_color, ..context };
-            show_root(ui, root, &context, edits, &mut action);
+            let top = ui.cursor().top();
+            let row = show_root(ui, root, &context, edits, &mut action);
+            drag.add(ui, top, Some(&row));
+        }
+        if let Some((from, to)) = drag.finish(ui) {
+            action = Some(ExplorerAction::MoveRoot { from, to });
         }
     });
     action
@@ -326,16 +340,21 @@ fn show_no_folders(ui: &mut Ui, action: &mut Option<ExplorerAction>) {
     }
 }
 
-/// A root folder: a bold row that folds its tree open and closed.
+/// A root folder: a bold row that folds its tree open and closed, and
+/// can be dragged up and down when there are several. Returns its row.
 fn show_root(
     ui: &mut Ui,
     root: &mut FsNode,
     context: &TreeContext,
     edits: &mut ExplorerEdits,
     action: &mut Option<ExplorerAction>,
-) {
+) -> egui::Response {
     let label = RichText::new(format!("{ICON_GAP}{}", root.name)).strong();
-    let response = tree_row(ui, is_revealed(context, &root.path), label).on_hover_text(absolute_path_text(&root.path));
+    let mut response = tree_row(ui, is_revealed(context, &root.path), label);
+    if context.can_remove_roots {
+        response = draggable(&response);
+    }
+    let response = response.on_hover_text(absolute_path_text(&root.path));
     scroll_if_revealed(ui, context, &root.path, &response);
     paint_arrow(ui, &response, root.expanded);
     if let Some(color) = context.root_color {
@@ -349,6 +368,7 @@ fn show_root(
         let indent_id = root.path.clone();
         ui.indent(indent_id, |ui| show_children(ui, root, context, edits, action));
     }
+    response
 }
 
 /// Draw a folder's entries, or why they could not be read.
