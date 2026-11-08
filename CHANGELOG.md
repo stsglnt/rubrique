@@ -8,6 +8,8 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-11-08
+
 ### Changed
 
 - **Folder colors and unsaved files no longer look alike in the explorer.**
