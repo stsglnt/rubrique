@@ -214,7 +214,7 @@ fn show_output(ui: &mut Ui, action: HelmAction, run: &AiRun) {
         }
         if action == HelmAction::Render {
             let style = HighlightStyle::from_ui(ui);
-            let mut job = highlighted(ui.ctx(), &output, &style, Syntax::Yaml);
+            let mut job = highlighted(ui.ctx(), &output, &style, Some(Syntax::Yaml));
             // Rendered files read best unwrapped; the panel scrolls sideways.
             job.wrap.max_width = f32::INFINITY;
             ui.add(egui::Label::new(job).selectable(true).extend());

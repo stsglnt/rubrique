@@ -8,6 +8,32 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Changed
+
+- **Larger, roomier text.** Labels, buttons and the explorer are a point
+  bigger (14 instead of 13), hints are 11 instead of 9, the explorer's
+  section titles 12 instead of 11, and the editor font
+  starts at 14 points for new installs. Lines in the source editor and the
+  block editor are one and a half times the font size apart instead of
+  touching, with the line numbers centered on them, and the preview reads at
+  16 points with headings to match. The text size setting still scales all
+  of it.
+
+### Fixed
+
+- **The Terminals block no longer jumps when a terminal is opened.** The
+  status bar kept the height of its buttons only while a text file was
+  open; a terminal tab (or a status message) made it shorter, which moved
+  the explorer's bottom edge and the Terminals block docked there. The
+  bar now keeps one height.
+- **Editing a block in the preview keeps its place.** The box that opens
+  on a click uses the page's text size and line height instead of the
+  editor font, so the text no longer shrinks and the block keeps about its
+  height; it no longer puts a title over an existing block, so the first
+  line stays where it was; and the cursor lands on the line that was
+  clicked instead of at the end of the block, which scrolled a long list
+  or code block away.
+
 ## [0.8.4] - 2026-11-08
 
 ### Changed

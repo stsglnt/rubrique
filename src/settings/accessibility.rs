@@ -58,8 +58,8 @@ impl TextSize {
     }
 }
 
-/// Editor font size when nothing is set (egui's monospace size).
-pub const DEFAULT_EDITOR_FONT_SIZE: u8 = 13;
+/// Editor font size when nothing is set.
+pub const DEFAULT_EDITOR_FONT_SIZE: u8 = 14;
 /// Smallest and largest editor font size.
 pub const EDITOR_FONT_SIZES: RangeInclusive<u8> = 9..=28;
 
