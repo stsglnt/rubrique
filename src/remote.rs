@@ -1,6 +1,6 @@
 //! Remote folders over SSH (optional, off by default).
 //!
-//! rubrique runs the system `ssh` program, so the user's `~/.ssh/config`,
+//! Rubrique runs the system `ssh` program, so the user's `~/.ssh/config`,
 //! keys, ssh-agent and jump hosts all work. Each remote file has a local
 //! *mirror path* (`<config>/remote/<host>/<remote path>`), so the rest of the
 //! app keeps working with plain paths. Files read from the host are also

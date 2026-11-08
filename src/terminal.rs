@@ -1,7 +1,7 @@
 //! Terminals: tmux sessions shown as tabs and listed in the explorer.
 //!
 //! tmux does the real terminal work (the shell, the screen, colors, vim and
-//! agents). rubrique mirrors the screen of a session and types into it, so
+//! agents). Rubrique mirrors the screen of a session and types into it, so
 //! closing a tab or the app leaves the session and its programs running.
 //! A `.tmux` file in a folder is a terminal too: opening it starts (or
 //! reattaches to) a session in that folder.
@@ -24,7 +24,7 @@ pub const TERMINAL_EXTENSION: &str = "tmux";
 
 /// What a new `.tmux` file holds, so it explains itself when opened elsewhere.
 pub const TERMINAL_FILE_TEXT: &str =
-    "# A rubrique terminal: opening this file in rubrique starts a tmux session in this folder.\n";
+    "# A Rubrique terminal: opening this file in Rubrique starts a tmux session in this folder.\n";
 
 /// True for `.tmux` files, which open as terminals.
 pub fn is_terminal_path(path: &Path) -> bool {

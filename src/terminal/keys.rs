@@ -1,6 +1,6 @@
 //! Turn what you type in a terminal tab into what tmux's `send-keys` takes.
 //!
-//! Cmd shortcuts (macOS) stay with rubrique. Everything else typed while the
+//! Cmd shortcuts (macOS) stay with Rubrique. Everything else typed while the
 //! terminal has focus goes to tmux: text as it is, other keys by their tmux
 //! names (`Enter`, `BSpace`, `C-c`).
 

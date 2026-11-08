@@ -383,7 +383,7 @@ impl RubriqueApp {
         let themes = Themes::load(themes_folder().as_deref());
         apply_theme(ctx, &themes, &settings.theme);
         apply_accessibility(ctx, &settings.accessibility);
-        // rubrique steps through its own text sizes instead (see `handle_text_size_keys`).
+        // Rubrique steps through its own text sizes instead (see `handle_text_size_keys`).
         ctx.options_mut(|options| options.zoom_with_keyboard = false);
         let privacy = privacy::PrivacyState::new(settings.privacy.pin_hash.is_some());
         let mut app = RubriqueApp {
@@ -866,13 +866,13 @@ impl RubriqueApp {
         }
     }
 
-    /// "name - rubrique", with the dirty marker; sent only when it changes.
+    /// "name - Rubrique", with the dirty marker; sent only when it changes.
     fn update_title(&mut self, ctx: &Context) {
         let name = if self.app_locked() { None } else { self.open_file.path().map(name_text) };
         let dirty = if self.open_file.is_dirty() { DIRTY_MARKER } else { "" };
         let title = match name {
-            Some(name) => format!("{dirty}{name} - rubrique"),
-            None => "rubrique".to_string(),
+            Some(name) => format!("{dirty}{name} - Rubrique"),
+            None => "Rubrique".to_string(),
         };
         if title != self.window_title {
             ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
@@ -1065,7 +1065,7 @@ impl RubriqueApp {
             SettingsAction::AiCommandChanged => self.check_ai_tools(),
             SettingsAction::ForgetAllowedFolders => {
                 self.settings.ai.allowed_folders.clear();
-                self.show_status("rubrique will ask again before the next AI run in each folder".to_string());
+                self.show_status("Rubrique will ask again before the next AI run in each folder".to_string());
             }
             SettingsAction::ChooseSkillsFolder
             | SettingsAction::ResetSkillsFolder
@@ -1428,7 +1428,7 @@ impl RubriqueApp {
     /// Let the user pick a folder in the system dialog and add it as a root.
     fn choose_folder_to_add(&mut self) {
         let start = self.roots.first().and_then(|root| root.path.parent().map(Path::to_path_buf));
-        let mut dialog = rfd::FileDialog::new().set_title("Add folder to rubrique");
+        let mut dialog = rfd::FileDialog::new().set_title("Add folder to Rubrique");
         if let Some(start) = start {
             dialog = dialog.set_directory(start);
         }

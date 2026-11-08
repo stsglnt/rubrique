@@ -93,7 +93,7 @@ fn color(Rgb(red, green, blue): Rgb) -> Color32 {
     Color32::from_rgb(red, green, blue)
 }
 
-/// egui's style with the theme's colors and rubrique's spacing and rounding.
+/// egui's style with the theme's colors and Rubrique's spacing and rounding.
 fn style(theme: &Theme) -> Style {
     let mut style = Style { visuals: visuals(theme.base, &theme.palette), ..Style::default() };
     style.spacing.item_spacing = egui::vec2(8.0, 4.0);

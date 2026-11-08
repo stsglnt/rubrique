@@ -1,4 +1,4 @@
-# Agents in rubrique: analysis
+# Agents in Rubrique: analysis
 
 Status: step 1 (agents in Ask) is built. The rest is a proposal.
 
@@ -23,7 +23,7 @@ John reads the note, the text it is about and the file, and replies under the
 note. If you like his answer, one click moves it into the text, and you review
 that change in the merge screen.
 
-## What rubrique already has
+## What Rubrique already has
 
 Most of the pieces exist. Agents are mostly a new way to combine them.
 
@@ -79,11 +79,11 @@ You are John, a careful fact checker on a small product team.
 | `skills` | Skill names to always add | None |
 | `output` | `reply` (answer in the note) or `rewrite` (skip the reply, go straight to the merge screen) | `reply` |
 | `context` | `selection` (quoted text only), `file` or `folder` | `file` |
-| Body | The personality and rules. Goes into `{system}` after rubrique's own rules. | Required |
+| Body | The personality and rules. Goes into `{system}` after Rubrique's own rules. | Required |
 
 This is close to Claude Code's subagent files (`.claude/agents/*.md` with
-`name`, `description`, `tools`, `model`), the same way rubrique skills match
-Claude Code skills. rubrique can offer to read `~/.claude/agents` too, like
+`name`, `description`, `tools`, `model`), the same way Rubrique skills match
+Claude Code skills. Rubrique can offer to read `~/.claude/agents` too, like
 it reads `~/.claude/skills` today.
 
 ### Where agents live
@@ -105,8 +105,8 @@ over Claude Code's. Settings shows which one is used.
 2. The notes panel shows the note with a small `John` chip and a **Run**
    button. The quoted text in the preview gets John's color.
 3. You press **Run** (or **Run all mentions** at the top of the panel).
-4. rubrique builds the prompt:
-   - **system**: rubrique's rules for the output type, then John's body, then
+4. Rubrique builds the prompt:
+   - **system**: Rubrique's rules for the output type, then John's body, then
      his skills.
    - **user**: the note text without `@ai-john`, the quoted text, and the file
      (or only the quote, if `context: selection`).

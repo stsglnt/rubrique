@@ -11,7 +11,7 @@ const BUTTON_SIZE: Vec2 = vec2(28.0, 24.0);
 /// enough to stay sharp at 14 px.
 const LINE: f32 = 1.5;
 
-/// The icons rubrique draws.
+/// The icons Rubrique draws.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Icon {
     /// Settings.
@@ -123,7 +123,7 @@ pub fn icon_text_button(ui: &mut Ui, icon: Icon, text: &str, tip: &str, active: 
     response.on_hover_text(tip)
 }
 
-/// Draw `icon` centered on `center` in rubrique's icon style: a 14 × 14 box, heavy strokes with
+/// Draw `icon` centered on `center` in Rubrique's icon style: a 14 × 14 box, heavy strokes with
 /// round ends and joins, softly rounded corners, and one detail in `accent`.
 /// The colors an icon is drawn with.
 #[derive(Clone, Copy)]

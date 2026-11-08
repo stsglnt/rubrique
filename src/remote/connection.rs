@@ -2,7 +2,7 @@
 //!
 //! All commands to a host share one connection (OpenSSH `ControlMaster`),
 //! so only the first one pays for the login. `BatchMode` turns password
-//! prompts off: rubrique has no terminal to type them in.
+//! prompts off: Rubrique has no terminal to type them in.
 
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
@@ -243,7 +243,7 @@ fn connect_error(host: &str, errors: &[u8]) -> String {
     let message = last_line(errors);
     if message.contains("Permission denied") {
         format!(
-            "Cannot log in to {host}: {message}. rubrique cannot type passwords; use an SSH key or ssh-agent (check with `ssh {host}` in a terminal)."
+            "Cannot log in to {host}: {message}. Rubrique cannot type passwords; use an SSH key or ssh-agent (check with `ssh {host}` in a terminal)."
         )
     } else if message.contains("Host key verification failed") {
         format!(

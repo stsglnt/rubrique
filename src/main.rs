@@ -1,4 +1,4 @@
-//! rubrique: a fast editor, agentic on demand. This version reviews every
+//! Rubrique: a fast editor, agentic on demand. This version reviews every
 //! change in a merge screen first.
 
 mod ai;
@@ -72,7 +72,7 @@ fn main() -> ExitCode {
     };
 
     let (width, height) = settings.window_size.unwrap_or(DEFAULT_WINDOW_SIZE);
-    let mut viewport = egui::ViewportBuilder::default().with_title("rubrique").with_inner_size([width, height]);
+    let mut viewport = egui::ViewportBuilder::default().with_title("Rubrique").with_inner_size([width, height]);
     // Window and taskbar icon. A broken image only means no icon, never a failed start.
     if let Ok(icon) = eframe::icon_data::from_png_bytes(WINDOW_ICON_PNG) {
         viewport = viewport.with_icon(icon);

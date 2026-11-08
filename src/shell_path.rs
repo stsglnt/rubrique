@@ -1,11 +1,11 @@
 //! The login shell's `PATH`, for an app started from Finder or a launcher.
 //!
-//! Started from a terminal, rubrique gets the shell's `PATH`, with the
+//! Started from a terminal, Rubrique gets the shell's `PATH`, with the
 //! folders that `.zprofile`, `.profile` or `.bash_profile` add: `~/.local/bin`,
 //! Homebrew, npm's global folder. Started from Finder, the Dock or a desktop
 //! launcher it gets the system default (`/usr/bin:/bin:/usr/sbin:/sbin` on
 //! macOS), so `claude`, `codex` or `ollama` are "not found" although they
-//! are installed. At startup rubrique therefore asks the login shell for its
+//! are installed. At startup Rubrique therefore asks the login shell for its
 //! `PATH` once and adds the folders that are missing, plus the usual install
 //! folders in case the shell cannot be run. The folders already on `PATH`
 //! keep their order and come first, so a terminal start changes nothing.
@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 /// How long the login shell may take to print its environment. A shell
 /// whose profile waits (for a password, a network drive) is given up on,
-/// and rubrique starts with the fallback folders only.
+/// and Rubrique starts with the fallback folders only.
 const SHELL_LIMIT: Duration = Duration::from_secs(3);
 
 /// Add the login shell's `PATH` folders, and the usual install folders, to

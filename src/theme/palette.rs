@@ -119,7 +119,7 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// One of the two themes shipped with rubrique.
+    /// One of the two themes shipped with Rubrique.
     pub fn builtin(base: Base) -> Self {
         let text = base.builtin_text();
         let mut palette = Palette::default();

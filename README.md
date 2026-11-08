@@ -1,4 +1,4 @@
-# <img src="assets/icon/rubrique-128.png" alt="" width="40" align="top"> rubrique
+# <img src="assets/icon/rubrique-128.png" alt="" width="40" align="top"> Rubrique
 
 A fast editor, agentic on demand.
 
@@ -7,7 +7,7 @@ Press `Cmd/Ctrl+K` to hand the text to an agent, then accept or reject the
 change. Uses the agents already on your computer: Claude Code, Codex, Grok or
 a local model. No API keys. macOS and Linux.
 
-<img src="docs/screenshots/ai.png" alt="rubrique comparing Claude and Codex answers in the merge screen, with the Ask bar and a hover summary from a local model" width="880">
+<img src="docs/screenshots/ai.png" alt="Rubrique comparing Claude and Codex answers in the merge screen, with the Ask bar and a hover summary from a local model" width="880">
 
 ## Install
 
@@ -15,7 +15,7 @@ Download from [Releases](https://github.com/witseko/rubrique/releases).
 
 | System | How |
 | --- | --- |
-| macOS | Open the `.dmg`, drag rubrique to Applications |
+| macOS | Open the `.dmg`, drag Rubrique to Applications |
 | Debian, Ubuntu | `sudo apt install ./rubrique_X.Y.Z-1_amd64.deb` |
 | Other Linux | Unpack the `.tar.gz`, run `./install.sh` |
 
@@ -59,7 +59,7 @@ Agents run only when you ask, read-only by default.
 - Hand a step of any document to a terminal's agent: `@tmux-qa: check this`, then Send.
 - Tabs grouped and colored by explorer folder; drag tabs and groups to reorder them.
 
-<img src="docs/screenshots/themes.png" alt="One rubrique window shown in five themes: Light, Indigo, Sepia, Midnight and High contrast" width="880">
+<img src="docs/screenshots/themes.png" alt="One Rubrique window shown in five themes: Light, Indigo, Sepia, Midnight and High contrast" width="880">
 
 Five themes (Indigo is the default dark one), or follow the system, or [add your own](themes/). Text size, line
 numbers and other options are in Settings → Accessibility.
@@ -102,7 +102,7 @@ numbers and other options are in Settings → Accessibility.
 
 ## Set up the agents
 
-Install the ones you want. rubrique finds them on your `PATH` and offers the
+Install the ones you want. Rubrique finds them on your `PATH` and offers the
 install command when one is missing (Settings → AI). Opened from Finder or
 a desktop menu, it reads the `PATH` of your login shell (`.zprofile`,
 `.profile`, `.bash_profile`) and the usual install folders, so a program

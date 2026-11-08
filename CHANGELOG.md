@@ -1,12 +1,20 @@
 # Changelog
 
-All notable changes to rubrique are listed here, newest first.
+All notable changes to Rubrique are listed here, newest first.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
+
+### Changed
+
+- **App icon and name**: the capital "R" icon with the marker tip is back,
+  and the app calls itself Rubrique everywhere you see its name: the window
+  title, Settings, the macOS app (now `Rubrique.app`) and disk image, the
+  Linux launcher and the release notes. The `rubrique` command, settings
+  folder and file formats are unchanged.
 
 ## [0.8.2] - 2026-11-08
 

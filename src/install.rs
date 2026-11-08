@@ -1,5 +1,5 @@
 //! Install a missing tool with one click: the recipes for the programs
-//! rubrique runs (whisper.cpp, Ollama, Claude Code, Codex, Grok) and the
+//! Rubrique runs (whisper.cpp, Ollama, Claude Code, Codex, Grok) and the
 //! files they need (the whisper model, an Ollama model).
 //!
 //! A recipe has a one-click command only when it is a single, well-known
@@ -30,7 +30,7 @@ const GROK_PAGE: &str = "https://github.com/superagent-ai/grok-cli";
 /// Where Ollama keeps models unless `OLLAMA_MODELS` says otherwise.
 const OLLAMA_REGISTRY: &str = "registry.ollama.ai";
 
-/// The system rubrique runs on, for picking a recipe.
+/// The system Rubrique runs on, for picking a recipe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Platform {
     Mac,
@@ -105,7 +105,7 @@ impl Recipe {
     }
 }
 
-/// The recipe for a command's program, when rubrique knows it. Only bare
+/// The recipe for a command's program, when Rubrique knows it. Only bare
 /// names match: a full path in the command is the user's own setup.
 /// `find` says where an installer such as `brew` is.
 pub fn recipe_for_command(command: &str, platform: Platform, find: &dyn Fn(&str) -> Option<PathBuf>) -> Option<Recipe> {
@@ -244,7 +244,7 @@ pub fn last_line(errors: &str, output: &str) -> String {
 pub fn installed_message(recipe: &Recipe, found: bool) -> String {
     match (&recipe.provides, recipe.after) {
         (Some(program), _) if !found => format!(
-            "Installed {}, but rubrique cannot find {program} on its PATH: put its full path in the command.",
+            "Installed {}, but Rubrique cannot find {program} on its PATH: put its full path in the command.",
             recipe.name
         ),
         (_, Some(after)) => format!("Installed {}. {after}", recipe.name),

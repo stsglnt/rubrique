@@ -1,4 +1,4 @@
-# rubrique built-in theme: High contrast (black and white with a yellow accent).
+# Rubrique built-in theme: High contrast (black and white with a yellow accent).
 # Colors are #rrggbb. Keys left out come from the `base` theme.
 name=High contrast
 base=dark
