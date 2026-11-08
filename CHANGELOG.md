@@ -8,6 +8,13 @@ Until 1.0, a minor version (0.x.0) may change behavior or settings.
 
 ## [Unreleased]
 
+### Changed
+
+- **App icon**: the capital "R" with the marker tip now sits on the Indigo
+  theme's colors, a deep indigo tile with a lavender letter and a yellow
+  tip, like the earlier lowercase icon, instead of the paper and brown of
+  the Light theme.
+
 ## [0.8.4] - 2026-11-08
 
 ### Changed
