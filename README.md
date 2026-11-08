@@ -104,7 +104,11 @@ numbers and other options are in Settings → Accessibility.
 ## Set up the agents
 
 Install the ones you want. rubrique finds them on your `PATH` and offers the
-install command when one is missing (Settings → AI).
+install command when one is missing (Settings → AI). Opened from Finder or
+a desktop menu, it reads the `PATH` of your login shell (`.zprofile`,
+`.profile`, `.bash_profile`) and the usual install folders, so a program
+added only in `.zshrc` or `.bashrc` is not found until its folder is also
+there.
 
 | Program | Used for |
 | --- | --- |

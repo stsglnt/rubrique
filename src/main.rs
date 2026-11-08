@@ -17,6 +17,7 @@ mod media;
 mod remote;
 mod scratch;
 mod settings;
+mod shell_path;
 mod terminal;
 #[cfg(test)]
 mod test_support;
@@ -57,6 +58,9 @@ fn main() -> ExitCode {
         _ => {}
     }
 
+    // Before anything looks for a program: Finder and desktop launchers
+    // start the app with a bare PATH (see `shell_path`).
+    shell_path::extend_path_from_login_shell();
     let settings = Settings::load();
     remote::set_ssh_program(&settings.remote.ssh_program);
     let (roots, file) = match starting_location(&arguments, &settings) {
