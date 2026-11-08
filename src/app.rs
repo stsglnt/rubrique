@@ -70,7 +70,7 @@ use crate::terminal::session::LiveTerminal;
 use crate::terminal::tmux::Tmux;
 use crate::terminal::view::show_terminal;
 use crate::theme::catalog::Themes;
-use crate::theme::style::{apply_accessibility, apply_theme, page_fill};
+use crate::theme::style::{apply_accessibility, apply_theme, install_fonts, page_fill};
 use crate::voice::view::set_memo_states;
 use privacy::AfterPassword;
 
@@ -380,6 +380,7 @@ impl RubriqueApp {
     /// Start with `roots` in the explorer (at least one) and, optionally,
     /// `file` open, and install the saved theme.
     pub fn new(ctx: &Context, settings: Settings, roots: Vec<PathBuf>, file: Option<PathBuf>) -> Self {
+        install_fonts(ctx);
         let themes = Themes::load(themes_folder().as_deref());
         apply_theme(ctx, &themes, &settings.theme);
         apply_accessibility(ctx, &settings.accessibility);
